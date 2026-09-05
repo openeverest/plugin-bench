@@ -1,0 +1,40 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/openeverest/plugin-bench
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  port: 8080
+
+plugin:
+  displayName: "Performance Benchmark"
+  description: "Run and inspect PostgreSQL benchmarks for OpenEverest database clusters."
+  vendor: "OpenEverest"
+  enabled: true
+  bundlePath: "/main.js"
+  extensionPoints:
+    - type: route
+      path: /performance-benchmark
+      label: Performance Benchmark
+    - type: clusterDetailTab
+      path: performance-benchmark
+      label: Performance Benchmark
+      providers:
+        - provider-cloudnative-pg
+        - provider-percona-postgresql
+
+everestAPIURL: ""
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
