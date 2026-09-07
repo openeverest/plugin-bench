@@ -14,8 +14,8 @@ jobs:
     name: Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
@@ -26,11 +26,13 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.22"
-          cache-dependency-path: backend/go.sum
+          cache-dependency-path: backend/go.mod
+      - name: Download modules
+        run: cd backend && go mod download
       - name: Create frontend embed placeholder
         run: mkdir -p backend/dist && touch backend/dist/main.js
       - run: cd backend && go vet ./...
@@ -41,8 +43,8 @@ jobs:
     name: Helm lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: "3.14.0"
       - run: helm lint charts/plugin-bench/
