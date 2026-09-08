@@ -1,0 +1,6 @@
+apiVersion: v2
+name: plugin-bench
+description: Helm chart for the OpenEverest Performance Benchmark plugin
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
