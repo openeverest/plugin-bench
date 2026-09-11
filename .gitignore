@@ -3,3 +3,7 @@ dist/
 backend/dist/main.js
 backend/plugin-bench
 *.tgz
+
+# Env
+.env
+.env.local
