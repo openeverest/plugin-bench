@@ -1,0 +1,10 @@
+{{- if and .Values.workload.createNamespace .Values.workload.namespace (ne .Values.workload.namespace .Release.Namespace) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "plugin-bench.workloadNamespace" . | quote }}
+  labels:
+    {{- include "plugin-bench.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+{{- end }}

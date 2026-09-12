@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "plugin-bench.workloadRoleBindingName" . }}
+  namespace: {{ include "plugin-bench.workloadNamespace" . | quote }}
+  labels:
+    {{- include "plugin-bench.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "plugin-bench.coordinatorServiceAccountName" . }}
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  kind: Role
+  name: {{ include "plugin-bench.workloadRoleName" . }}
+  apiGroup: rbac.authorization.k8s.io

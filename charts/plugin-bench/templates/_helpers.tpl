@@ -17,6 +17,31 @@
 {{- end }}
 {{- end }}
 
+{{/* Namespace for benchmark workload resources. */}}
+{{- define "plugin-bench.workloadNamespace" -}}
+{{- default .Release.Namespace .Values.workload.namespace -}}
+{{- end }}
+
+{{/* ServiceAccount used by the coordinator deployment. */}}
+{{- define "plugin-bench.coordinatorServiceAccountName" -}}
+{{- printf "%s-coordinator" (include "plugin-bench.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{/* ServiceAccount used by future benchmark Jobs. */}}
+{{- define "plugin-bench.runnerServiceAccountName" -}}
+{{- printf "%s-runner" (include "plugin-bench.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{/* Role used by the coordinator for benchmark workloads. */}}
+{{- define "plugin-bench.workloadRoleName" -}}
+{{- printf "%s-workload" (include "plugin-bench.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
+{{/* RoleBinding used to grant the coordinator workload permissions. */}}
+{{- define "plugin-bench.workloadRoleBindingName" -}}
+{{- printf "%s-binding" (include "plugin-bench.workloadRoleName" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
 {{/* Chart label. */}}
 {{- define "plugin-bench.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
