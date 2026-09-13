@@ -196,6 +196,11 @@ const register: PluginRegisterFn = (api: PluginApi) => {
   pluginFetch = api.fetch.bind(api);
 
   api.registerExtension({
+    type: 'sidebarItem',
+    label: 'Performance Benchmark',
+  });
+
+  api.registerExtension({
     type: 'route',
     label: 'Performance Benchmark',
     component: BenchmarkPage,

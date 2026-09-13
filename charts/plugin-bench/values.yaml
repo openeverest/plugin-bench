@@ -18,10 +18,14 @@ plugin:
   vendor: "OpenEverest"
   enabled: true
   bundlePath: "/main.js"
+  icon: "/icon.png"
   extensionPoints:
     - type: route
       path: /performance-benchmark
       label: Performance Benchmark
+    - type: sidebarItem
+      label: Performance Benchmark
+      icon: "/icon.png"
     - type: clusterDetailTab
       path: performance-benchmark
       label: Performance Benchmark

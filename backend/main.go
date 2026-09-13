@@ -15,6 +15,9 @@ import (
 //go:embed dist/main.js
 var distFS embed.FS
 
+//go:embed dist/icon.png
+var iconData []byte
+
 type runSummary struct {
 	ID        string    `json:"id"`
 	Status    string    `json:"status"`
@@ -68,9 +71,16 @@ func handleRuns(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleIcon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(iconData)
+}
+
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /main.js", handleBundle)
+	mux.HandleFunc("GET /icon.png", handleIcon)
 	mux.HandleFunc("GET /healthz", handleHealth)
 	mux.HandleFunc("GET /api/status", handleStatus)
 	mux.HandleFunc("/api/runs", handleRuns)

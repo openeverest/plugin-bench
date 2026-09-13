@@ -8,6 +8,7 @@ spec:
   version: {{ .Chart.AppVersion | quote }}
   vendor: {{ .Values.plugin.vendor | quote }}
   enabled: {{ .Values.plugin.enabled }}
+  icon: {{ .Values.plugin.icon | quote }}
   backend:
     serviceRef:
       namespace: {{ .Release.Namespace }}
