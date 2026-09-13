@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "plugin-bench.fullname" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "plugin-bench.labels" . | nindent 4 }}
 spec:
@@ -15,6 +15,7 @@ spec:
       labels:
         {{- include "plugin-bench.selectorLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "plugin-bench.coordinatorServiceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -29,6 +30,10 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.service.port | quote }}
+            - name: WORKLOAD_NAMESPACE
+              value: {{ include "plugin-bench.workloadNamespace" . | quote }}
+            - name: RUNNER_SERVICE_ACCOUNT_NAME
+              value: {{ include "plugin-bench.runnerServiceAccountName" . | quote }}
             {{- if .Values.everestAPIURL }}
             - name: EVEREST_API_URL
               value: {{ .Values.everestAPIURL | quote }}

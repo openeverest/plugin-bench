@@ -31,6 +31,14 @@ plugin:
 
 everestAPIURL: ""
 
+# Namespace used for benchmark Jobs and their temporary resources.
+# An empty value uses the Helm release namespace.
+workload:
+  namespace: ""
+  # Set to true only when the Helm installer is allowed to create the
+  # configured workload namespace.
+  createNamespace: false
+
 resources:
   limits:
     cpu: 200m
