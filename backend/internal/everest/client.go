@@ -88,6 +88,20 @@ func (e *InvalidResponseError) Unwrap() error {
 	return e.Err
 }
 
+func normalizeRequestError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return err
+	}
+
+	// Normalize both request-context deadlines and http.Client.Timeout
+	// errors so callers can consistently use errors.Is.
+	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+		return context.DeadlineExceeded
+	}
+
+	return err
+}
+
 type Credentials struct {
 	URI      string `json:"uri"`
 	Host     string `json:"host"`
@@ -172,7 +186,7 @@ func GetCredentials(ctx context.Context, jwt, k8sCluster, namespace, instance st
 
 	resp, err := everestHTTPClient.Do(req)
 	if err != nil {
-		return nil, &RequestError{Err: err}
+		return nil, &RequestError{Err: normalizeRequestError(err)}
 	}
 	defer resp.Body.Close()
 
