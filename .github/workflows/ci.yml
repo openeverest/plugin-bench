@@ -39,6 +39,67 @@ jobs:
       - run: cd backend && go test ./...
       - run: cd backend && go build -o /dev/null .
 
+  runner:
+    name: pgbench Runner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.22"
+          cache-dependency-path: runners/pgbench/go.mod
+      - name: Vet runner
+        run: cd runners/pgbench && go vet ./...
+      - name: Test runner
+        run: cd runners/pgbench && go test -race ./...
+      - name: Build runner image
+        run: docker build -t plugin-bench-pgbench:ci runners/pgbench
+      - name: Integration test runner
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker network create pgbench-ci
+          docker run -d --name pgbench-ci-db --network pgbench-ci \
+            -e POSTGRES_PASSWORD=ci-password -e POSTGRES_DB=pgbench postgres:16-alpine
+          ready=false
+          for attempt in {1..30}; do
+            if docker exec pgbench-ci-db pg_isready -h 127.0.0.1 -U postgres -d pgbench; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            docker logs pgbench-ci-db
+            exit 1
+          fi
+          runner=(docker run --rm --network pgbench-ci
+            -e PGHOST=pgbench-ci-db -e PGDATABASE=pgbench -e PGUSER=postgres
+            -e PGCONNECT_TIMEOUT=3 -e BENCH_DURATION=2)
+          for initialize in true false; do
+            "${runner[@]}" -e PGPASSWORD=ci-password -e BENCH_INITIALIZE="$initialize" \
+              plugin-bench-pgbench:ci > benchmark.log 2>&1
+            cat benchmark.log
+            grep -Eq '^tps = [0-9]' benchmark.log
+            grep -Eq '^latency average = [0-9]' benchmark.log
+          done
+          if "${runner[@]}" -e PGPASSWORD=wrong-ci-password \
+            plugin-bench-pgbench:ci > failure.log 2>&1; then
+            echo "Expected authentication failure"
+            exit 1
+          fi
+          grep -q 'password authentication failed' failure.log
+          if grep -Fq 'wrong-ci-password' failure.log; then
+            echo "Failure output exposed the password"
+            exit 1
+          fi
+      - name: Clean up integration resources
+        if: always()
+        run: |
+          docker rm -fv pgbench-ci-db || true
+          docker network rm pgbench-ci || true
+
   helm-lint:
     name: Helm lint
     runs-on: ubuntu-latest
