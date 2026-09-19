@@ -2,9 +2,15 @@ package coordinator
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
+
+var ErrKubernetesClientRequired = errors.New("kubernetes client is required")
 
 // Config contains deployment-level settings shared by benchmark runs.
 type Config struct {
@@ -49,15 +55,35 @@ type Resources struct {
 }
 
 // Coordinator holds shared configuration, not per-run credentials or options.
-// Kubernetes client support is added in the next implementation step.
+// The Kubernetes client is injected so the coordinator remains testable.
 type Coordinator struct {
-	config Config
+	config     Config
+	kubeClient kubernetes.Interface
 }
 
-// New validates the shared configuration before constructing a coordinator.
-func New(config Config) (*Coordinator, error) {
+// New validates the shared configuration and injects the Kubernetes client.
+// The interface keeps the coordinator testable with a fake client.
+func New(config Config, kubeClient kubernetes.Interface) (*Coordinator, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	return &Coordinator{config: config}, nil
+	if kubeClient == nil {
+		return nil, ErrKubernetesClientRequired
+	}
+	return &Coordinator{config: config, kubeClient: kubeClient}, nil
+}
+
+// NewInCluster constructs a coordinator using the Pod's ServiceAccount
+// credentials. Use New with an injected client in unit tests.
+func NewInCluster(config Config) (*Coordinator, error) {
+	restConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Kubernetes client: %w", err)
+	}
+	return New(config, kubeClient)
 }
