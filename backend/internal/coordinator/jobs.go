@@ -1,18 +1,135 @@
 package coordinator
 
 import (
+	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
-const runnerContainerName = "pgbench-runner"
+const (
+	runnerContainerName      = "pgbench-runner"
+	benchmarkJobNamePrefix   = "plugin-bench-pgbench-"
+	credentialCleanupTimeout = 10 * time.Second
+)
+
+// JobRef identifies the Job created for one benchmark run.
+type JobRef struct {
+	Name string
+	UID  types.UID
+}
+
+type benchmarkResources struct {
+	secret SecretRef
+	job    JobRef
+}
+
+// createBenchmarkResources creates the Secret before the Job that consumes
+// it. If Job creation fails, the Secret is removed before the error returns.
+// Monitoring and normal run cleanup are handled by the execution lifecycle.
+func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection Connection, options Options, labels map[string]string) (benchmarkResources, error) {
+	var resources benchmarkResources
+	if c == nil {
+		return resources, errors.New("coordinator is nil")
+	}
+	if ctx == nil {
+		return resources, errors.New("resource creation context is nil")
+	}
+	if err := c.config.Validate(); err != nil {
+		return resources, fmt.Errorf("invalid coordinator configuration: %w", err)
+	}
+	if err := connection.Validate(); err != nil {
+		return resources, fmt.Errorf("invalid database connection: %w", err)
+	}
+	if err := options.Validate(); err != nil {
+		return resources, fmt.Errorf("invalid benchmark options: %w", err)
+	}
+	if _, err := resourceRequirements(c.config.Resources); err != nil {
+		return resources, fmt.Errorf("invalid runner resources: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return resources, err
+	}
+
+	secret, err := c.createCredentialSecret(ctx, connection, labels)
+	if err != nil {
+		return resources, err
+	}
+
+	job, err := c.createBenchmarkJob(ctx, secret, options, labels)
+	if err == nil {
+		return benchmarkResources{secret: secret, job: job}, nil
+	}
+
+	// Cleanup must survive caller cancellation but still have a deadline.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialCleanupTimeout)
+	defer cancel()
+	cleanupErr := c.deleteCredentialSecret(cleanupCtx, secret)
+	if cleanupErr != nil {
+		return resources, errors.Join(err, fmt.Errorf("cleanup credential Secret after Job creation failure: %w", cleanupErr))
+	}
+	return resources, err
+}
+
+// createBenchmarkJob builds and creates one runner Job in the configured
+// workload namespace. It does not wait for completion or read logs.
+func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, options Options, labels map[string]string) (JobRef, error) {
+	var reference JobRef
+	if c == nil {
+		return reference, errors.New("coordinator is nil")
+	}
+	if ctx == nil {
+		return reference, errors.New("job creation context is nil")
+	}
+	if c.kubeClient == nil {
+		return reference, ErrKubernetesClientRequired
+	}
+	if err := c.config.Validate(); err != nil {
+		return reference, fmt.Errorf("invalid coordinator configuration: %w", err)
+	}
+	if strings.TrimSpace(secretRef.Name) == "" {
+		return reference, errors.New("credential Secret name is required")
+	}
+	if err := options.Validate(); err != nil {
+		return reference, fmt.Errorf("invalid benchmark options: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return reference, err
+	}
+
+	name, err := generateBenchmarkJobName()
+	if err != nil {
+		return reference, err
+	}
+	job, err := newBenchmarkJob(c.config, name, secretRef.Name, options, labels)
+	if err != nil {
+		return reference, fmt.Errorf("build benchmark Job: %w", err)
+	}
+
+	created, err := c.kubeClient.BatchV1().Jobs(c.config.WorkloadNamespace).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return reference, fmt.Errorf("create benchmark Job: %w", err)
+	}
+	return JobRef{Name: created.Name, UID: created.UID}, nil
+}
+
+func generateBenchmarkJobName() (string, error) {
+	var suffix [8]byte
+	if _, err := cryptorand.Read(suffix[:]); err != nil {
+		return "", fmt.Errorf("generate benchmark Job name: %w", err)
+	}
+	return benchmarkJobNamePrefix + hex.EncodeToString(suffix[:]), nil
+}
 
 // newBenchmarkJob builds the per-run Job object. It only creates an in-memory
 // Kubernetes object; the caller is responsible for API calls and cleanup.
