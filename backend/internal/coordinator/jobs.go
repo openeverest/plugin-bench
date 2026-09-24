@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -19,10 +21,11 @@ import (
 )
 
 const (
-	runnerContainerName      = "pgbench-runner"
-	benchmarkJobNamePrefix   = "plugin-bench-pgbench-"
-	credentialCleanupTimeout = 10 * time.Second
-	jobPollInterval          = time.Second
+	runnerContainerName    = "pgbench-runner"
+	benchmarkJobNamePrefix = "plugin-bench-pgbench-"
+	resourceCleanupTimeout = 10 * time.Second
+	jobPollInterval        = time.Second
+	maxRunnerLogBytes      = 1 << 20
 )
 
 // JobRef identifies the Job created for one benchmark run.
@@ -152,6 +155,77 @@ func (c *Coordinator) findJobPod(ctx context.Context, reference JobRef) (*corev1
 	return found, nil
 }
 
+type podLogReader func(context.Context, string, *corev1.PodLogOptions) (io.ReadCloser, error)
+
+// collectRunnerLogs reads the runner container's combined Pod log stream and
+// limits the returned output to maxRunnerLogBytes.
+func (c *Coordinator) collectRunnerLogs(ctx context.Context, pod *corev1.Pod) (string, bool, error) {
+	if c == nil {
+		return "", false, errors.New("coordinator is nil")
+	}
+	if ctx == nil {
+		return "", false, errors.New("log collection context is nil")
+	}
+	if c.kubeClient == nil {
+		return "", false, ErrKubernetesClientRequired
+	}
+	if err := c.config.Validate(); err != nil {
+		return "", false, fmt.Errorf("invalid coordinator configuration: %w", err)
+	}
+	if pod == nil || strings.TrimSpace(pod.Name) == "" {
+		return "", false, errors.New("Pod name is required")
+	}
+
+	reader := func(ctx context.Context, name string, options *corev1.PodLogOptions) (io.ReadCloser, error) {
+		return c.kubeClient.CoreV1().Pods(c.config.WorkloadNamespace).GetLogs(name, options).Stream(ctx)
+	}
+	return collectRunnerLogsWithReader(ctx, pod, reader)
+}
+
+func collectRunnerLogsWithReader(ctx context.Context, pod *corev1.Pod, readLogs podLogReader) (string, bool, error) {
+	if ctx == nil {
+		return "", false, errors.New("log collection context is nil")
+	}
+	if pod == nil || strings.TrimSpace(pod.Name) == "" {
+		return "", false, errors.New("Pod name is required")
+	}
+	if readLogs == nil {
+		return "", false, errors.New("Pod log reader is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+
+	stream, err := readLogs(ctx, pod.Name, &corev1.PodLogOptions{Container: runnerContainerName})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", false, ctxErr
+		}
+		return "", false, fmt.Errorf("open logs for Pod %q: %w", pod.Name, err)
+	}
+	if stream == nil {
+		return "", false, fmt.Errorf("open logs for Pod %q: empty log stream", pod.Name)
+	}
+
+	data, readErr := io.ReadAll(io.LimitReader(stream, maxRunnerLogBytes+1))
+	closeErr := stream.Close()
+	if readErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", false, ctxErr
+		}
+		return "", false, fmt.Errorf("read logs for Pod %q: %w", pod.Name, readErr)
+	}
+	if closeErr != nil {
+		return "", false, fmt.Errorf("close logs for Pod %q: %w", pod.Name, closeErr)
+	}
+
+	truncated := int64(len(data)) > maxRunnerLogBytes
+	if truncated {
+		data = data[:maxRunnerLogBytes]
+	}
+	return string(data), truncated, nil
+}
+
 // createBenchmarkResources creates the Secret before the Job that consumes
 // it. If Job creation fails, the Secret is removed before the error returns.
 // Monitoring and normal run cleanup are handled by the execution lifecycle.
@@ -189,13 +263,80 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 		return benchmarkResources{secret: secret, job: job}, nil
 	}
 
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialCleanupTimeout)
-	defer cancel()
-	cleanupErr := c.deleteCredentialSecret(cleanupCtx, secret)
+	cleanupErr := c.cleanupBenchmarkResources(ctx, benchmarkResources{secret: secret})
 	if cleanupErr != nil {
 		return resources, errors.Join(err, fmt.Errorf("cleanup credential Secret after Job creation failure: %w", cleanupErr))
 	}
 	return resources, err
+}
+
+// deleteBenchmarkJob removes a Job created for a run. The UID precondition
+// prevents deleting a different Job that was recreated with the same name.
+// Foreground propagation asks Kubernetes to remove the owned Pod first.
+func (c *Coordinator) deleteBenchmarkJob(ctx context.Context, reference JobRef) error {
+	if c == nil {
+		return errors.New("coordinator is nil")
+	}
+	if ctx == nil {
+		return errors.New("Job deletion context is nil")
+	}
+	if c.kubeClient == nil {
+		return ErrKubernetesClientRequired
+	}
+	if err := c.config.Validate(); err != nil {
+		return fmt.Errorf("invalid coordinator configuration: %w", err)
+	}
+	if strings.TrimSpace(reference.Name) == "" {
+		return errors.New("benchmark Job name is required")
+	}
+	if reference.UID == "" {
+		return errors.New("benchmark Job UID is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	propagation := metav1.DeletePropagationForeground
+	err := c.kubeClient.BatchV1().Jobs(c.config.WorkloadNamespace).Delete(ctx, reference.Name, metav1.DeleteOptions{
+		Preconditions:     &metav1.Preconditions{UID: &reference.UID},
+		PropagationPolicy: &propagation,
+	})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("delete benchmark Job: %w", err)
+	}
+	return nil
+}
+
+// cleanupBenchmarkResources removes the resources created for one run using
+// a context that survives caller cancellation but has a bounded lifetime.
+func (c *Coordinator) cleanupBenchmarkResources(ctx context.Context, resources benchmarkResources) error {
+	if c == nil {
+		return errors.New("coordinator is nil")
+	}
+	if ctx == nil {
+		return errors.New("resource cleanup context is nil")
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resourceCleanupTimeout)
+	defer cancel()
+	return c.cleanupBenchmarkResourcesWithContext(cleanupCtx, resources)
+}
+
+func (c *Coordinator) cleanupBenchmarkResourcesWithContext(ctx context.Context, resources benchmarkResources) error {
+	var cleanupErrors []error
+	if resources.job.Name != "" {
+		if err := c.deleteBenchmarkJob(ctx, resources.job); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup benchmark Job: %w", err))
+		}
+	}
+	if resources.secret.Name != "" {
+		if err := c.deleteCredentialSecret(ctx, resources.secret); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup credential Secret: %w", err))
+		}
+	}
+	return errors.Join(cleanupErrors...)
 }
 
 // createBenchmarkJob builds and creates one runner Job in the configured
