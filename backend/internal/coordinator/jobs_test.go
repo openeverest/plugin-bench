@@ -3,12 +3,14 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,6 +45,20 @@ type cleanupContextSecrets struct {
 	check func(context.Context)
 }
 
+type failingLogStream struct {
+	err    error
+	closed bool
+}
+
+func (s *failingLogStream) Read([]byte) (int, error) {
+	return 0, s.err
+}
+
+func (s *failingLogStream) Close() error {
+	s.closed = true
+	return nil
+}
+
 func (s cleanupContextSecrets) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
 	s.check(ctx)
 	return s.SecretInterface.Delete(ctx, name, options)
@@ -64,7 +80,7 @@ func TestResourceCleanupSurvivesCancellationWithDeadline(t *testing.T) {
 			t.Fatal("cleanup inherited caller cancellation")
 		}
 		deadline, ok := cleanupCtx.Deadline()
-		if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > credentialCleanupTimeout {
+		if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > resourceCleanupTimeout {
 			t.Fatal("cleanup must have a bounded future deadline")
 		}
 	}})
@@ -146,6 +162,438 @@ func TestSecretCreationFailurePreventsJobCreation(t *testing.T) {
 	}
 	if actions := client.Actions(); len(actions) != 1 || !actions[0].Matches("create", "secrets") {
 		t.Fatal("Secret creation failure must prevent further resource operations")
+	}
+}
+
+func TestWaitForJobReturnsWhenComplete(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type:   batchv1.JobComplete,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
+	client := fake.NewSimpleClientset(job)
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if err := coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: job.Name, UID: job.UID}, time.Millisecond); err != nil {
+		t.Fatalf("waitForJob() error = %v", err)
+	}
+}
+
+func TestWaitForJobReturnsFailure(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type:   batchv1.JobFailed,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
+	client := fake.NewSimpleClientset(job)
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: job.Name, UID: job.UID}, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), `benchmark Job "job-1" failed`) {
+		t.Fatalf("error = %v, want Job failure", err)
+	}
+}
+
+func TestWaitForJobPollsUntilTerminalState(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	getCount := 0
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		getCount++
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"}}
+		if getCount == 1 {
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionFalse}}
+		}
+		if getCount == 2 {
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		}
+		return true, job, nil
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if err := coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: "job-1", UID: "job-uid"}, time.Millisecond); err != nil {
+		t.Fatalf("waitForJob() error = %v", err)
+	}
+	if getCount != 2 {
+		t.Fatalf("Job was fetched %d times, want 2", getCount)
+	}
+}
+
+func TestWaitForJobPreservesCancellation(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	ctx, cancel := context.WithCancel(context.Background())
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		cancel()
+		return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"}}, nil
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.waitForJobAtInterval(ctx, JobRef{Name: "job-1", UID: "job-uid"}, time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestWaitForJobRejectsUIDMismatch(t *testing.T) {
+	client := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "different-uid"},
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: "job-1", UID: "created-uid"}, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "UID does not match") {
+		t.Fatalf("error = %v, want UID mismatch", err)
+	}
+}
+
+func TestDeleteBenchmarkJobUsesUIDAndForegroundPropagation(t *testing.T) {
+	client := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: validConfig().WorkloadNamespace, UID: "job-uid"},
+	})
+	client.PrependReactor("delete", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		deleteAction := action.(ktesting.DeleteAction)
+		options := deleteAction.GetDeleteOptions()
+		if options.Preconditions == nil || options.Preconditions.UID == nil || *options.Preconditions.UID != "job-uid" {
+			t.Fatal("Job deletion must specify the recorded UID")
+		}
+		if options.PropagationPolicy == nil || *options.PropagationPolicy != metav1.DeletePropagationForeground {
+			t.Fatal("Job deletion must use foreground propagation")
+		}
+		return false, nil, nil
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if err := coordinator.deleteBenchmarkJob(context.Background(), JobRef{Name: "job-1", UID: "job-uid"}); err != nil {
+		t.Fatalf("deleteBenchmarkJob() error = %v", err)
+	}
+	if _, err := client.BatchV1().Jobs(validConfig().WorkloadNamespace).Get(context.Background(), "job-1", metav1.GetOptions{}); err == nil {
+		t.Fatal("Job still exists after deletion")
+	}
+}
+
+func TestDeleteBenchmarkJobTreatsMissingJobAsSuccess(t *testing.T) {
+	coordinator, err := New(validConfig(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if err := coordinator.deleteBenchmarkJob(context.Background(), JobRef{Name: "job-1", UID: "job-uid"}); err != nil {
+		t.Fatalf("missing Job should be treated as cleaned up: %v", err)
+	}
+}
+
+func TestCleanupBenchmarkResourcesDeletesJobBeforeSecret(t *testing.T) {
+	client := fake.NewSimpleClientset(
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: validConfig().WorkloadNamespace, UID: "job-uid"}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "secret-1", Namespace: validConfig().WorkloadNamespace, UID: "secret-uid"}},
+	)
+	var actions []string
+	client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, "job")
+		return false, nil, nil
+	})
+	client.PrependReactor("delete", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, "secret")
+		return false, nil, nil
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.cleanupBenchmarkResources(context.Background(), benchmarkResources{
+		job:    JobRef{Name: "job-1", UID: "job-uid"},
+		secret: SecretRef{Name: "secret-1", UID: "secret-uid"},
+	})
+	if err != nil {
+		t.Fatalf("cleanupBenchmarkResources() error = %v", err)
+	}
+	if strings.Join(actions, ",") != "job,secret" {
+		t.Fatalf("cleanup order = %v, want [job secret]", actions)
+	}
+}
+
+func TestCleanupBenchmarkResourcesPreservesDeleteErrors(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	jobErr, secretErr := errors.New("Job deletion failed"), errors.New("Secret deletion failed")
+	client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, jobErr
+	})
+	client.PrependReactor("delete", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, secretErr
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.cleanupBenchmarkResources(context.Background(), benchmarkResources{
+		job:    JobRef{Name: "job-1", UID: "job-uid"},
+		secret: SecretRef{Name: "secret-1", UID: "secret-uid"},
+	})
+	if !errors.Is(err, jobErr) || !errors.Is(err, secretErr) {
+		t.Fatalf("error = %v, want both cleanup errors", err)
+	}
+}
+
+func TestCleanupWaitsForJobDeletionBeforeSecret(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil // The API acknowledged deletion, but it is still pending.
+	})
+	reads := 0
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		reads++
+		if reads == 1 {
+			return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: "job-uid"}}, nil
+		}
+		return true, nil, apierrors.NewNotFound(batchv1.Resource("jobs"), "job")
+	})
+	secretDeleted := false
+	client.PrependReactor("delete", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		if reads < 2 {
+			t.Fatal("Secret deleted before Job deletion was confirmed")
+		}
+		secretDeleted = true
+		return true, nil, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.cleanupBenchmarkResources(context.Background(), benchmarkResources{
+		job: JobRef{Name: "job", UID: "job-uid"}, secret: SecretRef{Name: "secret", UID: "secret-uid"},
+	})
+	if err != nil || !secretDeleted {
+		t.Fatalf("error = %v, Secret deleted = %v", err, secretDeleted)
+	}
+}
+
+func TestCleanupJobDeletionTimeoutStillAttemptsSecret(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, nil })
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{UID: "job-uid"}}, nil
+	})
+	secretDeleted := false
+	client.PrependReactor("delete", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		secretDeleted = true
+		return true, nil, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = c.cleanupBenchmarkResourcesWithContext(ctx, benchmarkResources{
+		job: JobRef{Name: "job", UID: "job-uid"}, secret: SecretRef{Name: "secret", UID: "secret-uid"},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || !secretDeleted {
+		t.Fatalf("error = %v, Secret deleted = %v", err, secretDeleted)
+	}
+}
+
+func TestFindJobPod(t *testing.T) {
+	ref := JobRef{Name: "benchmark", UID: "job-uid"}
+	newPod := func(name string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: validConfig().WorkloadNamespace,
+			Labels: map[string]string{batchv1.JobNameLabel: ref.Name},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "batch/v1", Kind: "Job", Name: ref.Name,
+				UID: ref.UID, Controller: boolPtr(true),
+			}},
+		}}
+	}
+	for _, test := range []struct {
+		name      string
+		mutate    func(*corev1.Pod)
+		wantMatch bool
+	}{
+		{"matching owner", func(*corev1.Pod) {}, true},
+		{"old Job UID", func(p *corev1.Pod) { p.OwnerReferences[0].UID = "old" }, false},
+		{"no owner", func(p *corev1.Pod) { p.OwnerReferences = nil }, false},
+		{"not controller", func(p *corev1.Pod) { p.OwnerReferences[0].Controller = boolPtr(false) }, false},
+		{"wrong kind", func(p *corev1.Pod) { p.OwnerReferences[0].Kind = "ReplicaSet" }, false},
+		{"wrong owner name", func(p *corev1.Pod) { p.OwnerReferences[0].Name = "other" }, false},
+		{"wrong API", func(p *corev1.Pod) { p.OwnerReferences[0].APIVersion = "apps/v1" }, false},
+		{"wrong label", func(p *corev1.Pod) { p.Labels[batchv1.JobNameLabel] = "other" }, false},
+		{"wrong namespace", func(p *corev1.Pod) { p.Namespace = "other" }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pod := newPod("runner")
+			test.mutate(pod)
+			client := fake.NewSimpleClientset(pod)
+			c, err := New(validConfig(), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := c.findJobPod(context.Background(), ref)
+			if test.wantMatch {
+				if err != nil || got == nil || got.Name != pod.Name {
+					t.Fatalf("Pod = %v, error = %v", got, err)
+				}
+			} else if err == nil || got != nil || !strings.Contains(err.Error(), "no Pod found") {
+				t.Fatalf("expected no matching Pod, got %v, %v", got, err)
+			}
+		})
+	}
+	t.Run("multiple matches", func(t *testing.T) {
+		c, err := New(validConfig(), fake.NewSimpleClientset(newPod("one"), newPod("two")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.findJobPod(context.Background(), ref)
+		if got != nil || err == nil || !strings.Contains(err.Error(), "multiple Pods") {
+			t.Fatalf("expected ambiguity error, got %v, %v", got, err)
+		}
+	})
+	t.Run("empty list", func(t *testing.T) {
+		c, err := New(validConfig(), fake.NewSimpleClientset())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.findJobPod(context.Background(), ref)
+		if got != nil || err == nil || !strings.Contains(err.Error(), "no Pod found") {
+			t.Fatalf("expected missing Pod error, got %v, %v", got, err)
+		}
+	})
+}
+
+func TestFindJobPodErrors(t *testing.T) {
+	for _, test := range []string{"API failure", "cancellation during list", "already canceled", "expired deadline", "missing UID"} {
+		t.Run(test, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ref := JobRef{Name: "benchmark", UID: "job-uid"}
+			cause := errors.New("API unavailable")
+			switch test {
+			case "already canceled":
+				cancel()
+				cause = context.Canceled
+			case "expired deadline":
+				var stop context.CancelFunc
+				ctx, stop = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				defer stop()
+				cause = context.DeadlineExceeded
+			case "missing UID":
+				ref.UID = ""
+			case "cancellation during list":
+				cause = context.Canceled
+			}
+			client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+				if test == "cancellation during list" {
+					cancel()
+				}
+				return true, nil, cause
+			})
+			c, err := New(validConfig(), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod, err := c.findJobPod(ctx, ref)
+			if pod != nil || err == nil {
+				t.Fatal("expected error and no Pod")
+			}
+			if test != "missing UID" && !errors.Is(err, cause) {
+				t.Fatalf("error = %v, want %v", err, cause)
+			}
+			if (test == "already canceled" || test == "expired deadline" || test == "missing UID") && len(client.Actions()) != 0 {
+				t.Fatal("invalid input or expired context must prevent API calls")
+			}
+		})
+	}
+}
+
+func TestCollectRunnerLogs(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "runner-pod"}}
+	var requestedName string
+	var requestedContainer string
+
+	output, truncated, err := collectRunnerLogsWithReader(context.Background(), pod, func(_ context.Context, name string, options *corev1.PodLogOptions) (io.ReadCloser, error) {
+		requestedName = name
+		requestedContainer = options.Container
+		return io.NopCloser(strings.NewReader("transaction output\n")), nil
+	})
+	if err != nil || truncated || output != "transaction output\n" {
+		t.Fatalf("output = %q, truncated = %v, error = %v", output, truncated, err)
+	}
+	if requestedName != pod.Name || requestedContainer != runnerContainerName {
+		t.Fatalf("requested Pod/container = %q/%q", requestedName, requestedContainer)
+	}
+}
+
+func TestCollectRunnerLogsUsesKubernetesClient(t *testing.T) {
+	coordinator, err := New(validConfig(), fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	output, truncated, err := coordinator.collectRunnerLogs(context.Background(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "runner-pod"}})
+	if err != nil || truncated || output != "fake logs" {
+		t.Fatalf("output = %q, truncated = %v, error = %v", output, truncated, err)
+	}
+}
+
+func TestCollectRunnerLogsTruncatesOutput(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "runner-pod"}}
+	largeOutput := strings.Repeat("x", int(maxRunnerLogBytes)+1)
+
+	output, truncated, err := collectRunnerLogsWithReader(context.Background(), pod, func(context.Context, string, *corev1.PodLogOptions) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(largeOutput)), nil
+	})
+	if err != nil {
+		t.Fatalf("collectRunnerLogsWithReader() error = %v", err)
+	}
+	if !truncated || len(output) != int(maxRunnerLogBytes) || output != largeOutput[:maxRunnerLogBytes] {
+		t.Fatalf("output length = %d, truncated = %v", len(output), truncated)
+	}
+}
+
+func TestCollectRunnerLogsClosesStreamAfterReadError(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "runner-pod"}}
+	stream := &failingLogStream{err: errors.New("log stream failed")}
+	output, truncated, err := collectRunnerLogsWithReader(context.Background(), pod, func(context.Context, string, *corev1.PodLogOptions) (io.ReadCloser, error) {
+		return stream, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "log stream failed") || output != "" || truncated || !stream.closed {
+		t.Fatalf("output = %q, truncated = %v, closed = %v, error = %v", output, truncated, stream.closed, err)
+	}
+}
+
+func TestCollectRunnerLogsPreservesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	output, truncated, err := collectRunnerLogsWithReader(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "runner-pod"}}, func(context.Context, string, *corev1.PodLogOptions) (io.ReadCloser, error) {
+		called = true
+		return nil, nil
+	})
+	if !errors.Is(err, context.Canceled) || output != "" || truncated || called {
+		t.Fatalf("output = %q, truncated = %v, called = %v, error = %v", output, truncated, called, err)
 	}
 }
 

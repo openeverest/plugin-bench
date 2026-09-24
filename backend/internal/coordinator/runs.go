@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
-var ErrRunNotImplemented = errors.New("benchmark execution is not implemented")
+const failureLogTimeout = 10 * time.Second
 
 // Connection contains resolved database credentials. Do not log this value.
 // Database must explicitly identify the database used for benchmarking.
@@ -77,11 +78,9 @@ type Result struct {
 	OutputTruncated bool
 }
 
-// Run validates one benchmark request. Kubernetes Secret and Job creation
-// will be added when the execution components are implemented.
-func (c *Coordinator) Run(ctx context.Context, connection Connection, options Options) (Result, error) {
-	var result Result
-
+// Run creates and executes one benchmark Job, returns the runner output, and
+// removes the Job and temporary credential Secret before returning.
+func (c *Coordinator) Run(ctx context.Context, connection Connection, options Options) (result Result, runErr error) {
 	if c == nil {
 		return result, errors.New("coordinator is nil")
 	}
@@ -101,7 +100,43 @@ func (c *Coordinator) Run(ctx context.Context, connection Connection, options Op
 		return result, err
 	}
 
-	return result, ErrRunNotImplemented
+	// Bound the coordinator's API calls and waiting, independently of the
+	// Kubernetes Job deadline. An earlier caller deadline still takes priority.
+	ctx, cancelExecution := context.WithTimeout(ctx, c.config.ExecutionTimeout)
+	defer cancelExecution()
+
+	resources, err := c.createBenchmarkResources(ctx, connection, options, nil)
+	if err != nil {
+		return result, err
+	}
+	result.JobName = resources.job.Name
+
+	defer func() {
+		if cleanupErr := c.cleanupBenchmarkResources(ctx, resources); cleanupErr != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("cleanup benchmark resources: %w", cleanupErr))
+		}
+	}()
+
+	logCtx := ctx
+	if err := c.waitForJob(ctx, resources.job); err != nil {
+		runErr = fmt.Errorf("wait for benchmark Job %q: %w", resources.job.Name, err)
+		// Preserve diagnostics even when the execution context has expired.
+		// Both Pod discovery and log retrieval share this bounded budget.
+		var cancel context.CancelFunc
+		logCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), failureLogTimeout)
+		defer cancel()
+	}
+
+	pod, err := c.findJobPod(logCtx, resources.job)
+	if err != nil {
+		return result, errors.Join(runErr, fmt.Errorf("find runner Pod for Job %q: %w", resources.job.Name, err))
+	}
+
+	result.Output, result.OutputTruncated, err = c.collectRunnerLogs(logCtx, pod)
+	if err != nil {
+		return result, errors.Join(runErr, fmt.Errorf("collect runner logs for Job %q: %w", resources.job.Name, err))
+	}
+	return result, runErr
 }
 
 // DefaultOptions matches the existing pgbench runner defaults.
