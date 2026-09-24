@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -21,6 +22,7 @@ const (
 	runnerContainerName      = "pgbench-runner"
 	benchmarkJobNamePrefix   = "plugin-bench-pgbench-"
 	credentialCleanupTimeout = 10 * time.Second
+	jobPollInterval          = time.Second
 )
 
 // JobRef identifies the Job created for one benchmark run.
@@ -29,9 +31,125 @@ type JobRef struct {
 	UID  types.UID
 }
 
+// waitForJob polls a created Job until Kubernetes reports completion or
+// failure. Log collection and resource cleanup happen in later lifecycle
+// steps.
+func (c *Coordinator) waitForJob(ctx context.Context, reference JobRef) error {
+	return c.waitForJobAtInterval(ctx, reference, jobPollInterval)
+}
+
+func (c *Coordinator) waitForJobAtInterval(ctx context.Context, reference JobRef, interval time.Duration) error {
+	if c == nil {
+		return errors.New("coordinator is nil")
+	}
+	if ctx == nil {
+		return errors.New("job polling context is nil")
+	}
+	if c.kubeClient == nil {
+		return ErrKubernetesClientRequired
+	}
+	if err := c.config.Validate(); err != nil {
+		return fmt.Errorf("invalid coordinator configuration: %w", err)
+	}
+	if strings.TrimSpace(reference.Name) == "" {
+		return errors.New("benchmark Job name is required")
+	}
+	if interval <= 0 {
+		return errors.New("job polling interval must be positive")
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		job, err := c.kubeClient.BatchV1().Jobs(c.config.WorkloadNamespace).Get(ctx, reference.Name, metav1.GetOptions{})
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return fmt.Errorf("get benchmark Job %q: %w", reference.Name, err)
+		}
+		if reference.UID != "" && job.UID != "" && job.UID != reference.UID {
+			return fmt.Errorf("benchmark Job %q UID does not match the created Job", reference.Name)
+		}
+
+		for _, condition := range job.Status.Conditions {
+			if condition.Status != corev1.ConditionTrue {
+				continue
+			}
+			switch condition.Type {
+			case batchv1.JobComplete:
+				return nil
+			case batchv1.JobFailed:
+				return fmt.Errorf("benchmark Job %q failed", reference.Name)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 type benchmarkResources struct {
 	secret SecretRef
 	job    JobRef
+}
+
+// findJobPod uses the Kubernetes Job label to narrow the search, then checks
+// controller ownership so a same-named Job from another run cannot match.
+// Multiple owned Pods are an error: choosing one arbitrarily could hide output.
+func (c *Coordinator) findJobPod(ctx context.Context, reference JobRef) (*corev1.Pod, error) {
+	if c == nil {
+		return nil, errors.New("coordinator is nil")
+	}
+	if ctx == nil {
+		return nil, errors.New("Pod discovery context is nil")
+	}
+	if c.kubeClient == nil {
+		return nil, ErrKubernetesClientRequired
+	}
+	if err := c.config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid coordinator configuration: %w", err)
+	}
+	if strings.TrimSpace(reference.Name) == "" || reference.UID == "" {
+		return nil, errors.New("benchmark Job name and UID are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	pods, err := c.kubeClient.CoreV1().Pods(c.config.WorkloadNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.Set{batchv1.JobNameLabel: reference.Name}.String(),
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list Pods for benchmark Job %q: %w", reference.Name, err)
+	}
+	var found *corev1.Pod
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		owner := metav1.GetControllerOf(pod)
+		if owner == nil || owner.APIVersion != batchv1.SchemeGroupVersion.String() ||
+			owner.Kind != "Job" || owner.Name != reference.Name || owner.UID != reference.UID {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("multiple Pods found for benchmark Job %q", reference.Name)
+		}
+		found = pod
+	}
+	if found == nil {
+		return nil, fmt.Errorf("no Pod found for benchmark Job %q", reference.Name)
+	}
+	return found, nil
 }
 
 // createBenchmarkResources creates the Secret before the Job that consumes
@@ -71,7 +189,6 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 		return benchmarkResources{secret: secret, job: job}, nil
 	}
 
-	// Cleanup must survive caller cancellation but still have a deadline.
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialCleanupTimeout)
 	defer cancel()
 	cleanupErr := c.deleteCredentialSecret(cleanupCtx, secret)

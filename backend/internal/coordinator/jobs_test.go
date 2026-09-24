@@ -149,6 +149,218 @@ func TestSecretCreationFailurePreventsJobCreation(t *testing.T) {
 	}
 }
 
+func TestWaitForJobReturnsWhenComplete(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type:   batchv1.JobComplete,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
+	client := fake.NewSimpleClientset(job)
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if err := coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: job.Name, UID: job.UID}, time.Millisecond); err != nil {
+		t.Fatalf("waitForJob() error = %v", err)
+	}
+}
+
+func TestWaitForJobReturnsFailure(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type:   batchv1.JobFailed,
+			Status: corev1.ConditionTrue,
+		}}},
+	}
+	client := fake.NewSimpleClientset(job)
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: job.Name, UID: job.UID}, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), `benchmark Job "job-1" failed`) {
+		t.Fatalf("error = %v, want Job failure", err)
+	}
+}
+
+func TestWaitForJobPollsUntilTerminalState(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	getCount := 0
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		getCount++
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"}}
+		if getCount == 1 {
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionFalse}}
+		}
+		if getCount == 2 {
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		}
+		return true, job, nil
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if err := coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: "job-1", UID: "job-uid"}, time.Millisecond); err != nil {
+		t.Fatalf("waitForJob() error = %v", err)
+	}
+	if getCount != 2 {
+		t.Fatalf("Job was fetched %d times, want 2", getCount)
+	}
+}
+
+func TestWaitForJobPreservesCancellation(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	ctx, cancel := context.WithCancel(context.Background())
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		cancel()
+		return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "job-uid"}}, nil
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.waitForJobAtInterval(ctx, JobRef{Name: "job-1", UID: "job-uid"}, time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestWaitForJobRejectsUIDMismatch(t *testing.T) {
+	client := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "plugin-bench-workloads", UID: "different-uid"},
+	})
+	coordinator, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = coordinator.waitForJobAtInterval(context.Background(), JobRef{Name: "job-1", UID: "created-uid"}, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "UID does not match") {
+		t.Fatalf("error = %v, want UID mismatch", err)
+	}
+}
+
+func TestFindJobPod(t *testing.T) {
+	ref := JobRef{Name: "benchmark", UID: "job-uid"}
+	newPod := func(name string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: validConfig().WorkloadNamespace,
+			Labels: map[string]string{batchv1.JobNameLabel: ref.Name},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "batch/v1", Kind: "Job", Name: ref.Name,
+				UID: ref.UID, Controller: boolPtr(true),
+			}},
+		}}
+	}
+	for _, test := range []struct {
+		name      string
+		mutate    func(*corev1.Pod)
+		wantMatch bool
+	}{
+		{"matching owner", func(*corev1.Pod) {}, true},
+		{"old Job UID", func(p *corev1.Pod) { p.OwnerReferences[0].UID = "old" }, false},
+		{"no owner", func(p *corev1.Pod) { p.OwnerReferences = nil }, false},
+		{"not controller", func(p *corev1.Pod) { p.OwnerReferences[0].Controller = boolPtr(false) }, false},
+		{"wrong kind", func(p *corev1.Pod) { p.OwnerReferences[0].Kind = "ReplicaSet" }, false},
+		{"wrong owner name", func(p *corev1.Pod) { p.OwnerReferences[0].Name = "other" }, false},
+		{"wrong API", func(p *corev1.Pod) { p.OwnerReferences[0].APIVersion = "apps/v1" }, false},
+		{"wrong label", func(p *corev1.Pod) { p.Labels[batchv1.JobNameLabel] = "other" }, false},
+		{"wrong namespace", func(p *corev1.Pod) { p.Namespace = "other" }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pod := newPod("runner")
+			test.mutate(pod)
+			client := fake.NewSimpleClientset(pod)
+			c, err := New(validConfig(), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := c.findJobPod(context.Background(), ref)
+			if test.wantMatch {
+				if err != nil || got == nil || got.Name != pod.Name {
+					t.Fatalf("Pod = %v, error = %v", got, err)
+				}
+			} else if err == nil || got != nil || !strings.Contains(err.Error(), "no Pod found") {
+				t.Fatalf("expected no matching Pod, got %v, %v", got, err)
+			}
+		})
+	}
+	t.Run("multiple matches", func(t *testing.T) {
+		c, err := New(validConfig(), fake.NewSimpleClientset(newPod("one"), newPod("two")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.findJobPod(context.Background(), ref)
+		if got != nil || err == nil || !strings.Contains(err.Error(), "multiple Pods") {
+			t.Fatalf("expected ambiguity error, got %v, %v", got, err)
+		}
+	})
+	t.Run("empty list", func(t *testing.T) {
+		c, err := New(validConfig(), fake.NewSimpleClientset())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.findJobPod(context.Background(), ref)
+		if got != nil || err == nil || !strings.Contains(err.Error(), "no Pod found") {
+			t.Fatalf("expected missing Pod error, got %v, %v", got, err)
+		}
+	})
+}
+
+func TestFindJobPodErrors(t *testing.T) {
+	for _, test := range []string{"API failure", "cancellation during list", "already canceled", "expired deadline", "missing UID"} {
+		t.Run(test, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ref := JobRef{Name: "benchmark", UID: "job-uid"}
+			cause := errors.New("API unavailable")
+			switch test {
+			case "already canceled":
+				cancel()
+				cause = context.Canceled
+			case "expired deadline":
+				var stop context.CancelFunc
+				ctx, stop = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				defer stop()
+				cause = context.DeadlineExceeded
+			case "missing UID":
+				ref.UID = ""
+			case "cancellation during list":
+				cause = context.Canceled
+			}
+			client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+				if test == "cancellation during list" {
+					cancel()
+				}
+				return true, nil, cause
+			})
+			c, err := New(validConfig(), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod, err := c.findJobPod(ctx, ref)
+			if pod != nil || err == nil {
+				t.Fatal("expected error and no Pod")
+			}
+			if test != "missing UID" && !errors.Is(err, cause) {
+				t.Fatalf("error = %v, want %v", err, cause)
+			}
+			if (test == "already canceled" || test == "expired deadline" || test == "missing UID") && len(client.Actions()) != 0 {
+				t.Fatal("invalid input or expired context must prevent API calls")
+			}
+		})
+	}
+}
+
 func TestCreateBenchmarkJob(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
