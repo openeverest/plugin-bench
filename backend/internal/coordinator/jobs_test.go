@@ -10,6 +10,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -353,6 +354,64 @@ func TestCleanupBenchmarkResourcesPreservesDeleteErrors(t *testing.T) {
 	})
 	if !errors.Is(err, jobErr) || !errors.Is(err, secretErr) {
 		t.Fatalf("error = %v, want both cleanup errors", err)
+	}
+}
+
+func TestCleanupWaitsForJobDeletionBeforeSecret(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil // The API acknowledged deletion, but it is still pending.
+	})
+	reads := 0
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		reads++
+		if reads == 1 {
+			return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: "job-uid"}}, nil
+		}
+		return true, nil, apierrors.NewNotFound(batchv1.Resource("jobs"), "job")
+	})
+	secretDeleted := false
+	client.PrependReactor("delete", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		if reads < 2 {
+			t.Fatal("Secret deleted before Job deletion was confirmed")
+		}
+		secretDeleted = true
+		return true, nil, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.cleanupBenchmarkResources(context.Background(), benchmarkResources{
+		job: JobRef{Name: "job", UID: "job-uid"}, secret: SecretRef{Name: "secret", UID: "secret-uid"},
+	})
+	if err != nil || !secretDeleted {
+		t.Fatalf("error = %v, Secret deleted = %v", err, secretDeleted)
+	}
+}
+
+func TestCleanupJobDeletionTimeoutStillAttemptsSecret(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, nil })
+	client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{UID: "job-uid"}}, nil
+	})
+	secretDeleted := false
+	client.PrependReactor("delete", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		secretDeleted = true
+		return true, nil, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = c.cleanupBenchmarkResourcesWithContext(ctx, benchmarkResources{
+		job: JobRef{Name: "job", UID: "job-uid"}, secret: SecretRef{Name: "secret", UID: "secret-uid"},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || !secretDeleted {
+		t.Fatalf("error = %v, Secret deleted = %v", err, secretDeleted)
 	}
 }
 

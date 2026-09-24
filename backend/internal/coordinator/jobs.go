@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
@@ -307,11 +308,28 @@ func (c *Coordinator) deleteBenchmarkJob(ctx context.Context, reference JobRef) 
 	if err != nil {
 		return fmt.Errorf("delete benchmark Job: %w", err)
 	}
+	// Foreground deletion keeps the Job until its blocking dependents are gone.
+	// A successful DELETE only acknowledges the request; wait for confirmation.
+	err = wait.PollUntilContextCancel(ctx, jobPollInterval, true, func(ctx context.Context) (bool, error) {
+		job, err := c.kubeClient.BatchV1().Jobs(c.config.WorkloadNamespace).Get(ctx, reference.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if job.UID != reference.UID {
+			return false, errors.New("Job UID changed before deletion could be confirmed")
+		}
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("wait for benchmark Job deletion: %w", err)
+	}
 	return nil
 }
 
-// cleanupBenchmarkResources removes the resources created for one run using
-// a context that survives caller cancellation but has a bounded lifetime.
+// cleanupBenchmarkResources removes the resources created for one run
 func (c *Coordinator) cleanupBenchmarkResources(ctx context.Context, resources benchmarkResources) error {
 	if c == nil {
 		return errors.New("coordinator is nil")
@@ -327,7 +345,16 @@ func (c *Coordinator) cleanupBenchmarkResources(ctx context.Context, resources b
 func (c *Coordinator) cleanupBenchmarkResourcesWithContext(ctx context.Context, resources benchmarkResources) error {
 	var cleanupErrors []error
 	if resources.job.Name != "" {
-		if err := c.deleteBenchmarkJob(ctx, resources.job); err != nil {
+		jobCtx := ctx
+		cancel := func() {}
+		if deadline, ok := ctx.Deadline(); ok && resources.secret.Name != "" {
+			// Reserve half the remaining cleanup budget for Secret deletion,
+			// even if Kubernetes cannot finish deleting the Job in time.
+			jobCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/2)
+		}
+		err := c.deleteBenchmarkJob(jobCtx, resources.job)
+		cancel()
+		if err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("cleanup benchmark Job: %w", err))
 		}
 	}
