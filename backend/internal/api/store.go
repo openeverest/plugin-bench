@@ -20,8 +20,7 @@ type RunStore struct {
 	runs map[string]Run
 }
 
-// Create stores a new running record. Request validation and ID generation
-// belong to the caller; credentials must not be included in the request.
+// Create stores a new running record.
 func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
 	if strings.TrimSpace(id) == "" {
 		return Run{}, errors.New("run ID is required")
@@ -54,8 +53,6 @@ func (s *RunStore) Get(id string) (Run, error) {
 	return run, nil
 }
 
-// Complete permits only running -> succeeded/failed transitions. The caller
-// must sanitize result.Output and supply a safe public error message.
 func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Result, message string) error {
 	if status != RunStatusSucceeded && status != RunStatusFailed {
 		return errors.New("completion status must be succeeded or failed")
