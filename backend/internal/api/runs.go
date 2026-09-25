@@ -61,6 +61,17 @@ type Run struct {
 	Error           string           `json:"error,omitempty"`
 }
 
+type RunStatusResponse struct {
+	ID              string     `json:"id"`
+	Status          RunStatus  `json:"status"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+	JobName         string     `json:"jobName,omitempty"`
+	Output          string     `json:"output,omitempty"`
+	OutputTruncated bool       `json:"outputTruncated"`
+	Error           string     `json:"error,omitempty"`
+}
+
 func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 	token, err := extractBearerToken(r)
 	if err != nil {
@@ -163,6 +174,7 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 	defer cancel()
 	defer func() { <-a.runSlots }()
 	result, err := a.runner.Run(ctx, connection, options)
+	result.Output = sanitizeRunnerOutput(result.Output, connection.Password)
 	status, message := RunStatusSucceeded, ""
 	if err != nil {
 		status, message = RunStatusFailed, "benchmark execution failed"
@@ -172,6 +184,13 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 		// must still release its concurrency slot.
 		return
 	}
+}
+
+func sanitizeRunnerOutput(output, password string) string {
+	if password == "" {
+		return output
+	}
+	return strings.ReplaceAll(output, password, "[REDACTED]")
 }
 
 func credentialLookupError(err error) (int, string) {
@@ -281,7 +300,53 @@ func decodeCreateRunRequest(w http.ResponseWriter, r *http.Request) (CreateRunRe
 	return *decoded, nil
 }
 
-// getRun is a placeholder until run status retrieval is implemented.
 func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "benchmark run status retrieval is not implemented", http.StatusNotImplemented)
+	token, err := extractBearerToken(r)
+	if err != nil {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	run, err := a.store.Get(r.PathValue("id"))
+	if errors.Is(err, ErrRunNotFound) {
+		http.Error(w, "benchmark run not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "failed to retrieve benchmark run", http.StatusInternalServerError)
+		return
+	}
+	if a.getCredentials == nil {
+		http.Error(w, "database credential lookup is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	_, err = a.getCredentials(
+		r.Context(), token,
+		run.Request.Target.K8sCluster,
+		run.Request.Target.Namespace,
+		run.Request.Target.Instance,
+	)
+	if err != nil {
+		status, message := credentialLookupError(err)
+		if status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+		}
+		http.Error(w, message, status)
+		return
+	}
+
+	response := RunStatusResponse{
+		ID:              run.ID,
+		Status:          run.Status,
+		CreatedAt:       run.CreatedAt,
+		CompletedAt:     run.CompletedAt,
+		JobName:         run.JobName,
+		Output:          run.Output,
+		OutputTruncated: run.OutputTruncated,
+		Error:           run.Error,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return
+	}
 }

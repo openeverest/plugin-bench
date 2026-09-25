@@ -143,7 +143,7 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 		}
 		close(started)
 		<-release
-		return coordinator.Result{JobName: "bench-run-job", Output: "done"}, nil
+		return coordinator.Result{JobName: "bench-run-job", Output: "pgbench password=bench-password done"}, nil
 	})
 	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
@@ -184,7 +184,7 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if err != nil || run.Status != RunStatusSucceeded || run.JobName != "bench-run-job" || run.Output != "done" {
+	if err != nil || run.Status != RunStatusSucceeded || run.JobName != "bench-run-job" || run.Output != "pgbench password=[REDACTED] done" {
 		t.Fatalf("run completion was not stored: run=%+v err=%v", run, err)
 	}
 }
@@ -236,5 +236,94 @@ func TestConnectionFromCredentials(t *testing.T) {
 		if _, err := connectionFromCredentials("bench", credentials); err == nil {
 			t.Fatal("expected unsupported credentials to be rejected")
 		}
+	}
+}
+
+func TestGetRun(t *testing.T) {
+	tests := []struct {
+		name          string
+		exists        bool
+		authorization string
+		lookupErr     error
+		status        RunStatus
+		result        coordinator.Result
+		runErr        string
+		wantHTTP      int
+		wantLookup    bool
+	}{
+		{name: "missing authorization", exists: true, wantHTTP: http.StatusUnauthorized},
+		{name: "unknown ID", authorization: "Bearer test-token", wantHTTP: http.StatusNotFound},
+		{name: "target access denied", exists: true, authorization: "Bearer test-token", lookupErr: everest.ErrForbidden, wantHTTP: http.StatusForbidden, wantLookup: true},
+		{name: "running status", exists: true, authorization: "Bearer test-token", status: RunStatusRunning, wantHTTP: http.StatusOK, wantLookup: true},
+		{name: "successful result", exists: true, authorization: "Bearer test-token", status: RunStatusSucceeded, result: coordinator.Result{JobName: "bench-job", Output: "sanitized log", OutputTruncated: true}, wantHTTP: http.StatusOK, wantLookup: true},
+		{name: "failed result", exists: true, authorization: "Bearer test-token", status: RunStatusFailed, result: coordinator.Result{JobName: "failed-job", Output: "partial sanitized log"}, runErr: "benchmark execution failed", wantHTTP: http.StatusOK, wantLookup: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewRunStore()
+			if test.exists {
+				run, err := store.Create("run-123", CreateRunRequest{
+					Target: Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if test.status == RunStatusSucceeded || test.status == RunStatusFailed {
+					if err := store.Complete(run.ID, test.status, test.result, test.runErr); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			lookupCalled := false
+			api := NewAPI(func(_ context.Context, token, cluster, namespace, instance string) (*everest.Credentials, error) {
+				lookupCalled = true
+				if token != "test-token" || cluster != "local" || namespace != "databases" || instance != "postgres-1" {
+					t.Fatalf("unexpected credential lookup arguments: token=%q target=%q/%q/%q", token, cluster, namespace, instance)
+				}
+				return testCredentials(), test.lookupErr
+			}, testRunner{}, store, context.Background())
+
+			r := httptest.NewRequest(http.MethodGet, "/api/runs/run-123", nil)
+			r.SetPathValue("id", "run-123")
+			if test.authorization != "" {
+				r.Header.Set("Authorization", test.authorization)
+			}
+			w := httptest.NewRecorder()
+			api.getRun(w, r)
+			if w.Code != test.wantHTTP {
+				t.Fatalf("status=%d, want %d; body=%s", w.Code, test.wantHTTP, w.Body.String())
+			}
+			if lookupCalled != test.wantLookup {
+				t.Fatalf("credential lookup called=%v, want %v", lookupCalled, test.wantLookup)
+			}
+			if test.wantHTTP != http.StatusOK {
+				if strings.Contains(w.Body.String(), "test-token") || strings.Contains(w.Body.String(), "bench-password") {
+					t.Fatal("error response exposed sensitive data")
+				}
+				return
+			}
+
+			var response RunStatusResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.ID != "run-123" || response.Status != test.status || response.CreatedAt.IsZero() {
+				t.Fatalf("unexpected run status response: %+v", response)
+			}
+			if test.status == RunStatusRunning {
+				if response.CompletedAt != nil || response.Output != "" {
+					t.Fatalf("running response contains completion data: %+v", response)
+				}
+				return
+			}
+			if response.CompletedAt == nil || response.JobName != test.result.JobName || response.Output != test.result.Output || response.OutputTruncated != test.result.OutputTruncated || response.Error != test.runErr {
+				t.Fatalf("result fields do not match stored run: %+v", response)
+			}
+			if strings.Contains(w.Body.String(), "bench-password") || strings.Contains(w.Body.String(), "test-token") {
+				t.Fatal("run response exposed credentials or authorization token")
+			}
+		})
 	}
 }
