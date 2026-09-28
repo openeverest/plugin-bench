@@ -41,6 +41,25 @@ func testAPI() *API {
 	}, testRunner{}, NewRunStore(), context.Background())
 }
 
+func TestWriteErrorReturnsJSON(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeError(w, http.StatusBadRequest, "invalid request")
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type=%q, want application/json", got)
+	}
+	var response map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if response["error"] != "invalid request" {
+		t.Fatalf("error=%q, want invalid request", response["error"])
+	}
+}
+
 func TestExtractBearerToken(t *testing.T) {
 	for _, test := range []struct {
 		headers []string
@@ -186,6 +205,68 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 	}
 	if err != nil || run.Status != RunStatusSucceeded || run.JobName != "bench-run-job" || run.Output != "done" {
 		t.Fatalf("run completion was not stored: run=%+v err=%v", run, err)
+	}
+}
+
+func TestShutdownWaitsForActiveRuns(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+		return testCredentials(), nil
+	}, testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
+		close(started)
+		<-release
+		return coordinator.Result{}, nil
+	}), NewRunStore(), context.Background())
+
+	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
+	r.Header.Set("Authorization", "Bearer test-token")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.createRun(w, r)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d, want %d", w.Code, http.StatusAccepted)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("runner was not started")
+	}
+
+	shutdown := make(chan error, 1)
+	go func() {
+		shutdown <- api.Shutdown(context.Background())
+	}()
+	select {
+	case err := <-shutdown:
+		t.Fatalf("Shutdown returned before the run finished: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-shutdown:
+		if err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown did not wait for the active run")
+	}
+}
+
+func TestShutdownRejectsNewRuns(t *testing.T) {
+	api := testAPI()
+	if err := api.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
+	r.Header.Set("Authorization", "Bearer test-token")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.createRun(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d, want %d", w.Code, http.StatusServiceUnavailable)
 	}
 }
 

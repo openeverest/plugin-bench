@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"sync"
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
@@ -22,6 +24,9 @@ type API struct {
 	store          *RunStore
 	lifecycleCtx   context.Context
 	runSlots       chan struct{}
+	runsMu         sync.Mutex
+	runs           sync.WaitGroup
+	closing        bool
 }
 
 func NewAPI(getCredentials CredentialLookup, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context) *API {
@@ -43,4 +48,40 @@ func NewAPI(getCredentials CredentialLookup, runner BenchmarkRunner, store *RunS
 func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs", a.createRun)
 	mux.HandleFunc("GET /api/runs/{id}", a.getRun)
+}
+
+// registerRun admits one background run unless shutdown has started. The
+// mutex coordinates WaitGroup.Add with Shutdown's Wait call.
+func (a *API) registerRun() bool {
+	a.runsMu.Lock()
+	defer a.runsMu.Unlock()
+	if a.closing {
+		return false
+	}
+	a.runs.Add(1)
+	return true
+}
+
+// Shutdown prevents new runs and waits for admitted runs to finish. The
+// caller should cancel the lifecycle context before calling Shutdown so active
+// coordinators begin their bounded cleanup.
+func (a *API) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("shutdown context is nil")
+	}
+	a.runsMu.Lock()
+	a.closing = true
+	a.runsMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		a.runs.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

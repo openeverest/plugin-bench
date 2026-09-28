@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -65,7 +66,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 	token, err := extractBearerToken(r)
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", "Bearer")
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	request, err := decodeCreateRunRequest(w, r)
@@ -79,15 +80,15 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 				status = http.StatusRequestEntityTooLarge
 			}
 		}
-		http.Error(w, err.Error(), status)
+		writeError(w, status, err.Error())
 		return
 	}
 	if err := validateCreateRunRequest(request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if a.getCredentials == nil {
-		http.Error(w, "database credential lookup is unavailable", http.StatusServiceUnavailable)
+		writeError(w, http.StatusServiceUnavailable, "database credential lookup is unavailable")
 		return
 	}
 	credentials, err := a.getCredentials(
@@ -101,39 +102,46 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 		}
-		http.Error(w, message, status)
+		writeError(w, status, message)
 		return
 	}
 	connection, err := connectionFromCredentials(request.Database, credentials)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if a.lifecycleCtx.Err() != nil {
-		http.Error(w, "benchmark service is shutting down", http.StatusServiceUnavailable)
+		writeError(w, http.StatusServiceUnavailable, "benchmark service is shutting down")
 		return
 	}
 	if a.runner == nil {
-		http.Error(w, "benchmark runner is unavailable", http.StatusServiceUnavailable)
+		writeError(w, http.StatusServiceUnavailable, "benchmark runner is unavailable")
+		return
+	}
+	if !a.registerRun() {
+		writeError(w, http.StatusServiceUnavailable, "benchmark service is shutting down")
 		return
 	}
 	select {
 	case a.runSlots <- struct{}{}:
 	default:
-		http.Error(w, "benchmark capacity is currently full", http.StatusTooManyRequests)
+		a.runs.Done()
+		writeError(w, http.StatusTooManyRequests, "benchmark capacity is currently full")
 		return
 	}
 
 	runID, err := newRunID()
 	if err != nil {
 		<-a.runSlots
-		http.Error(w, "failed to create benchmark run", http.StatusInternalServerError)
+		a.runs.Done()
+		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
 	run, err := a.store.Create(runID, request)
 	if err != nil {
 		<-a.runSlots
-		http.Error(w, "failed to create benchmark run", http.StatusInternalServerError)
+		a.runs.Done()
+		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
 	options := coordinator.Options{
@@ -162,14 +170,19 @@ func newRunID() (string, error) {
 func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id string, connection coordinator.Connection, options coordinator.Options) {
 	defer cancel()
 	defer func() { <-a.runSlots }()
+	defer a.runs.Done()
 	result, err := a.runner.Run(ctx, connection, options)
 	status, message := RunStatusSucceeded, ""
 	if err != nil {
 		status, message = RunStatusFailed, "benchmark execution failed"
+		log.Printf(
+			"benchmark run %q failed: %v (job=%q, output_bytes=%d, output_truncated=%t)",
+			id, err, result.JobName, len(result.Output), result.OutputTruncated,
+		)
 	}
 	if err := a.store.Complete(id, status, result, message); err != nil {
-		// A lost run record cannot be repaired here, but the execution goroutine
-		// must still release its concurrency slot.
+
+		log.Printf("benchmark run %q result could not be stored: %v", id, err)
 		return
 	}
 }
@@ -283,5 +296,5 @@ func decodeCreateRunRequest(w http.ResponseWriter, r *http.Request) (CreateRunRe
 
 // getRun is a placeholder until run status retrieval is implemented.
 func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "benchmark run status retrieval is not implemented", http.StatusNotImplemented)
+	writeError(w, http.StatusNotImplemented, "benchmark run status retrieval is not implemented")
 }
