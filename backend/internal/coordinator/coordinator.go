@@ -12,7 +12,6 @@ import (
 
 var ErrKubernetesClientRequired = errors.New("kubernetes client is required")
 
-// Config contains deployment-level settings shared by benchmark runs.
 type Config struct {
 	WorkloadNamespace    string
 	RunnerImage          string
@@ -40,13 +39,12 @@ func (c Config) Validate() error {
 	if c.ExecutionTimeout < time.Second || c.ExecutionTimeout%time.Second != 0 {
 		return errors.New("execution timeout must be a positive whole number of seconds")
 	}
+	if _, err := resourceRequirements(c.Resources); err != nil {
+		return fmt.Errorf("invalid runner resources: %w", err)
+	}
 	return nil
 }
 
-// Resources uses Kubernetes quantity strings, such as "100m" and "128Mi".
-// Empty fields leave that request or limit unspecified. Quantity parsing and
-// request/limit validation belong to Job construction when Kubernetes types
-// are introduced.
 type Resources struct {
 	CPURequest    string
 	MemoryRequest string
@@ -54,8 +52,6 @@ type Resources struct {
 	MemoryLimit   string
 }
 
-// Coordinator holds shared configuration, not per-run credentials or options.
-// The Kubernetes client is injected so the coordinator remains testable.
 type Coordinator struct {
 	config     Config
 	kubeClient kubernetes.Interface
@@ -74,7 +70,6 @@ func New(config Config, kubeClient kubernetes.Interface) (*Coordinator, error) {
 }
 
 // NewInCluster constructs a coordinator using the Pod's ServiceAccount
-// credentials. Use New with an injected client in unit tests.
 func NewInCluster(config Config) (*Coordinator, error) {
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {

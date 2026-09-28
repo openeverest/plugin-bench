@@ -43,6 +43,22 @@ workload:
   # configured workload namespace.
   createNamespace: false
 
+# Configuration for the per-run pgbench Kubernetes Job.
+runner:
+  image:
+    # For local k3d development, build and import this image into the cluster.
+    repository: plugin-bench-pgbench
+    tag: dev
+    pullPolicy: IfNotPresent
+  executionTimeout: 5m
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
 resources:
   limits:
     cpu: 200m

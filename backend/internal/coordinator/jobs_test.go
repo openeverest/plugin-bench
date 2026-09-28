@@ -110,12 +110,13 @@ func TestResourceCreationRejectsInvalidResourcesBeforeAPIWrite(t *testing.T) {
 		{CPURequest: "0.0001"},
 	} {
 		client := fake.NewSimpleClientset()
-		config := validConfig()
-		config.Resources = resources
-		c, err := New(config, client)
+		c, err := New(validConfig(), client)
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Verify resource creation also rejects invalid configuration if it
+		// changes after construction.
+		c.config.Resources = resources
 		_, err = c.createBenchmarkResources(context.Background(), validConnection(), DefaultOptions(), nil)
 		if err == nil || len(client.Actions()) != 0 {
 			t.Fatalf("invalid resources must fail before API calls: error=%v actions=%v", err, client.Actions())
