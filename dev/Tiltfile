@@ -164,13 +164,28 @@ docker_build(
     ],
 )
 
+# The benchmark runs in a separate Kubernetes Job, so its pgbench image must
+# be built and made available to the cluster independently of the coordinator.
+pgbench_runner_image = 'plugin-bench-pgbench:tilt-dev'
+docker_build(
+    pgbench_runner_image,
+    context='{0}/runners/pgbench'.format(bench_dir),
+    dockerfile='{0}/runners/pgbench/Dockerfile'.format(bench_dir),
+    only=[
+        'Dockerfile',
+        'go.mod',
+        'main.go',
+    ],
+)
+
 # ===========================
 # Plugin: Helm chart
 # ===========================
 # Deployed with a real `helm upgrade --install` (via the helm_resource
 # extension). Tilt injects the locally built image into the chart's
-# image.repository/image.tag values. helm_resource also guarantees the Plugin CR
-# is applied only after the core CRDs exist.
+# image.repository/image.tag and runner.image.repository/runner.image.tag
+# values. helm_resource also guarantees the Plugin CR is applied only after
+# the core CRDs exist.
 plugin_flags = [
     '--create-namespace',
     '--set', 'image.pullPolicy=IfNotPresent',
@@ -187,8 +202,11 @@ helm_resource(
     chart_dir,
     namespace=plugin_namespace,
     flags=plugin_flags,
-    image_deps=[plugin_bench_image],
-    image_keys=[('image.repository', 'image.tag')],
+    image_deps=[plugin_bench_image, pgbench_runner_image],
+    image_keys=[
+        ('image.repository', 'image.tag'),
+        ('runner.image.repository', 'runner.image.tag'),
+    ],
     resource_deps=plugin_resource_deps,
     labels=['plugin-bench'],
 )
