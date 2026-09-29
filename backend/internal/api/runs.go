@@ -342,10 +342,12 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		log.Printf("benchmark run %q could not be retrieved from the run store: %v", r.PathValue("id"), err)
 		writeError(w, http.StatusInternalServerError, "failed to retrieve benchmark run")
 		return
 	}
 	if a.checkInstanceAccess == nil {
+		log.Printf("benchmark run %q cannot be authorized: instance access check is unavailable", run.ID)
 		writeError(w, http.StatusServiceUnavailable, "instance access check is unavailable")
 		return
 	}
@@ -357,6 +359,14 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		status, message := instanceAccessError(err)
+		log.Printf(
+			"benchmark run %q access check failed (cluster=%q namespace=%q instance=%q): %v",
+			run.ID,
+			run.Request.Target.K8sCluster,
+			run.Request.Target.Namespace,
+			run.Request.Target.Instance,
+			err,
+		)
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 		}

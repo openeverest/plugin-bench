@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -381,6 +383,10 @@ func TestGetRun(t *testing.T) {
 				r.Header.Set("Authorization", test.authorization)
 			}
 			w := httptest.NewRecorder()
+			var logOutput bytes.Buffer
+			previousLogOutput := log.Writer()
+			log.SetOutput(&logOutput)
+			defer log.SetOutput(previousLogOutput)
 			api.getRun(w, r)
 			if w.Code != test.wantHTTP {
 				t.Fatalf("status=%d, want %d; body=%s", w.Code, test.wantHTTP, w.Body.String())
@@ -390,6 +396,17 @@ func TestGetRun(t *testing.T) {
 			}
 			if accessCheckCalled != test.wantAccessCheck {
 				t.Fatalf("instance access check called=%v, want %v", accessCheckCalled, test.wantAccessCheck)
+			}
+			if test.accessErr != nil {
+				if !strings.Contains(logOutput.String(), `benchmark run "run-123" access check failed`) {
+					t.Fatalf("access-check failure was not logged: %q", logOutput.String())
+				}
+				if strings.Contains(logOutput.String(), "test-token") || strings.Contains(logOutput.String(), "bench-password") {
+					t.Fatal("access-check log exposed a token or database password")
+				}
+			}
+			if test.omitAccessCheck && !strings.Contains(logOutput.String(), "instance access check is unavailable") {
+				t.Fatalf("missing access-check dependency was not logged: %q", logOutput.String())
 			}
 			if test.wantHTTP != http.StatusOK {
 				if strings.Contains(w.Body.String(), "test-token") || strings.Contains(w.Body.String(), "bench-password") {
