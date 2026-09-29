@@ -1,4 +1,9 @@
+# Keep at 1: run state and concurrency limits are local to each backend pod.
+# Scale out only after adding shared storage and cross-pod coordination.
 replicaCount: 1
+
+# Allow time beyond the backend's 30-second shutdown timeout for Kubernetes cleanup.
+terminationGracePeriodSeconds: 45
 
 image:
   repository: ghcr.io/openeverest/plugin-bench

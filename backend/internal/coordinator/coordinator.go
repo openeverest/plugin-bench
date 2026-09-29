@@ -12,6 +12,7 @@ import (
 
 var ErrKubernetesClientRequired = errors.New("kubernetes client is required")
 
+// Config contains deployment-level settings shared by benchmark runs.
 type Config struct {
 	WorkloadNamespace    string
 	RunnerImage          string
@@ -45,6 +46,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// Resources uses Kubernetes quantity strings; empty fields remain unspecified.
 type Resources struct {
 	CPURequest    string
 	MemoryRequest string
@@ -52,6 +54,8 @@ type Resources struct {
 	MemoryLimit   string
 }
 
+// Coordinator holds shared configuration, not per-run credentials or options.
+// The Kubernetes client is injected so the coordinator remains testable.
 type Coordinator struct {
 	config     Config
 	kubeClient kubernetes.Interface
@@ -69,7 +73,8 @@ func New(config Config, kubeClient kubernetes.Interface) (*Coordinator, error) {
 	return &Coordinator{config: config, kubeClient: kubeClient}, nil
 }
 
-// NewInCluster constructs a coordinator using the Pod's ServiceAccount
+// NewInCluster constructs a coordinator using the Pod's ServiceAccount.
+// Use New with an injected client in unit tests.
 func NewInCluster(config Config) (*Coordinator, error) {
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {

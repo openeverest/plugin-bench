@@ -20,6 +20,8 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 )
 
+// The frontend bundle is copied here by the Docker build. CI creates a
+// placeholder so the backend can be checked before the frontend is built.
 //go:embed dist/main.js
 var distFS embed.FS
 

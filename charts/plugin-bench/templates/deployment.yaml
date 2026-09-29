@@ -16,6 +16,7 @@ spec:
         {{- include "plugin-bench.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "plugin-bench.coordinatorServiceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
