@@ -36,7 +36,7 @@ type RequestError struct {
 }
 
 func (e *RequestError) Error() string {
-	return fmt.Sprintf("OpenEverest credentials request failed: %v", e.Err)
+	return fmt.Sprintf("OpenEverest request failed: %v", e.Err)
 }
 
 func (e *RequestError) Unwrap() error {
@@ -52,7 +52,7 @@ type ResponseError struct {
 }
 
 func (e *ResponseError) Error() string {
-	return fmt.Sprintf("OpenEverest credentials endpoint returned status %d: %v", e.StatusCode, e.Kind)
+	return fmt.Sprintf("OpenEverest API returned status %d: %v", e.StatusCode, e.Kind)
 }
 
 func (e *ResponseError) Unwrap() error {
@@ -209,4 +209,35 @@ func GetCredentials(ctx context.Context, jwt, k8sCluster, namespace, instance st
 		return nil, &InvalidResponseError{Err: err}
 	}
 	return &creds, nil
+}
+
+// CheckInstanceAccess verifies that the caller can read an instance without
+// retrieving its database connection details.
+func CheckInstanceAccess(ctx context.Context, jwt, k8sCluster, namespace, instance string) error {
+	apiURL := fmt.Sprintf("%s/v1/clusters/%s/namespaces/%s/instances/%s",
+		everestAPIURL(),
+		url.PathEscape(k8sCluster),
+		url.PathEscape(namespace),
+		url.PathEscape(instance),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return &RequestError{Err: err}
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+
+	resp, err := everestHTTPClient.Do(req)
+	if err != nil {
+		return &RequestError{Err: normalizeRequestError(err)}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &ResponseError{
+			StatusCode: resp.StatusCode,
+			Kind:       errorKindForStatus(resp.StatusCode),
+		}
+	}
+	return nil
 }

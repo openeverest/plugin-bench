@@ -105,3 +105,56 @@ func TestRunStoreConcurrentCompletion(t *testing.T) {
 		t.Fatalf("successful completions = %d, want 1", successes)
 	}
 }
+
+func TestRunStoreExpiresCompletedRuns(t *testing.T) {
+	for _, test := range []struct {
+		status  RunStatus
+		message string
+	}{
+		{status: RunStatusSucceeded},
+		{status: RunStatusFailed, message: "benchmark failed"},
+	} {
+		t.Run(string(test.status), func(t *testing.T) {
+			now := time.Date(2026, time.September, 29, 12, 0, 0, 0, time.UTC)
+			s := NewRunStore()
+			s.now = func() time.Time { return now }
+
+			if _, err := s.Create("completed", CreateRunRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Complete("completed", test.status, coordinator.Result{}, test.message); err != nil {
+				t.Fatal(err)
+			}
+
+			now = now.Add(completedRunRetention + time.Second)
+			if _, err := s.Get("completed"); !errors.Is(err, ErrRunNotFound) {
+				t.Fatalf("Get expired run error = %v, want %v", err, ErrRunNotFound)
+			}
+			if _, err := s.Create("completed", CreateRunRequest{}); err != nil {
+				t.Fatalf("Create should prune the expired run before reusing its ID: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunStoreRetainsRunningRunsPastRetention(t *testing.T) {
+	now := time.Date(2026, time.September, 29, 12, 0, 0, 0, time.UTC)
+	s := NewRunStore()
+	s.now = func() time.Time { return now }
+
+	if _, err := s.Create("running", CreateRunRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(completedRunRetention + time.Second)
+	if _, err := s.Create("another", CreateRunRequest{}); err != nil {
+		t.Fatal(err)
+	}
+
+	run, err := s.Get("running")
+	if err != nil {
+		t.Fatalf("Get running run after retention window: %v", err)
+	}
+	if run.Status != RunStatusRunning {
+		t.Fatalf("running run status = %q, want %q", run.Status, RunStatusRunning)
+	}
+}

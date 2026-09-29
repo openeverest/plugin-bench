@@ -38,7 +38,7 @@ func (f testRunnerFunc) Run(ctx context.Context, connection coordinator.Connecti
 func testAPI() *API {
 	return NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
-	}, testRunner{}, NewRunStore(), context.Background())
+	}, nil, testRunner{}, NewRunStore(), context.Background())
 }
 
 func TestWriteErrorReturnsJSON(t *testing.T) {
@@ -138,7 +138,7 @@ func TestCreateRunResolvesTargetCredentials(t *testing.T) {
 			t.Fatalf("unexpected credential lookup arguments: token=%q target=%q/%q/%q", token, cluster, namespace, instance)
 		}
 		return testCredentials(), nil
-	}, testRunner{}, NewRunStore(), context.Background())
+	}, nil, testRunner{}, NewRunStore(), context.Background())
 	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
 	r.Header.Set("Authorization", "Bearer test-token")
 	r.Header.Set("Content-Type", "application/json")
@@ -166,7 +166,7 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 	})
 	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
-	}, runner, store, context.Background())
+	}, nil, runner, store, context.Background())
 	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
 	r.Header.Set("Authorization", "Bearer test-token")
 	r.Header.Set("Content-Type", "application/json")
@@ -213,7 +213,7 @@ func TestShutdownWaitsForActiveRuns(t *testing.T) {
 	release := make(chan struct{})
 	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
-	}, testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
+	}, nil, testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
 		close(started)
 		<-release
 		return coordinator.Result{}, nil
@@ -285,7 +285,7 @@ func TestCreateRunMapsCredentialLookupErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				return nil, test.err
-			}, testRunner{}, NewRunStore(), context.Background())
+			}, nil, testRunner{}, NewRunStore(), context.Background())
 			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
 			r.Header.Set("Authorization", "Bearer test-token")
 			r.Header.Set("Content-Type", "application/json")
@@ -322,22 +322,24 @@ func TestConnectionFromCredentials(t *testing.T) {
 
 func TestGetRun(t *testing.T) {
 	tests := []struct {
-		name          string
-		exists        bool
-		authorization string
-		lookupErr     error
-		status        RunStatus
-		result        coordinator.Result
-		runErr        string
-		wantHTTP      int
-		wantLookup    bool
+		name            string
+		exists          bool
+		authorization   string
+		accessErr       error
+		omitAccessCheck bool
+		status          RunStatus
+		result          coordinator.Result
+		runErr          string
+		wantHTTP        int
+		wantAccessCheck bool
 	}{
 		{name: "missing authorization", exists: true, wantHTTP: http.StatusUnauthorized},
 		{name: "unknown ID", authorization: "Bearer test-token", wantHTTP: http.StatusNotFound},
-		{name: "target access denied", exists: true, authorization: "Bearer test-token", lookupErr: everest.ErrForbidden, wantHTTP: http.StatusForbidden, wantLookup: true},
-		{name: "running status", exists: true, authorization: "Bearer test-token", status: RunStatusRunning, wantHTTP: http.StatusOK, wantLookup: true},
-		{name: "successful result", exists: true, authorization: "Bearer test-token", status: RunStatusSucceeded, result: coordinator.Result{JobName: "bench-job", Output: "sanitized log", OutputTruncated: true}, wantHTTP: http.StatusOK, wantLookup: true},
-		{name: "failed result", exists: true, authorization: "Bearer test-token", status: RunStatusFailed, result: coordinator.Result{JobName: "failed-job", Output: "partial sanitized log"}, runErr: "benchmark execution failed", wantHTTP: http.StatusOK, wantLookup: true},
+		{name: "access check unavailable", exists: true, authorization: "Bearer test-token", omitAccessCheck: true, wantHTTP: http.StatusServiceUnavailable},
+		{name: "target access denied", exists: true, authorization: "Bearer test-token", accessErr: everest.ErrForbidden, wantHTTP: http.StatusForbidden, wantAccessCheck: true},
+		{name: "running status", exists: true, authorization: "Bearer test-token", status: RunStatusRunning, wantHTTP: http.StatusOK, wantAccessCheck: true},
+		{name: "successful result", exists: true, authorization: "Bearer test-token", status: RunStatusSucceeded, result: coordinator.Result{JobName: "bench-job", Output: "sanitized log", OutputTruncated: true}, wantHTTP: http.StatusOK, wantAccessCheck: true},
+		{name: "failed result", exists: true, authorization: "Bearer test-token", status: RunStatusFailed, result: coordinator.Result{JobName: "failed-job", Output: "partial sanitized log"}, runErr: "benchmark execution failed", wantHTTP: http.StatusOK, wantAccessCheck: true},
 	}
 
 	for _, test := range tests {
@@ -357,14 +359,21 @@ func TestGetRun(t *testing.T) {
 				}
 			}
 
-			lookupCalled := false
+			credentialLookupCalled := false
+			accessCheckCalled := false
 			api := NewAPI(func(_ context.Context, token, cluster, namespace, instance string) (*everest.Credentials, error) {
-				lookupCalled = true
+				credentialLookupCalled = true
+				return testCredentials(), nil
+			}, func(_ context.Context, token, cluster, namespace, instance string) error {
+				accessCheckCalled = true
 				if token != "test-token" || cluster != "local" || namespace != "databases" || instance != "postgres-1" {
-					t.Fatalf("unexpected credential lookup arguments: token=%q target=%q/%q/%q", token, cluster, namespace, instance)
+					t.Fatalf("unexpected instance access check arguments: token=%q target=%q/%q/%q", token, cluster, namespace, instance)
 				}
-				return testCredentials(), test.lookupErr
+				return test.accessErr
 			}, testRunner{}, store, context.Background())
+			if test.omitAccessCheck {
+				api.checkInstanceAccess = nil
+			}
 
 			r := httptest.NewRequest(http.MethodGet, "/api/runs/run-123", nil)
 			r.SetPathValue("id", "run-123")
@@ -376,8 +385,11 @@ func TestGetRun(t *testing.T) {
 			if w.Code != test.wantHTTP {
 				t.Fatalf("status=%d, want %d; body=%s", w.Code, test.wantHTTP, w.Body.String())
 			}
-			if lookupCalled != test.wantLookup {
-				t.Fatalf("credential lookup called=%v, want %v", lookupCalled, test.wantLookup)
+			if credentialLookupCalled {
+				t.Fatal("status retrieval must not fetch database credentials")
+			}
+			if accessCheckCalled != test.wantAccessCheck {
+				t.Fatalf("instance access check called=%v, want %v", accessCheckCalled, test.wantAccessCheck)
 			}
 			if test.wantHTTP != http.StatusOK {
 				if strings.Contains(w.Body.String(), "test-token") || strings.Contains(w.Body.String(), "bench-password") {

@@ -20,6 +20,7 @@ var (
 type RunStore struct {
 	mu   sync.RWMutex
 	runs map[string]Run
+	now  func() time.Time
 }
 
 // Create stores a new running record.
@@ -29,11 +30,12 @@ func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now())
+	now := s.now()
+	s.pruneExpiredLocked(now)
 	if _, exists := s.runs[id]; exists {
 		return Run{}, ErrRunExists
 	}
-	run := Run{ID: id, Request: request, Status: RunStatusRunning, CreatedAt: time.Now().UTC()}
+	run := Run{ID: id, Request: request, Status: RunStatusRunning, CreatedAt: now.UTC()}
 	if s.runs == nil {
 		s.runs = make(map[string]Run)
 	}
@@ -43,11 +45,13 @@ func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
 
 // Get returns a copy so callers cannot change the stored record without locking.
 func (s *RunStore) Get(id string) (Run, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now())
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	run, exists := s.runs[id]
 	if !exists {
+		return Run{}, ErrRunNotFound
+	}
+	if run.CompletedAt != nil && !s.now().Before(run.CompletedAt.Add(completedRunRetention)) {
 		return Run{}, ErrRunNotFound
 	}
 	if run.CompletedAt != nil {
@@ -69,7 +73,7 @@ func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Resu
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pruneExpiredLocked(time.Now())
+	now := s.now()
 	run, exists := s.runs[id]
 	if !exists {
 		return ErrRunNotFound
@@ -77,7 +81,7 @@ func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Resu
 	if run.Status != RunStatusRunning {
 		return ErrRunAlreadyCompleted
 	}
-	completedAt := time.Now().UTC()
+	completedAt := now.UTC()
 	run.Status = status
 	run.CompletedAt = &completedAt
 	run.JobName = result.JobName
@@ -102,5 +106,6 @@ func (s *RunStore) pruneExpiredLocked(now time.Time) {
 func NewRunStore() *RunStore {
 	return &RunStore{
 		runs: make(map[string]Run),
+		now:  time.Now,
 	}
 }

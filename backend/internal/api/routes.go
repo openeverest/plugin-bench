@@ -14,22 +14,26 @@ import (
 // Keeping it injectable lets API handlers be tested without an OpenEverest cluster.
 type CredentialLookup func(ctx context.Context, token, k8sCluster, namespace, instance string) (*everest.Credentials, error)
 
+// InstanceAccessCheck verifies that the caller can read a target instance.
+type InstanceAccessCheck func(ctx context.Context, token, k8sCluster, namespace, instance string) error
+
 type BenchmarkRunner interface {
 	Run(ctx context.Context, connection coordinator.Connection, options coordinator.Options) (coordinator.Result, error)
 }
 
 type API struct {
-	getCredentials CredentialLookup
-	runner         BenchmarkRunner
-	store          *RunStore
-	lifecycleCtx   context.Context
-	runSlots       chan struct{}
-	runsMu         sync.Mutex
-	runs           sync.WaitGroup
-	closing        bool
+	getCredentials      CredentialLookup
+	checkInstanceAccess InstanceAccessCheck
+	runner              BenchmarkRunner
+	store               *RunStore
+	lifecycleCtx        context.Context
+	runSlots            chan struct{}
+	runsMu              sync.Mutex
+	runs                sync.WaitGroup
+	closing             bool
 }
 
-func NewAPI(getCredentials CredentialLookup, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context) *API {
+func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context) *API {
 	if store == nil {
 		store = NewRunStore()
 	}
@@ -37,11 +41,12 @@ func NewAPI(getCredentials CredentialLookup, runner BenchmarkRunner, store *RunS
 		lifecycleCtx = context.Background()
 	}
 	return &API{
-		getCredentials: getCredentials,
-		runner:         runner,
-		store:          store,
-		lifecycleCtx:   lifecycleCtx,
-		runSlots:       make(chan struct{}, maxConcurrentRuns),
+		getCredentials:      getCredentials,
+		checkInstanceAccess: checkInstanceAccess,
+		runner:              runner,
+		store:               store,
+		lifecycleCtx:        lifecycleCtx,
+		runSlots:            make(chan struct{}, maxConcurrentRuns),
 	}
 }
 

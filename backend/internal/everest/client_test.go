@@ -115,6 +115,54 @@ func TestGetCredentialsSuccessfulRetrieval(t *testing.T) {
 	}
 }
 
+func TestCheckInstanceAccess(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		wantError error
+	}{
+		{name: "accessible instance", status: http.StatusOK},
+		{name: "unauthorized", status: http.StatusUnauthorized, wantError: ErrUnauthorized},
+		{name: "forbidden", status: http.StatusForbidden, wantError: ErrForbidden},
+		{name: "missing instance", status: http.StatusNotFound, wantError: ErrNotFound},
+		{name: "upstream failure", status: http.StatusBadGateway, wantError: ErrUpstream},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("method = %s, want GET", r.Method)
+				}
+				if r.URL.Path != "/v1/clusters/cluster-a/namespaces/database/instances/postgres" {
+					t.Errorf("path = %s, want instance endpoint", r.URL.Path)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+					t.Errorf("Authorization = %q, want Bearer test-token", got)
+				}
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(`{"password":"must not be returned"}`))
+			}))
+			defer server.Close()
+			t.Setenv("EVEREST_API_URL", server.URL)
+
+			err := CheckInstanceAccess(context.Background(), "test-token", "cluster-a", "database", "postgres")
+			if test.wantError == nil {
+				if err != nil {
+					t.Fatalf("CheckInstanceAccess() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !errors.Is(err, test.wantError) {
+				t.Fatalf("CheckInstanceAccess() error = %v, want %v", err, test.wantError)
+			}
+			if strings.Contains(err.Error(), "must not be returned") {
+				t.Fatalf("CheckInstanceAccess() exposed response body: %v", err)
+			}
+		})
+	}
+}
+
 func TestGetCredentialsAuthorizationFailures(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

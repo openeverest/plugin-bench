@@ -207,6 +207,22 @@ func sanitizeRunnerOutput(output, password string) string {
 }
 
 func credentialLookupError(err error) (int, string) {
+	return mapOpenEverestError(
+		err,
+		"timed out retrieving database connection details",
+		"failed to retrieve database connection details",
+	)
+}
+
+func instanceAccessError(err error) (int, string) {
+	return mapOpenEverestError(
+		err,
+		"timed out verifying access to database target",
+		"failed to verify access to database target",
+	)
+}
+
+func mapOpenEverestError(err error, timeoutMessage, upstreamMessage string) (int, string) {
 	switch {
 	case errors.Is(err, everest.ErrUnauthorized):
 		return http.StatusUnauthorized, "OpenEverest authentication failed"
@@ -215,9 +231,9 @@ func credentialLookupError(err error) (int, string) {
 	case errors.Is(err, everest.ErrNotFound):
 		return http.StatusNotFound, "database target was not found"
 	case errors.Is(err, context.DeadlineExceeded):
-		return http.StatusGatewayTimeout, "timed out retrieving database connection details"
+		return http.StatusGatewayTimeout, timeoutMessage
 	default:
-		return http.StatusBadGateway, "failed to retrieve database connection details"
+		return http.StatusBadGateway, upstreamMessage
 	}
 }
 
@@ -329,18 +345,18 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to retrieve benchmark run")
 		return
 	}
-	if a.getCredentials == nil {
-		writeError(w, http.StatusServiceUnavailable, "database credential lookup is unavailable")
+	if a.checkInstanceAccess == nil {
+		writeError(w, http.StatusServiceUnavailable, "instance access check is unavailable")
 		return
 	}
-	_, err = a.getCredentials(
+	err = a.checkInstanceAccess(
 		r.Context(), token,
 		run.Request.Target.K8sCluster,
 		run.Request.Target.Namespace,
 		run.Request.Target.Instance,
 	)
 	if err != nil {
-		status, message := credentialLookupError(err)
+		status, message := instanceAccessError(err)
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 		}
