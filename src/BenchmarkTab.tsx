@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { ClusterDetailTabProps, PluginApi, PluginRouteProps } from '@openeverest/plugin-sdk';
 import { BenchmarkForm } from './BenchmarkForm';
+import { targetFromClusterDetailProps } from './benchmarkTarget';
 
 const styles: Record<string, CSSProperties> = {
   page: { padding: 24, maxWidth: 1100 },
@@ -34,6 +35,7 @@ function PageHeader({ react, subtitle }: { react: PluginApi['React']; subtitle: 
 
 export function BenchmarkTab(props: BenchmarkTabProps) {
   const { react } = props;
+  const target = targetFromClusterDetailProps(props);
 
   return react.createElement(
     'div',
@@ -55,14 +57,20 @@ export function BenchmarkTab(props: BenchmarkTabProps) {
           react.createElement(
             'div',
             null,
+            react.createElement('dt', { style: styles.targetLabel }, 'Kubernetes cluster'),
+            react.createElement('dd', { style: styles.targetValue }, target.k8sCluster)
+          ),
+          react.createElement(
+            'div',
+            null,
             react.createElement('dt', { style: styles.targetLabel }, 'Instance'),
-            react.createElement('dd', { style: styles.targetValue }, props.instanceName)
+            react.createElement('dd', { style: styles.targetValue }, target.instance)
           ),
           react.createElement(
             'div',
             null,
             react.createElement('dt', { style: styles.targetLabel }, 'Namespace'),
-            react.createElement('dd', { style: styles.targetValue }, props.namespace)
+            react.createElement('dd', { style: styles.targetValue }, target.namespace)
           )
         )
       ),
