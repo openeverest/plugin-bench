@@ -8,7 +8,6 @@ import { BenchmarkPage, BenchmarkTab } from './BenchmarkTab';
 
 const register: PluginRegisterFn = (api: PluginApi) => {
   const react = api.React;
-  const pluginFetch = api.fetch.bind(api);
 
   api.registerExtension({
     type: 'sidebarItem',
@@ -27,7 +26,7 @@ const register: PluginRegisterFn = (api: PluginApi) => {
     path: 'performance-benchmark',
     providers: ['provider-cloudnative-pg', 'provider-percona-postgresql'],
     component: (props: ClusterDetailTabProps) =>
-      react.createElement(BenchmarkTab, { ...props, react, fetch: pluginFetch }),
+      react.createElement(BenchmarkTab, { ...props, react }),
   });
 };
 
