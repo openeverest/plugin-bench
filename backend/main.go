@@ -29,13 +29,6 @@ var distFS embed.FS
 //go:embed dist/icon.png
 var iconData []byte
 
-type runSummary struct {
-	ID        string    `json:"id"`
-	Status    string    `json:"status"`
-	Profile   string    `json:"profile"`
-	CreatedAt time.Time `json:"createdAt"`
-}
-
 const shutdownTimeout = 30 * time.Second
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -69,19 +62,6 @@ func handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"storage":     "ephemeral",
 		"message":     "Benchmark runs execute as Kubernetes Jobs.",
 	})
-}
-
-func handleRuns(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"runs": []runSummary{}})
-	case http.MethodPost:
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"error": "benchmark execution is not implemented in the scaffold",
-		})
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
 }
 
 func handleIcon(w http.ResponseWriter, _ *http.Request) {
@@ -139,7 +119,6 @@ func run() error {
 	mux.HandleFunc("GET /icon.png", handleIcon)
 	mux.HandleFunc("GET /healthz", handleHealth)
 	mux.HandleFunc("GET /api/status", handleStatus)
-	mux.HandleFunc("GET /api/runs", handleRuns)
 	benchmarkAPI.RegisterRoutes(mux)
 
 	port := envOrDefault("PORT", "8080")
