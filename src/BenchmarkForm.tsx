@@ -1,7 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { PluginApi } from '@openeverest/plugin-sdk';
-import { initialBenchmarkFormValues } from './benchmarkForm';
-import { validateBenchmarkForm } from './benchmarkForm';
+import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkForm';
 import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkForm';
 
 const styles: Record<string, CSSProperties> = {
@@ -15,22 +14,27 @@ const styles: Record<string, CSSProperties> = {
   error: { margin: 0, color: '#b42318', fontSize: 12 },
   warning: { margin: 0, padding: 12, borderRadius: 6, color: '#7a4b00', background: '#fff4d6', fontSize: 13 },
   actionRow: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  button: { padding: '9px 16px', border: 0, borderRadius: 4, color: '#777', background: '#ddd' },
-  badge: { padding: '3px 9px', border: '1px solid #bbb', borderRadius: 12, fontSize: 12, color: '#555' },
-  caption: { margin: 0, color: '#666', fontSize: 12 },
+  button: { padding: '9px 16px', border: 0, borderRadius: 4, color: '#fff', background: '#1565c0' },
+  disabledButton: { color: '#777', background: '#ddd', cursor: 'not-allowed' },
 };
 
 type BenchmarkFormProps = {
   react: PluginApi['React'];
+  isSubmitting: boolean;
+  onSubmit: (values: BenchmarkFormValues) => void | Promise<void>;
 };
 
-export function BenchmarkForm({ react }: BenchmarkFormProps) {
+export function BenchmarkForm({ react, isSubmitting, onSubmit }: BenchmarkFormProps) {
   const [values, setValues] = react.useState<BenchmarkFormValues>({ ...initialBenchmarkFormValues });
   const [touched, setTouched] = react.useState<Partial<Record<keyof BenchmarkFormValues, boolean>>>({});
   const errors = validateBenchmarkForm(values);
+  const canSubmit = Object.keys(errors).length === 0 && !isSubmitting;
   const updateValue = <K extends keyof BenchmarkFormValues>(key: K, value: BenchmarkFormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }));
     setTouched((current) => ({ ...current, [key]: true }));
+  };
+  const markTouched = (field: BenchmarkFormField) => {
+    setTouched((current) => ({ ...current, [field]: true }));
   };
   const fieldError = (field: BenchmarkFormField) => (touched[field] ? errors[field] : undefined);
   const errorMessage = (field: BenchmarkFormField) => {
@@ -54,6 +58,9 @@ export function BenchmarkForm({ react }: BenchmarkFormProps) {
             scale: true,
             initialize: true,
           });
+          if (Object.keys(errors).length === 0 && !isSubmitting) {
+            void onSubmit(values);
+          }
         },
       },
     react.createElement('h3', { style: styles.heading }, 'Run configuration'),
@@ -74,6 +81,7 @@ export function BenchmarkForm({ react }: BenchmarkFormProps) {
             'aria-invalid': Boolean(fieldError('database')),
             'aria-describedby': fieldError('database') ? 'benchmark-database-error' : undefined,
             onChange: (event: { currentTarget: { value: string } }) => updateValue('database', event.currentTarget.value),
+            onBlur: () => markTouched('database'),
           }),
           errorMessage('database')
         ),
@@ -98,6 +106,7 @@ export function BenchmarkForm({ react }: BenchmarkFormProps) {
               'aria-invalid': Boolean(fieldError(field)),
               'aria-describedby': fieldError(field) ? `benchmark-${field}-error` : undefined,
               onChange: (event: { currentTarget: { value: string } }) => updateValue(field, event.currentTarget.value),
+              onBlur: () => markTouched(field),
             }),
             errorMessage(field)
           )
@@ -123,13 +132,15 @@ export function BenchmarkForm({ react }: BenchmarkFormProps) {
       react.createElement(
         'div',
         { style: styles.actionRow },
-        react.createElement('button', { type: 'submit', style: styles.button, disabled: true }, 'Start benchmark'),
-        react.createElement('span', { style: styles.badge }, 'Run submission is not implemented yet')
-      ),
-      react.createElement(
-        'p',
-        { style: styles.caption },
-        'Configure the run locally; benchmark submission will be added in a later step.'
+        react.createElement(
+          'button',
+          {
+            type: 'submit',
+            style: canSubmit ? styles.button : { ...styles.button, ...styles.disabledButton },
+            disabled: !canSubmit,
+          },
+          isSubmitting ? 'Starting…' : 'Start benchmark'
+        )
       )
     )
   );

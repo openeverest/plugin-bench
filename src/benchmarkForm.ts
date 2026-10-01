@@ -1,3 +1,6 @@
+import type { CreateBenchmarkRunRequest } from './benchmarkApi';
+import type { BenchmarkTarget } from './benchmarkTarget';
+
 export type BenchmarkFormValues = {
   database: string;
   durationSeconds: string;
@@ -67,4 +70,23 @@ export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFor
   }
 
   return errors;
+}
+
+export function toCreateBenchmarkRunRequest(
+  values: BenchmarkFormValues,
+  target: BenchmarkTarget
+): CreateBenchmarkRunRequest | undefined {
+  if (Object.keys(validateBenchmarkForm(values)).length > 0) {
+    return undefined;
+  }
+
+  return {
+    target,
+    database: values.database.trim(),
+    durationSeconds: Number(values.durationSeconds),
+    clients: Number(values.clients),
+    threads: Number(values.threads),
+    scale: Number(values.scale),
+    initialize: values.initialize,
+  };
 }
