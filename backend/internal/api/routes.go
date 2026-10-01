@@ -11,7 +11,7 @@ import (
 )
 
 // CredentialLookup resolves connection details for an OpenEverest target.
-// Keeping it injectable lets API handlers be tested without an OpenEverest cluster.
+// Inject it so handlers can be tested without an OpenEverest cluster.
 type CredentialLookup func(ctx context.Context, token, k8sCluster, namespace, instance string) (*everest.Credentials, error)
 
 // InstanceAccessCheck verifies that the caller can read a target instance.

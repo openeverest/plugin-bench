@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,5 +54,40 @@ func TestNewValidatesConfigBeforeClient(t *testing.T) {
 	}
 	if err == nil || err.Error() != "workload namespace is required" {
 		t.Fatalf("New() error = %v, want workload namespace validation error", err)
+	}
+}
+
+func TestNewValidatesRunnerResources(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		resources Resources
+		wantError bool
+	}{
+		{"unspecified", Resources{}, false},
+		{"partial", Resources{CPURequest: "100m", MemoryLimit: "512Mi"}, false},
+		{"valid", Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}, false},
+		{"malformed cpu", Resources{CPURequest: "invalid"}, true},
+		{"malformed memory", Resources{MemoryLimit: "invalid"}, true},
+		{"negative memory", Resources{MemoryRequest: "-1Mi"}, true},
+		{"cpu request exceeds limit", Resources{CPURequest: "2", CPULimit: "1"}, true},
+		{"memory request exceeds limit", Resources{MemoryRequest: "1Gi", MemoryLimit: "512Mi"}, true},
+		{"unsupported cpu precision", Resources{CPURequest: "0.0001"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := validConfig()
+			config.Resources = test.resources
+			client := fake.NewSimpleClientset()
+			c, err := New(config, client)
+			if test.wantError {
+				if c != nil || err == nil || !strings.Contains(err.Error(), "invalid runner resources") {
+					t.Fatalf("New() = %v, %v; want resource validation error and no coordinator", c, err)
+				}
+			} else if err != nil || c == nil {
+				t.Fatalf("New() = %v, %v; want a coordinator", c, err)
+			}
+			if len(client.Actions()) != 0 {
+				t.Fatal("configuration validation made Kubernetes API calls")
+			}
+		})
 	}
 }

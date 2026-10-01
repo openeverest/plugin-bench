@@ -1,4 +1,9 @@
+# Keep at 1: run state and concurrency limits are local to each backend pod.
+# Scale out only after adding shared storage and cross-pod coordination.
 replicaCount: 1
+
+# Allow time beyond the backend's 30-second shutdown timeout for Kubernetes cleanup.
+terminationGracePeriodSeconds: 45
 
 image:
   repository: ghcr.io/openeverest/plugin-bench
@@ -42,6 +47,22 @@ workload:
   # Set to true only when the Helm installer is allowed to create the
   # configured workload namespace.
   createNamespace: false
+
+# Configuration for the per-run pgbench Kubernetes Job.
+runner:
+  image:
+    # For local k3d development, build and import this image into the cluster.
+    repository: plugin-bench-pgbench
+    tag: dev
+    pullPolicy: IfNotPresent
+  executionTimeout: 5m
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
 
 resources:
   limits:
