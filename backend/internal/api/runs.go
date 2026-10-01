@@ -386,6 +386,6 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		return
+		log.Printf("benchmark run %q status response could not be written: %v", run.ID, err)
 	}
 }

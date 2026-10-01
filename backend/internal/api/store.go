@@ -30,7 +30,7 @@ func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := s.now()
+	now := s.clock()
 	s.pruneExpiredLocked(now)
 	if _, exists := s.runs[id]; exists {
 		return Run{}, ErrRunExists
@@ -51,7 +51,7 @@ func (s *RunStore) Get(id string) (Run, error) {
 	if !exists {
 		return Run{}, ErrRunNotFound
 	}
-	if run.CompletedAt != nil && !s.now().Before(run.CompletedAt.Add(completedRunRetention)) {
+	if isExpired(run, s.clock()) {
 		return Run{}, ErrRunNotFound
 	}
 	if run.CompletedAt != nil {
@@ -73,7 +73,7 @@ func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Resu
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := s.now()
+	now := s.clock()
 	run, exists := s.runs[id]
 	if !exists {
 		return ErrRunNotFound
@@ -92,12 +92,17 @@ func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Resu
 	return nil
 }
 
+// isExpired reports whether a completed run is past its retention window.
+// Only Complete sets CompletedAt, so running records never expire.
+func isExpired(run Run, now time.Time) bool {
+	return run.CompletedAt != nil && now.Sub(*run.CompletedAt) >= completedRunRetention
+}
+
 // pruneExpiredLocked removes terminal runs whose retention window has elapsed.
 // The caller must hold s.mu for writing.
 func (s *RunStore) pruneExpiredLocked(now time.Time) {
 	for id, run := range s.runs {
-		completed := run.Status == RunStatusSucceeded || run.Status == RunStatusFailed
-		if completed && run.CompletedAt != nil && now.Sub(*run.CompletedAt) >= completedRunRetention {
+		if isExpired(run, now) {
 			delete(s.runs, id)
 		}
 	}
@@ -108,4 +113,12 @@ func NewRunStore() *RunStore {
 		runs: make(map[string]Run),
 		now:  time.Now,
 	}
+}
+
+// clock keeps the zero-value RunStore usable; tests can override now.
+func (s *RunStore) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }

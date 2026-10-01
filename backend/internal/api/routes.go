@@ -55,6 +55,8 @@ func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", a.getRun)
 }
 
+// registerRun admits one background run unless shutdown has started. The
+// mutex coordinates WaitGroup.Add with Shutdown's wait call.
 func (a *API) registerRun() bool {
 	a.runsMu.Lock()
 	defer a.runsMu.Unlock()
@@ -65,6 +67,9 @@ func (a *API) registerRun() bool {
 	return true
 }
 
+// Shutdown prevents new runs and waits for admitted runs to finish. The
+// caller should cancel the lifecycle context before calling Shutdown so active
+// coordinators begin their bounded cleanup.
 func (a *API) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("shutdown context is nil")
