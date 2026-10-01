@@ -19,7 +19,8 @@ export type CreateBenchmarkRunResponse = {
 export class BenchmarkApiError extends Error {
   constructor(
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    readonly outcomeUnknown = false
   ) {
     super(message);
     this.name = 'BenchmarkApiError';
@@ -28,7 +29,51 @@ export class BenchmarkApiError extends Error {
 
 export async function createBenchmarkRun(
   pluginFetch: PluginApi['fetch'],
-  request: CreateBenchmarkRunRequest
+  request: CreateBenchmarkRunRequest,
+  { signal, timeoutMs = 30_000 }: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<CreateBenchmarkRunResponse> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const aborted = new Promise<never>((_, reject) => {
+    controller.signal.addEventListener('abort', () => {
+      reject(unknownOutcome(timedOut ? 'The submission timed out.' : 'The submission was interrupted.'));
+    }, { once: true });
+  });
+  const cancel = () => controller.abort();
+  signal?.addEventListener('abort', cancel, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    if (signal?.aborted) {
+      controller.abort();
+      return await aborted;
+    }
+    // Bound both fetching and reading the body, even if the host ignores abort.
+    return await Promise.race([
+      sendCreateBenchmarkRun(pluginFetch, request, controller.signal),
+      aborted,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+  }
+}
+
+function unknownOutcome(reason: string, status?: number): BenchmarkApiError {
+  return new BenchmarkApiError(
+    `${reason} Could not confirm whether the benchmark started. It may already be running; check the instance before submitting again.`,
+    status,
+    true
+  );
+}
+
+async function sendCreateBenchmarkRun(
+  pluginFetch: PluginApi['fetch'],
+  request: CreateBenchmarkRunRequest,
+  signal: AbortSignal
 ): Promise<CreateBenchmarkRunResponse> {
   let response: Response;
   try {
@@ -36,17 +81,22 @@ export async function createBenchmarkRun(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
+      signal,
     });
   } catch {
-    throw new BenchmarkApiError('Could not connect to the benchmark service. Please try again.');
+    throw unknownOutcome('The connection to the benchmark service was lost.');
   }
 
   if (!response.ok) {
-    throw new BenchmarkApiError(await readErrorMessage(response), response.status);
+    const message = await readErrorMessage(response);
+    if (response.status >= 500) {
+      throw unknownOutcome(message, response.status);
+    }
+    throw new BenchmarkApiError(message, response.status);
   }
 
   if (response.status !== 202) {
-    throw new BenchmarkApiError('The benchmark service returned an unexpected response.', response.status);
+    throw unknownOutcome('The benchmark service returned an unexpected response.', response.status);
   }
 
   try {
@@ -66,7 +116,7 @@ export async function createBenchmarkRun(
     // Use the same safe message for invalid JSON and an unexpected response shape.
   }
 
-  throw new BenchmarkApiError('The benchmark service returned an invalid response.', response.status);
+  throw unknownOutcome('The benchmark service returned an invalid response.', response.status);
 }
 
 async function readErrorMessage(response: Response): Promise<string> {
@@ -85,5 +135,5 @@ async function readErrorMessage(response: Response): Promise<string> {
     // Fall back when the server response is not valid JSON.
   }
 
-  return `Could not start the benchmark (HTTP ${response.status}).`;
+  return `The benchmark service returned HTTP ${response.status}.`;
 }

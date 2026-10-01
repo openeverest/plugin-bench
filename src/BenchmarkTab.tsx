@@ -1,7 +1,11 @@
 import type { CSSProperties } from 'react';
 import type { ClusterDetailTabProps, PluginApi, PluginRouteProps } from '@openeverest/plugin-sdk';
 import { BenchmarkForm } from './BenchmarkForm';
+import type { BenchmarkFormValues } from './benchmarkFormValidation';
+import { toCreateBenchmarkRunRequest } from './benchmarkFormValidation';
+import { BenchmarkApiError, createBenchmarkRun } from './benchmarkApi';
 import { targetFromClusterDetailProps } from './benchmarkTarget';
+import type { BenchmarkTarget } from './benchmarkTarget';
 
 const styles: Record<string, CSSProperties> = {
   page: { padding: 24, maxWidth: 1100 },
@@ -13,12 +17,21 @@ const styles: Record<string, CSSProperties> = {
   targetGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, margin: 0 },
   targetLabel: { margin: 0, color: '#666', fontSize: 12 },
   targetValue: { margin: '4px 0 0', fontSize: 14, overflowWrap: 'anywhere' },
+  success: { margin: 0, color: '#176b36' },
+  error: { margin: 0, color: '#b42318' },
   notice: { padding: 14, borderRadius: 6, color: '#345', background: '#eef5ff' },
 };
 
 type BenchmarkTabProps = ClusterDetailTabProps & {
   react: PluginApi['React'];
+  pluginFetch: PluginApi['fetch'];
 };
+
+type SubmissionState =
+  | { status: 'idle' }
+  | { status: 'submitting' }
+  | { status: 'accepted'; id: string }
+  | { status: 'failed'; message: string };
 
 type BenchmarkPageProps = PluginRouteProps & {
   react: PluginApi['React'];
@@ -34,8 +47,53 @@ function PageHeader({ react, subtitle }: { react: PluginApi['React']; subtitle: 
 }
 
 export function BenchmarkTab(props: BenchmarkTabProps) {
-  const { react } = props;
   const target = targetFromClusterDetailProps(props);
+  return props.react.createElement(BenchmarkWorkflow, {
+    key: JSON.stringify([target.k8sCluster, target.namespace, target.instance]),
+    react: props.react,
+    pluginFetch: props.pluginFetch,
+    target,
+  });
+}
+
+function BenchmarkWorkflow({ react, pluginFetch, target }: {
+  react: PluginApi['React'];
+  pluginFetch: PluginApi['fetch'];
+  target: BenchmarkTarget;
+}) {
+  const [submission, setSubmission] = react.useState<SubmissionState>({ status: 'idle' });
+  const activeRequest = react.useRef<AbortController | null>(null);
+
+  react.useEffect(() => () => {
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+  }, []);
+
+  const submitRun = async (values: BenchmarkFormValues) => {
+    if (activeRequest.current) return;
+    const request = toCreateBenchmarkRunRequest(values, target);
+    if (!request) return;
+
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setSubmission({ status: 'submitting' });
+    try {
+      const run = await createBenchmarkRun(pluginFetch, request, { signal: controller.signal });
+      if (activeRequest.current !== controller || controller.signal.aborted) return;
+      setSubmission({ status: 'accepted', id: run.id });
+    } catch (error) {
+      if (activeRequest.current !== controller || controller.signal.aborted) return;
+      setSubmission({
+        status: 'failed',
+        message:
+          error instanceof BenchmarkApiError
+            ? error.message
+            : 'Could not confirm whether the benchmark started. Check the instance before submitting again.',
+      });
+    } finally {
+      if (activeRequest.current === controller) activeRequest.current = null;
+    }
+  };
 
   return react.createElement(
     'div',
@@ -74,7 +132,19 @@ export function BenchmarkTab(props: BenchmarkTabProps) {
           )
         )
       ),
-      react.createElement(BenchmarkForm, { react })
+      react.createElement(BenchmarkForm, {
+        react,
+        isSubmitting: submission.status === 'submitting',
+        onSubmit: submitRun,
+      }),
+      submission.status === 'accepted' &&
+        react.createElement(
+          'p',
+          { style: styles.success, role: 'status' },
+          `Benchmark run accepted. Run ID: ${submission.id} (status: running).`
+        ),
+      submission.status === 'failed' &&
+        react.createElement('p', { style: styles.error, role: 'alert' }, submission.message)
     )
   );
 }
