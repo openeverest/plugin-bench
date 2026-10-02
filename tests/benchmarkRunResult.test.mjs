@@ -28,6 +28,13 @@ test('empty completed output is explicit and running output is not displayed', (
   assert.doesNotMatch(html, /No output was captured|<pre/);
 });
 
+test('dismiss is offered only for completed runs', () => {
+  const card = run => renderToStaticMarkup(React.createElement(BenchmarkRunResult,
+    { react: React, id: 'run-1', run, feedback: null, onRetry: () => {}, onDismiss: () => {} }));
+  assert.match(card(base), /Dismiss completed run run-1/);
+  assert.doesNotMatch(card({ ...base, status: 'running' }), /Dismiss/);
+});
+
 test('retrieval failure preserves last known run status and offers retry', () => {
   const feedback = { paused: true, error: { message: 'Access denied' } };
   assert.match(render({ ...base, status: 'running' }, feedback), /Last known status: Running/);

@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, FormEvent } from 'react';
 import type { ClusterDetailTabProps, PluginApi, PluginRouteProps } from '@openeverest/plugin-sdk';
 import { BenchmarkForm } from './BenchmarkForm';
 import { BenchmarkRunResult } from './BenchmarkRunResult';
@@ -16,6 +16,10 @@ const styles: Record<string, CSSProperties> = {
   heading: { margin: 0, fontSize: 24, fontWeight: 600 },
   subtitle: { margin: '4px 0 24px', color: '#666' },
   stack: { display: 'grid', gap: 16 },
+  results: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 16, alignItems: 'start' },
+  lookup: { display: 'grid', gap: 10, padding: 16, border: '1px solid #d9d9d9', borderRadius: 8, background: '#fff' },
+  lookupRow: { display: 'flex', flexWrap: 'wrap', gap: 10 },
+  lookupInput: { flex: '1 1 280px', minWidth: 0, padding: '10px 12px', border: '1px solid #aaa', borderRadius: 4, font: 'inherit' },
   targetContext: { border: '1px solid #d9d9d9', borderRadius: 8, padding: 14, background: '#fff' },
   targetHeading: { margin: '0 0 10px', fontSize: 16, fontWeight: 600 },
   targetGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, margin: 0 },
@@ -67,27 +71,13 @@ function BenchmarkWorkflow({ react, pluginFetch, target }: {
 }) {
   const [submission, setSubmission] = react.useState<SubmissionState>({ status: 'idle' });
   const activeRequest = react.useRef<AbortController | null>(null);
-  const [trackedId, setTrackedId] = react.useState<string | null>(null);
-  const [snapshot, setSnapshot] = react.useState<BenchmarkRun | null>(null);
-  const [pollingError, setPollingError] = react.useState<PollingFeedback | null>(null);
-  const [pollingAttempt, setPollingAttempt] = react.useState(0);
-  const stopPolling = react.useRef<(() => void) | null>(null);
+  const [runIds, setRunIds] = react.useState<string[]>([]);
 
-  react.useEffect(() => {
-    if (!trackedId) return;
-    const stop = startBenchmarkRunPolling(pluginFetch, trackedId, {
-      onRun: run => {
-        setSnapshot(run);
-        setPollingError(null);
-      },
-      onError: setPollingError,
-    });
-    stopPolling.current = stop;
-    return () => {
-      stop();
-      if (stopPolling.current === stop) stopPolling.current = null;
-    };
-  }, [trackedId, pollingAttempt, pluginFetch]);
+  const addRun = (id: string) => {
+    if (runIds.includes(id)) return false;
+    setRunIds(ids => ids.includes(id) ? ids : [...ids, id]);
+    return true;
+  };
 
   react.useEffect(() => () => {
     activeRequest.current?.abort();
@@ -105,11 +95,7 @@ function BenchmarkWorkflow({ react, pluginFetch, target }: {
     try {
       const run = await createBenchmarkRun(pluginFetch, request, { signal: controller.signal });
       if (activeRequest.current !== controller || controller.signal.aborted) return;
-      // Stop the previous session immediately, before the new effect starts.
-      stopPolling.current?.();
-      setTrackedId(run.id);
-      setSnapshot(null);
-      setPollingError(null);
+      addRun(run.id);
       setSubmission({ status: 'accepted', id: run.id });
     } catch (error) {
       if (activeRequest.current !== controller || controller.signal.aborted) return;
@@ -167,17 +153,78 @@ function BenchmarkWorkflow({ react, pluginFetch, target }: {
         isSubmitting: submission.status === 'submitting',
         onSubmit: submitRun,
       }),
-      trackedId && react.createElement(BenchmarkRunResult, {
-        react, id: trackedId, run: snapshot, feedback: pollingError,
-        onRetry: () => {
-          setPollingError(null);
-          setPollingAttempt(attempt => attempt + 1);
-        },
-      }),
+      react.createElement(RunLookup, { react, onLookup: addRun }),
+      runIds.length > 0 && react.createElement('div', { style: styles.results },
+        ...runIds.map(id => react.createElement(TrackedBenchmarkRun, {
+          key: id, react, pluginFetch, id,
+          onDismiss: () => setRunIds(ids => ids.filter(runId => runId !== id)),
+        }))),
       submission.status === 'failed' &&
         react.createElement('p', { style: styles.error, role: 'alert' }, submission.message)
     )
   );
+}
+
+function RunLookup({ react, onLookup }: {
+  react: PluginApi['React'];
+  onLookup: (id: string) => boolean;
+}) {
+  const [id, setId] = react.useState('');
+  const [message, setMessage] = react.useState('');
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const runId = id.trim();
+    if (!runId) {
+      setMessage('Enter a run ID.');
+      return;
+    }
+    if (!onLookup(runId)) {
+      setMessage('This run is already shown below.');
+      return;
+    }
+    setMessage('');
+  };
+
+  return react.createElement('form', { style: styles.lookup, onSubmit: submit },
+    react.createElement('h3', { style: styles.targetHeading }, 'Look up a benchmark run'),
+    react.createElement('div', { style: styles.lookupRow },
+      react.createElement('input', {
+        style: styles.lookupInput,
+        type: 'text',
+        value: id,
+        onChange: (event: { currentTarget: { value: string } }) => setId(event.currentTarget.value),
+        placeholder: 'Enter run ID',
+        'aria-label': 'Benchmark run ID',
+        'aria-describedby': message ? 'run-lookup-message' : undefined,
+      }),
+      react.createElement('button', { type: 'submit' }, 'Find run')),
+    message && react.createElement('p', { id: 'run-lookup-message', style: styles.error, role: 'alert' }, message));
+}
+
+function TrackedBenchmarkRun({ react, pluginFetch, id, onDismiss }: {
+  react: PluginApi['React'];
+  pluginFetch: PluginApi['fetch'];
+  id: string;
+  onDismiss: () => void;
+}) {
+  const [run, setRun] = react.useState<BenchmarkRun | null>(null);
+  const [feedback, setFeedback] = react.useState<PollingFeedback | null>(null);
+  const [attempt, setAttempt] = react.useState(0);
+
+  react.useEffect(() => {
+    if (run && run.status !== 'running') return;
+    return startBenchmarkRunPolling(pluginFetch, id, {
+      onRun: snapshot => { setRun(snapshot); setFeedback(null); },
+      onError: setFeedback,
+    });
+    // Snapshots update this card without restarting its polling session.
+  }, [pluginFetch, id, attempt]);
+
+  return react.createElement(BenchmarkRunResult, {
+    react, id, run, feedback,
+    onRetry: () => { setFeedback(null); setAttempt(value => value + 1); },
+    onDismiss: run && run.status !== 'running' ? onDismiss : undefined,
+  });
 }
 
 export function BenchmarkPage({ react }: BenchmarkPageProps) {

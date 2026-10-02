@@ -9,6 +9,7 @@ type Props = {
   run: BenchmarkRun | null;
   feedback: PollingFeedback | null; 
   onRetry: () => void;
+  onDismiss?: () => void;
 };
 
 const styles: Record<string, CSSProperties> = {
@@ -24,7 +25,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 6, whiteSpace: 'pre', fontSize: 13 },
 };
 
-export function BenchmarkRunResult({ react, id, run, feedback, onRetry }: Props) {
+export function BenchmarkRunResult({ react, id, run, feedback, onRetry, onDismiss }: Props) {
   const element = react.createElement;
   const labels = { running: 'Running', succeeded: 'Succeeded', failed: 'Failed' };
   const colors = { running: '#1964b8', succeeded: '#176b36', failed: '#b42318' };
@@ -52,5 +53,7 @@ export function BenchmarkRunResult({ react, id, run, feedback, onRetry }: Props)
       element('h4', null, 'Benchmark output'),
       run.outputTruncated && element('p', { style: styles.notice }, 'Output was truncated by the backend.'),
       run.output ? element('pre', { style: styles.output, tabIndex: 0, 'aria-label': 'Benchmark output' }, run.output)
-        : element('p', { style: styles.notice }, 'No output was captured.')));
+        : element('p', { style: styles.notice }, 'No output was captured.')),
+    completed && onDismiss && element('button', { type: 'button', onClick: onDismiss,
+      'aria-label': `Dismiss completed run ${id}` }, 'Dismiss'));
 }
