@@ -6,6 +6,26 @@ import { BenchmarkStatusError } from '../dist/polling-test/benchmarkApi.js';
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 const snapshot = status => ({ id: 'run-1', status, createdAt: '2026-10-02T00:00:00Z', outputTruncated: false });
 
+test('independent sessions retain both results and stopping one leaves the other active', async () => {
+  let firstFinish, secondFinish;
+  const first = harness(() => new Promise(resolve => { firstFinish = resolve; }));
+  const second = harness(() => new Promise(resolve => { secondFinish = resolve; }));
+  const stopFirst = first.start();
+  second.start();
+  firstFinish(snapshot('succeeded'));
+  secondFinish(snapshot('running'));
+  await flush();
+  stopFirst();
+  assert.equal(first.runs[0].status, 'succeeded');
+  assert.equal(second.timers.size, 1);
+  second.tick();
+  secondFinish(snapshot('failed'));
+  await flush();
+  assert.equal(first.runs[0].status, 'succeeded');
+  assert.equal(second.runs.at(-1).status, 'failed');
+  assert.equal(second.timers.size, 0);
+});
+
 function harness(fetchRun) {
   const timers = new Map();
   const runs = [], errors = [], ids = [], signals = [];
