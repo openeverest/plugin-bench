@@ -1,9 +1,13 @@
 import type { CSSProperties } from 'react';
 import type { ClusterDetailTabProps, PluginApi, PluginRouteProps } from '@openeverest/plugin-sdk';
 import { BenchmarkForm } from './BenchmarkForm';
+import { BenchmarkRunResult } from './BenchmarkRunResult';
 import type { BenchmarkFormValues } from './benchmarkForm';
 import { toCreateBenchmarkRunRequest } from './benchmarkForm';
 import { BenchmarkApiError, createBenchmarkRun } from './benchmarkApi';
+import type { BenchmarkRun } from './benchmarkApi';
+import { startBenchmarkRunPolling } from './benchmarkRunPolling';
+import type { PollingFeedback } from './benchmarkRunPolling';
 import { targetFromClusterDetailProps } from './benchmarkTarget';
 import type { BenchmarkTarget } from './benchmarkTarget';
 
@@ -63,6 +67,27 @@ function BenchmarkWorkflow({ react, pluginFetch, target }: {
 }) {
   const [submission, setSubmission] = react.useState<SubmissionState>({ status: 'idle' });
   const activeRequest = react.useRef<AbortController | null>(null);
+  const [trackedId, setTrackedId] = react.useState<string | null>(null);
+  const [snapshot, setSnapshot] = react.useState<BenchmarkRun | null>(null);
+  const [pollingError, setPollingError] = react.useState<PollingFeedback | null>(null);
+  const [pollingAttempt, setPollingAttempt] = react.useState(0);
+  const stopPolling = react.useRef<(() => void) | null>(null);
+
+  react.useEffect(() => {
+    if (!trackedId) return;
+    const stop = startBenchmarkRunPolling(pluginFetch, trackedId, {
+      onRun: run => {
+        setSnapshot(run);
+        setPollingError(null);
+      },
+      onError: setPollingError,
+    });
+    stopPolling.current = stop;
+    return () => {
+      stop();
+      if (stopPolling.current === stop) stopPolling.current = null;
+    };
+  }, [trackedId, pollingAttempt, pluginFetch]);
 
   react.useEffect(() => () => {
     activeRequest.current?.abort();
@@ -80,6 +105,11 @@ function BenchmarkWorkflow({ react, pluginFetch, target }: {
     try {
       const run = await createBenchmarkRun(pluginFetch, request, { signal: controller.signal });
       if (activeRequest.current !== controller || controller.signal.aborted) return;
+      // Stop the previous session immediately, before the new effect starts.
+      stopPolling.current?.();
+      setTrackedId(run.id);
+      setSnapshot(null);
+      setPollingError(null);
       setSubmission({ status: 'accepted', id: run.id });
     } catch (error) {
       if (activeRequest.current !== controller || controller.signal.aborted) return;
@@ -137,12 +167,13 @@ function BenchmarkWorkflow({ react, pluginFetch, target }: {
         isSubmitting: submission.status === 'submitting',
         onSubmit: submitRun,
       }),
-      submission.status === 'accepted' &&
-        react.createElement(
-          'p',
-          { style: styles.success, role: 'status' },
-          `Benchmark run accepted. Run ID: ${submission.id} (status: running).`
-        ),
+      trackedId && react.createElement(BenchmarkRunResult, {
+        react, id: trackedId, run: snapshot, feedback: pollingError,
+        onRetry: () => {
+          setPollingError(null);
+          setPollingAttempt(attempt => attempt + 1);
+        },
+      }),
       submission.status === 'failed' &&
         react.createElement('p', { style: styles.error, role: 'alert' }, submission.message)
     )
