@@ -16,6 +16,7 @@ spec:
         {{- include "plugin-bench.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "plugin-bench.coordinatorServiceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -34,6 +35,20 @@ spec:
               value: {{ include "plugin-bench.workloadNamespace" . | quote }}
             - name: RUNNER_SERVICE_ACCOUNT_NAME
               value: {{ include "plugin-bench.runnerServiceAccountName" . | quote }}
+            - name: RUNNER_IMAGE
+              value: {{ printf "%s:%s" .Values.runner.image.repository .Values.runner.image.tag | quote }}
+            - name: RUNNER_IMAGE_PULL_POLICY
+              value: {{ .Values.runner.image.pullPolicy | quote }}
+            - name: BENCHMARK_EXECUTION_TIMEOUT
+              value: {{ .Values.runner.executionTimeout | quote }}
+            - name: RUNNER_CPU_REQUEST
+              value: {{ .Values.runner.resources.requests.cpu | quote }}
+            - name: RUNNER_MEMORY_REQUEST
+              value: {{ .Values.runner.resources.requests.memory | quote }}
+            - name: RUNNER_CPU_LIMIT
+              value: {{ .Values.runner.resources.limits.cpu | quote }}
+            - name: RUNNER_MEMORY_LIMIT
+              value: {{ .Values.runner.resources.limits.memory | quote }}
             {{- if .Values.everestAPIURL }}
             - name: EVEREST_API_URL
               value: {{ .Values.everestAPIURL | quote }}
