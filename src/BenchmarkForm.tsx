@@ -1,8 +1,8 @@
 import type { CSSProperties } from 'react';
 import type { PluginApi } from '@openeverest/plugin-sdk';
-import { initialBenchmarkFormValues } from './benchmarkForm';
-import { validateBenchmarkForm } from './benchmarkForm';
-import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkForm';
+import { initialBenchmarkFormValues } from './benchmarkFormValidation';
+import { validateBenchmarkForm } from './benchmarkFormValidation';
+import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormValidation';
 
 const styles: Record<string, CSSProperties> = {
   card: { border: '1px solid #d9d9d9', borderRadius: 8, padding: 20, background: '#fff' },

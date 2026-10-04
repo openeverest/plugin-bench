@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { initialBenchmarkFormValues, validateBenchmarkForm } from '../dist/form-test/benchmarkForm.js';
+import { initialBenchmarkFormValues, validateBenchmarkForm } from '../dist/form-test/benchmarkFormValidation.js';
 
 const validValues = { ...initialBenchmarkFormValues, database: 'benchdb' };
 
