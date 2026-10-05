@@ -1,16 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { initialBenchmarkFormValues, validateBenchmarkForm } from '../dist/form-test/benchmarkFormValidation.js';
+import { initialBenchmarkFormValues, toCreateBenchmarkRunRequest, validateBenchmarkForm } from '../dist/form-test/benchmarkFormValidation.js';
 
 const validValues = { ...initialBenchmarkFormValues, database: 'benchdb' };
+const target = { k8sCluster: 'main', namespace: 'dbs', instance: 'pg-1' };
 
 test('accepts valid form values and defaults initialization to false', () => {
   assert.equal(initialBenchmarkFormValues.initialize, false);
   assert.deepEqual(validateBenchmarkForm(validValues), {});
 });
 
-test('requires a database name and rejects connection strings', () => {
-  assert.equal(validateBenchmarkForm({ ...validValues, database: '  ' }).database, 'Database name is required.');
+test('database is optional and defaults to the instance database', () => {
+  assert.equal(initialBenchmarkFormValues.database, '');
+  assert.deepEqual(validateBenchmarkForm({ ...validValues, database: '  ' }), {});
+  const request = toCreateBenchmarkRunRequest({ ...validValues, database: '  ' }, target);
+  assert.ok(request);
+  assert.equal('database' in request, false);
+  assert.equal(toCreateBenchmarkRunRequest({ ...validValues, database: ' custom ' }, target).database, 'custom');
+});
+
+test('rejects connection strings as the database name', () => {
   assert.equal(validateBenchmarkForm({ ...validValues, database: 'postgres://user:pass@host/db' }).database,
     'Enter a database name, not a connection string.');
   assert.equal(validateBenchmarkForm({ ...validValues, database: 'host=db' }).database,

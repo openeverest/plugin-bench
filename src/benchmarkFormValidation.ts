@@ -28,9 +28,7 @@ export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFor
   const errors: BenchmarkFormErrors = {};
   const database = values.database.trim();
 
-  if (!database) {
-    errors.database = 'Database name is required.';
-  } else if (
+  if (
     database.includes('=') ||
     database.toLowerCase().startsWith('postgres://') ||
     database.toLowerCase().startsWith('postgresql://')
@@ -80,9 +78,10 @@ export function toCreateBenchmarkRunRequest(
     return undefined;
   }
 
+  const database = values.database.trim();
   return {
     target,
-    database: values.database.trim(),
+    ...(database ? { database } : {}),
     durationSeconds: Number(values.durationSeconds),
     clients: Number(values.clients),
     threads: Number(values.threads),

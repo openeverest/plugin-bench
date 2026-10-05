@@ -1,59 +1,154 @@
-import type { CSSProperties } from 'react';
-import type { PluginApi } from '@openeverest/plugin-sdk';
-import type { BenchmarkRun } from './benchmarkApi';
+import { Fragment } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardActions,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Stack,
+  Typography,
+} from '@mui/material';
+import type { BenchmarkRun, BenchmarkRunStatus } from './benchmarkApi';
 import type { PollingFeedback } from './benchmarkRunPolling';
 
-type Props = {
-  react: PluginApi['React'];
+const STATUS_LABELS: Record<BenchmarkRunStatus, string> = {
+  running: 'Running',
+  succeeded: 'Succeeded',
+  failed: 'Failed',
+};
+
+const STATUS_COLORS: Record<BenchmarkRunStatus, 'info' | 'success' | 'error'> = {
+  running: 'info',
+  succeeded: 'success',
+  failed: 'error',
+};
+
+interface BenchmarkRunResultProps {
   id: string;
   run: BenchmarkRun | null;
-  feedback: PollingFeedback | null; 
+  feedback: PollingFeedback | null;
   onRetry: () => void;
   onDismiss?: () => void;
-};
+}
 
-const styles: Record<string, CSSProperties> = {
-  panel: { border: '1px solid #d9d9d9', borderRadius: 8, padding: 16, background: '#fff', minWidth: 0 },
-  heading: { margin: '0 0 12px', fontSize: 16 },
-  status: { margin: '0 0 12px', fontWeight: 600 },
-  details: { display: 'grid', gap: 8, margin: 0, overflowWrap: 'anywhere' },
-  label: { color: '#666', fontSize: 12 },
-  value: { margin: '4px 0 0', fontSize: 14 },
-  error: { color: '#b42318', overflowWrap: 'anywhere' },
-  notice: { color: '#666' },
-  output: { maxHeight: 400, overflow: 'auto', padding: 12, background: '#f5f6f8',
-    borderRadius: 6, whiteSpace: 'pre', fontSize: 13 },
-};
+function statusLabel(run: BenchmarkRun | null, feedback: PollingFeedback | null): string {
+  if (run) return `${feedback ? 'Last known status' : 'Status'}: ${STATUS_LABELS[run.status]}`;
+  return feedback ? 'Status unavailable' : 'Checking status…';
+}
 
-export function BenchmarkRunResult({ react, id, run, feedback, onRetry, onDismiss }: Props) {
-  const element = react.createElement;
-  const labels = { running: 'Running', succeeded: 'Succeeded', failed: 'Failed' };
-  const colors = { running: '#1964b8', succeeded: '#176b36', failed: '#b42318' };
-  const detail = (label: string, value: string) => element('div', { key: label },
-    element('dt', { style: styles.label }, label), element('dd', { style: styles.value }, value));
-  const timestamp = (value: string) => new Date(value).toLocaleString();
+const formatTimestamp = (value: string) => new Date(value).toLocaleString();
+
+export function BenchmarkRunResult({ id, run, feedback, onRetry, onDismiss }: BenchmarkRunResultProps) {
   const completed = run !== null && run.status !== 'running';
+  const pollingActive = !feedback && (run === null || run.status === 'running');
+  const details: Array<[string, string | undefined]> = [
+    ['Run ID', id],
+    ['Database', run?.database],
+    ['Created', run ? formatTimestamp(run.createdAt) : undefined],
+    ['Completed', run?.completedAt ? formatTimestamp(run.completedAt) : undefined],
+  ];
 
-  return element('section', { style: styles.panel, 'aria-label': 'Benchmark run result' },
-    element('h3', { style: styles.heading }, 'Benchmark run'),
-    element('p', { role: 'status', style: { ...styles.status, color: run ? colors[run.status] : '#666' } },
-      run ? `${feedback ? 'Last known status: ' : 'Status: '}${labels[run.status]}`
-        : feedback ? 'Run accepted. Status unavailable.' : 'Run accepted. Checking status…'),
-    element('dl', { style: styles.details },
-      detail('Run ID', id),
-      run && detail('Created', timestamp(run.createdAt)),
-      run?.completedAt && detail('Completed', timestamp(run.completedAt))),
-    feedback && element('div', null,
-      element('p', { role: 'alert', style: styles.error },
-        `Status updates ${feedback.paused ? 'paused' : 'interrupted'}. ${feedback.error.message}`,
-        feedback.retryInMs !== undefined ? ` Retrying in ${feedback.retryInMs / 1000} seconds.` : ''),
-      feedback.paused && element('button', { type: 'button', onClick: onRetry }, 'Retry status check')),
-    run?.status === 'failed' && element('p', { role: 'alert', style: styles.error }, run.error),
-    completed && element('div', null,
-      element('h4', null, 'Benchmark output'),
-      run.outputTruncated && element('p', { style: styles.notice }, 'Output was truncated by the backend.'),
-      run.output ? element('pre', { style: styles.output, tabIndex: 0, 'aria-label': 'Benchmark output' }, run.output)
-        : element('p', { style: styles.notice }, 'No output was captured.')),
-    completed && onDismiss && element('button', { type: 'button', onClick: onDismiss,
-      'aria-label': `Dismiss completed run ${id}` }, 'Dismiss'));
+  return (
+    <Card variant="outlined" component="section" aria-label="Benchmark run result" sx={{ minWidth: 0 }}>
+      <CardContent>
+        <Stack spacing={2}>
+          <Stack direction="row" spacing={1} sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6" component="h3">
+              Benchmark run
+            </Typography>
+            <Chip
+              role="status"
+              size="small"
+              label={statusLabel(run, feedback)}
+              color={run ? STATUS_COLORS[run.status] : 'default'}
+              icon={pollingActive ? <CircularProgress size={12} color="inherit" /> : undefined}
+            />
+          </Stack>
+
+          <Box
+            component="dl"
+            sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 2, rowGap: 0.5, m: 0 }}
+          >
+            {details.map(([label, value]) =>
+              value === undefined ? null : (
+                <Fragment key={label}>
+                  <Typography component="dt" variant="body2" color="text.secondary">
+                    {label}
+                  </Typography>
+                  <Typography component="dd" variant="body2" sx={{ m: 0, overflowWrap: 'anywhere' }}>
+                    {value}
+                  </Typography>
+                </Fragment>
+              )
+            )}
+          </Box>
+
+          {feedback && (
+            <Alert
+              severity={feedback.paused ? 'error' : 'warning'}
+              action={
+                feedback.paused ? (
+                  <Button color="inherit" size="small" onClick={onRetry}>
+                    Retry status check
+                  </Button>
+                ) : undefined
+              }
+            >
+              {`Status updates ${feedback.paused ? 'paused' : 'interrupted'}. ${feedback.error.message}`}
+              {feedback.retryInMs !== undefined ? ` Retrying in ${feedback.retryInMs / 1000} seconds.` : ''}
+            </Alert>
+          )}
+
+          {run?.status === 'failed' && <Alert severity="error">{run.error}</Alert>}
+
+          {completed && (
+            <Box>
+              <Typography variant="subtitle2" component="h4" gutterBottom>
+                Benchmark output
+              </Typography>
+              {run.outputTruncated && (
+                <Typography variant="caption" component="p" color="text.secondary" gutterBottom>
+                  Output was truncated by the backend.
+                </Typography>
+              )}
+              {run.output ? (
+                <Box
+                  component="pre"
+                  tabIndex={0}
+                  aria-label="Benchmark output"
+                  sx={{
+                    m: 0,
+                    p: 1.5,
+                    maxHeight: 400,
+                    overflow: 'auto',
+                    bgcolor: 'action.hover',
+                    borderRadius: 1,
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    whiteSpace: 'pre',
+                  }}
+                >
+                  {run.output}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No output was captured.
+                </Typography>
+              )}
+            </Box>
+          )}
+        </Stack>
+      </CardContent>
+      {completed && onDismiss && (
+        <CardActions sx={{ px: 2, pb: 2 }}>
+          <Button size="small" onClick={onDismiss} aria-label={`Dismiss completed run ${id}`}>
+            Dismiss
+          </Button>
+        </CardActions>
+      )}
+    </Card>
+  );
 }
