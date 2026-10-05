@@ -1,0 +1,240 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Build and test the frontend before publishing either image.
+  build-frontend:
+    name: Build frontend bundle
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.version.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Validate release tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Expected a stable release tag of the form vX.Y.Z"
+            exit 1
+          fi
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "image=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:form
+      - run: npm run test:submission
+      - run: npm run test:status
+      - run: npm run test:polling
+      - run: npm run test:result
+      - run: npm run build
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frontend-bundle
+          path: dist/main.js
+          if-no-files-found: error
+
+  # Keep the built images as archives so publication uses the tested artifacts.
+  build-image:
+    name: Build and test images
+    runs-on: ubuntu-latest
+    needs: build-frontend
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Download frontend bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frontend-bundle
+          path: dist/
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      - name: Test backend and runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p backend/dist
+          cp dist/main.js backend/dist/main.js
+          (cd backend && go vet ./... && go test -race ./...)
+          (cd runners/pgbench && go vet ./... && go test -race ./...)
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: "3.14.0"
+      - run: helm lint charts/plugin-bench/
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Extract backend image metadata
+        id: backend-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ needs.build-frontend.outputs.image }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+      - name: Extract runner image metadata
+        id: runner-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ needs.build-frontend.outputs.image }}-pgbench
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+      - name: Prepare archive directory
+        run: mkdir -p image-artifacts
+      - name: Build backend archive
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=image-artifacts/backend.tar
+          tags: ${{ steps.backend-meta.outputs.tags }}
+          labels: ${{ steps.backend-meta.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+      - name: Build runner archive
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: runners/pgbench
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=image-artifacts/runner.tar
+          tags: ${{ steps.runner-meta.outputs.tags }}
+          labels: ${{ steps.runner-meta.outputs.labels }}
+          cache-from: type=gha,scope=runner
+          cache-to: type=gha,scope=runner,mode=max
+      - name: Install image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+      - name: Load runner from release archive
+        run: |
+          skopeo --override-os linux --override-arch amd64 copy \
+            oci-archive:image-artifacts/runner.tar \
+            docker-daemon:plugin-bench-pgbench:release-test
+      - name: Integration test runner
+        timeout-minutes: 3
+        run: bash .github/scripts/test-runner.sh plugin-bench-pgbench:release-test
+      - name: Upload tested images
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-images
+          path: image-artifacts/*.tar
+          compression-level: 0
+          if-no-files-found: error
+
+  # Package release-specific values without committing changes back to main.
+  release:
+    name: Publish images, chart, and release
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-image]
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.build-frontend.outputs.version }}
+      IMAGE: ghcr.io/${{ needs.build-frontend.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Download tested images
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-images
+          path: image-artifacts/
+      - name: Install release tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo python3-yaml
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: "3.14.0"
+      - name: Set chart versions and image references
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHART=charts/plugin-bench
+          sed -i "s/^version:.*/version: ${VERSION}/; s/^appVersion:.*/appVersion: \"${VERSION}\"/" "$CHART/Chart.yaml"
+          sed -i "/^image:/,/^imagePullSecrets:/ { s|^  repository:.*|  repository: ${IMAGE}|; s|^  tag:.*|  tag: \"${VERSION}\"|; }" "$CHART/values.yaml"
+          sed -i "/^runner:/,/^resources:/ { s|^    repository:.*|    repository: ${IMAGE}-pgbench|; s|^    tag:.*|    tag: \"${VERSION}\"|; }" "$CHART/values.yaml"
+      - name: Validate and package chart
+        run: |
+          helm lint charts/plugin-bench/
+          helm template plugin-bench charts/plugin-bench/ --namespace everest-system > /dev/null
+          mkdir -p release-artifacts
+          helm package charts/plugin-bench/ --destination release-artifacts/
+          python3 .github/scripts/verify-release-chart.py \
+            "release-artifacts/plugin-bench-${VERSION}.tgz" "$VERSION" "$IMAGE"
+      - name: Publish tested image archives
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | skopeo login --authfile "$RUNNER_TEMP/ghcr-auth.json" \
+            --username "$GITHUB_ACTOR" --password-stdin "$REGISTRY"
+          skopeo copy --all --preserve-digests --authfile "$RUNNER_TEMP/ghcr-auth.json" \
+            oci-archive:image-artifacts/backend.tar "docker://${IMAGE}:${VERSION}"
+          skopeo copy --all --preserve-digests --authfile "$RUNNER_TEMP/ghcr-auth.json" \
+            oci-archive:image-artifacts/runner.tar "docker://${IMAGE}-pgbench:${VERSION}"
+      - name: Publish Helm chart to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | helm registry login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin
+          helm push "release-artifacts/plugin-bench-${VERSION}.tgz" "oci://${IMAGE%/*}/charts"
+      - name: Verify public access
+        run: |
+          skopeo inspect --no-creds "docker://${IMAGE}:${VERSION}" > /dev/null
+          skopeo inspect --no-creds "docker://${IMAGE}-pgbench:${VERSION}" > /dev/null
+          helm show chart "oci://${IMAGE%/*}/charts/plugin-bench" --version "$VERSION" \
+            --registry-config "$RUNNER_TEMP/anonymous-helm.json" > /dev/null
+      - name: Generate release notes
+        shell: bash
+        run: |
+          cat > release-artifacts/notes.md <<EOF
+          ## Plugin Bench v${VERSION}
+
+          ### Images
+          - Backend and frontend: \`${IMAGE}:${VERSION}\`
+          - pgbench runner: \`${IMAGE}-pgbench:${VERSION}\`
+
+          Platforms: \`linux/amd64\`, \`linux/arm64\`.
+
+          ### Install with Helm
+          \`\`\`bash
+          helm install plugin-bench oci://${IMAGE%/*}/charts/plugin-bench \\
+            --version ${VERSION} --namespace everest-system
+          \`\`\`
+
+          Or install the attached chart archive:
+          \`\`\`bash
+          helm install plugin-bench plugin-bench-${VERSION}.tgz --namespace everest-system
+          \`\`\`
+          EOF
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          name: v${{ needs.build-frontend.outputs.version }}
+          body_path: release-artifacts/notes.md
+          files: release-artifacts/plugin-bench-*.tgz
+          fail_on_unmatched_files: true
