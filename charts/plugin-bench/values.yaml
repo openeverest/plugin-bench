@@ -51,9 +51,8 @@ workload:
 # Configuration for the per-run pgbench Kubernetes Job.
 runner:
   image:
-    # For local k3d development, build and import this image into the cluster.
-    repository: plugin-bench-pgbench
-    tag: dev
+    repository: ghcr.io/openeverest/plugin-bench-pgbench
+    tag: ""
     pullPolicy: IfNotPresent
   executionTimeout: 5m
   resources:

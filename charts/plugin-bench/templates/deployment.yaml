@@ -36,7 +36,7 @@ spec:
             - name: RUNNER_SERVICE_ACCOUNT_NAME
               value: {{ include "plugin-bench.runnerServiceAccountName" . | quote }}
             - name: RUNNER_IMAGE
-              value: {{ printf "%s:%s" .Values.runner.image.repository .Values.runner.image.tag | quote }}
+              value: {{ printf "%s:%s" .Values.runner.image.repository (.Values.runner.image.tag | default .Chart.AppVersion) | quote }}
             - name: RUNNER_IMAGE_PULL_POLICY
               value: {{ .Values.runner.image.pullPolicy | quote }}
             - name: BENCHMARK_EXECUTION_TIMEOUT
