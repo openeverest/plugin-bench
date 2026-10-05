@@ -22,6 +22,9 @@ jobs:
       - run: npm ci
       - run: npm run test:form
       - run: npm run test:submission
+      - run: npm run test:status
+      - run: npm run test:polling
+      - run: npm run test:result
       - run: npm run build
 
   backend:
