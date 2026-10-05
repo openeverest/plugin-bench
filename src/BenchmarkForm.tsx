@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import {
-  Alert,
   Box,
   Button,
   Card,
@@ -81,45 +80,47 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
           />
 
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-            {NUMERIC_FIELDS.map(({ field, label, hint }) => (
-              <TextField
-                key={field}
-                id={`benchmark-${field}`}
-                name={field}
-                label={label}
-                type="number"
-                size="small"
-                value={values[field]}
-                error={Boolean(fieldError(field))}
-                helperText={fieldError(field) ?? hint}
-                onChange={event => updateValue(field, event.target.value)}
-                onBlur={() => markTouched(field)}
-                slotProps={{ htmlInput: { min: 1, step: 1 } }}
-              />
-            ))}
+            {NUMERIC_FIELDS.map(({ field, label, hint }) => {
+              // pgbench takes the scale from existing tables when it doesn't initialize.
+              const reusesScale = field === 'scale' && !values.initialize;
+              return (
+                <TextField
+                  key={field}
+                  id={`benchmark-${field}`}
+                  name={field}
+                  label={label}
+                  type="number"
+                  size="small"
+                  value={values[field]}
+                  disabled={reusesScale}
+                  error={Boolean(fieldError(field))}
+                  helperText={fieldError(field) ?? (reusesScale ? 'Taken from the existing pgbench tables.' : hint)}
+                  onChange={event => updateValue(field, event.target.value)}
+                  onBlur={() => markTouched(field)}
+                  slotProps={{ htmlInput: { min: 1, step: 1 } }}
+                />
+              );
+            })}
           </Box>
 
-          <Stack spacing={1}>
-            <Box>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    id="benchmark-initialize"
-                    name="initialize"
-                    checked={values.initialize}
-                    onChange={event => updateValue('initialize', event.target.checked)}
-                  />
-                }
-                label="Initialize pgbench tables"
-              />
-              <FormHelperText sx={{ mt: 0 }}>Required the first time you benchmark a database.</FormHelperText>
-            </Box>
-            {values.initialize && (
-              <Alert severity="warning">
-                Initializing drops and recreates the pgbench tables in the target database.
-              </Alert>
-            )}
-          </Stack>
+          <Box>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  id="benchmark-initialize"
+                  name="initialize"
+                  checked={values.initialize}
+                  onChange={event => updateValue('initialize', event.target.checked)}
+                />
+              }
+              label="Initialize pgbench tables"
+            />
+            <FormHelperText sx={{ mt: 0 }}>
+              {values.initialize
+                ? 'Drops and recreates the pgbench tables for a fresh dataset. Uncheck to reuse existing pgbench tables.'
+                : 'Reuses the existing pgbench tables. The run fails if they don\'t exist yet.'}
+            </FormHelperText>
+          </Box>
         </Stack>
       </CardContent>
       <CardActions sx={{ px: 2, pb: 2 }}>

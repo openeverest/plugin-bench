@@ -5,8 +5,8 @@ import { initialBenchmarkFormValues, toCreateBenchmarkRunRequest, validateBenchm
 const validValues = { ...initialBenchmarkFormValues, database: 'benchdb' };
 const target = { k8sCluster: 'main', namespace: 'dbs', instance: 'pg-1' };
 
-test('accepts valid form values and defaults initialization to false', () => {
-  assert.equal(initialBenchmarkFormValues.initialize, false);
+test('accepts valid form values and initializes the dataset by default', () => {
+  assert.equal(initialBenchmarkFormValues.initialize, true);
   assert.deepEqual(validateBenchmarkForm(validValues), {});
 });
 

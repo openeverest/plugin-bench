@@ -16,7 +16,7 @@ export const initialBenchmarkFormValues: BenchmarkFormValues = {
   clients: '1',
   threads: '1',
   scale: '1',
-  initialize: false,
+  initialize: true,
 };
 
 export type BenchmarkFormField = Exclude<keyof BenchmarkFormValues, 'initialize'>;
