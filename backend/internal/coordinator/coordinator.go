@@ -40,13 +40,13 @@ func (c Config) Validate() error {
 	if c.ExecutionTimeout < time.Second || c.ExecutionTimeout%time.Second != 0 {
 		return errors.New("execution timeout must be a positive whole number of seconds")
 	}
+	if _, err := resourceRequirements(c.Resources); err != nil {
+		return fmt.Errorf("invalid runner resources: %w", err)
+	}
 	return nil
 }
 
-// Resources uses Kubernetes quantity strings, such as "100m" and "128Mi".
-// Empty fields leave that request or limit unspecified. Quantity parsing and
-// request/limit validation belong to Job construction when Kubernetes types
-// are introduced.
+// Resources uses Kubernetes quantity strings; empty fields remain unspecified.
 type Resources struct {
 	CPURequest    string
 	MemoryRequest string
@@ -73,8 +73,8 @@ func New(config Config, kubeClient kubernetes.Interface) (*Coordinator, error) {
 	return &Coordinator{config: config, kubeClient: kubeClient}, nil
 }
 
-// NewInCluster constructs a coordinator using the Pod's ServiceAccount
-// credentials. Use New with an injected client in unit tests.
+// NewInCluster constructs a coordinator using the Pod's ServiceAccount.
+// Use New with an injected client in unit tests.
 func NewInCluster(config Config) (*Coordinator, error) {
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {

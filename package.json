@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test:form": "tsc src/benchmarkFormValidation.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/form-test && node tests/benchmarkForm.test.mjs",
+    "test:submission": "tsc src/benchmarkApi.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/submission-test && node tests/benchmarkApi.test.mjs",
+    "test:status": "tsc src/benchmarkApi.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/status-test && node tests/benchmarkStatus.test.mjs",
+    "test:polling": "tsc src/benchmarkRunPolling.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/polling-test && node tests/benchmarkRunPolling.test.mjs",
+    "test:result": "tsc src/BenchmarkRunResult.tsx --jsx react-jsx --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/result-test && node tests/benchmarkRunResult.test.mjs",
     "preview": "vite preview --port 3001"
   },
   "dependencies": {
