@@ -16,7 +16,7 @@ export const initialBenchmarkFormValues: BenchmarkFormValues = {
   clients: '1',
   threads: '1',
   scale: '1',
-  initialize: false,
+  initialize: true,
 };
 
 export type BenchmarkFormField = Exclude<keyof BenchmarkFormValues, 'initialize'>;
@@ -28,9 +28,7 @@ export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFor
   const errors: BenchmarkFormErrors = {};
   const database = values.database.trim();
 
-  if (!database) {
-    errors.database = 'Database name is required.';
-  } else if (
+  if (
     database.includes('=') ||
     database.toLowerCase().startsWith('postgres://') ||
     database.toLowerCase().startsWith('postgresql://')
@@ -47,6 +45,8 @@ export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFor
   const parsedValues: Partial<Record<BenchmarkFormField, number>> = {};
 
   for (const [field, label] of numericFields) {
+    if (field === 'scale' && !values.initialize) continue;
+
     const value = values[field].trim();
     if (!/^\d+$/.test(value)) {
       errors[field] = `${label} must be a positive whole number.`;
@@ -80,13 +80,14 @@ export function toCreateBenchmarkRunRequest(
     return undefined;
   }
 
+  const database = values.database.trim();
   return {
     target,
-    database: values.database.trim(),
+    ...(database ? { database } : {}),
     durationSeconds: Number(values.durationSeconds),
     clients: Number(values.clients),
     threads: Number(values.threads),
-    scale: Number(values.scale),
+    scale: values.initialize ? Number(values.scale) : 1,
     initialize: values.initialize,
   };
 }

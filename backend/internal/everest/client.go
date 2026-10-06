@@ -110,6 +110,8 @@ type Credentials struct {
 	Password string `json:"password"`
 	Provider string `json:"provider"`
 	Type     string `json:"type"`
+	// Database is a provider-specific key; not every provider publishes it.
+	Database string `json:"database"`
 }
 
 func validateCredentials(creds Credentials) error {

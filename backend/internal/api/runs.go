@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +66,7 @@ type Run struct {
 type RunStatusResponse struct {
 	ID              string     `json:"id"`
 	Status          RunStatus  `json:"status"`
+	Database        string     `json:"database,omitempty"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
 	JobName         string     `json:"jobName,omitempty"`
@@ -121,6 +123,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	request.Database = connection.Database
 	if a.lifecycleCtx.Err() != nil {
 		writeError(w, http.StatusServiceUnavailable, "benchmark service is shutting down")
 		return
@@ -256,6 +259,13 @@ func connectionFromCredentials(database string, credentials *everest.Credentials
 	if err != nil {
 		return coordinator.Connection{}, errors.New("OpenEverest returned an invalid database port")
 	}
+	database = strings.TrimSpace(database)
+	if database == "" {
+		database = defaultDatabase(credentials)
+	}
+	if database == "" {
+		return coordinator.Connection{}, errors.New("could not determine the instance's default database; enter a database name")
+	}
 	connection := coordinator.Connection{
 		Host:     credentials.Host,
 		Port:     port,
@@ -269,6 +279,23 @@ func connectionFromCredentials(database string, credentials *everest.Credentials
 	return connection, nil
 }
 
+// defaultDatabase prefers the explicit "database" key and falls back to the
+// database path of the connection URI.
+func defaultDatabase(credentials *everest.Credentials) string {
+	if database := strings.TrimSpace(credentials.Database); database != "" {
+		return database
+	}
+	uri, err := url.Parse(strings.TrimSpace(credentials.URI))
+	if err != nil {
+		return ""
+	}
+	database := strings.TrimPrefix(uri.Path, "/")
+	if strings.Contains(database, "/") {
+		return ""
+	}
+	return strings.TrimSpace(database)
+}
+
 func validateCreateRunRequest(request CreateRunRequest) error {
 	if strings.TrimSpace(request.Target.K8sCluster) == "" {
 		return errors.New("target.k8sCluster is required")
@@ -278,9 +305,6 @@ func validateCreateRunRequest(request CreateRunRequest) error {
 	}
 	if strings.TrimSpace(request.Target.Instance) == "" {
 		return errors.New("target.instance is required")
-	}
-	if strings.TrimSpace(request.Database) == "" {
-		return errors.New("database is required")
 	}
 	if strings.Contains(request.Database, "=") || strings.HasPrefix(strings.ToLower(request.Database), "postgres://") || strings.HasPrefix(strings.ToLower(request.Database), "postgresql://") {
 		return errors.New("database must be a database name, not a connection string")
@@ -377,6 +401,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 	response := RunStatusResponse{
 		ID:              run.ID,
 		Status:          run.Status,
+		Database:        run.Request.Database,
 		CreatedAt:       run.CreatedAt,
 		CompletedAt:     run.CompletedAt,
 		JobName:         run.JobName,

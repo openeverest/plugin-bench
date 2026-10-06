@@ -7,9 +7,9 @@ import { BenchmarkRunResult } from '../dist/result-test/BenchmarkRunResult.js';
 const base = { id: 'run-1', status: 'succeeded', createdAt: '2026-10-02T00:00:00Z',
   completedAt: '2026-10-02T00:01:00Z', outputTruncated: false };
 const render = (run, feedback = null) => renderToStaticMarkup(React.createElement(BenchmarkRunResult,
-  { react: React, id: 'run-1', run, feedback, onRetry: () => {} }));
+  { id: 'run-1', run, feedback, onRetry: () => {} }));
 
-test('terminal output and errors are escaped and output is outside the live region', () => {
+test('terminal output and errors are escaped and output follows the alerts', () => {
   const html = render({ ...base, status: 'failed', error: '<script>error</script>',
     output: '<script>output</script>\nTPS: 123', outputTruncated: true });
   assert.match(html, /Status: Failed/);
@@ -18,7 +18,13 @@ test('terminal output and errors are escaped and output is outside the live regi
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /Output was truncated by the backend/);
   assert.match(html, /Completed/);
-  assert.match(html, /<\/p>.*<pre/s);
+  assert.ok(html.indexOf('&lt;script&gt;error') < html.indexOf('<pre'));
+  assert.doesNotMatch(html, /<pre[^>]*(role|aria-live)=/);
+});
+
+test('shows the database the run used', () => {
+  assert.match(render({ ...base, database: 'app' }), /Database<\/dt><dd[^>]*>app<\/dd>/);
+  assert.doesNotMatch(render(base), /Database/);
 });
 
 test('empty completed output is explicit and running output is not displayed', () => {
@@ -30,7 +36,7 @@ test('empty completed output is explicit and running output is not displayed', (
 
 test('dismiss is offered only for completed runs', () => {
   const card = run => renderToStaticMarkup(React.createElement(BenchmarkRunResult,
-    { react: React, id: 'run-1', run, feedback: null, onRetry: () => {}, onDismiss: () => {} }));
+    { id: 'run-1', run, feedback: null, onRetry: () => {}, onDismiss: () => {} }));
   assert.match(card(base), /Dismiss completed run run-1/);
   assert.doesNotMatch(card({ ...base, status: 'running' }), /Dismiss/);
 });

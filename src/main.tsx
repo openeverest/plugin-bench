@@ -1,14 +1,11 @@
-import type {
-  ClusterDetailTabProps,
-  PluginApi,
-  PluginRegisterFn,
-  PluginRouteProps,
-} from '@openeverest/plugin-sdk';
-import { BenchmarkPage, BenchmarkTab } from './BenchmarkTab';
+import type { ClusterDetailTabProps, PluginApi, PluginRegisterFn } from '@openeverest/plugin-sdk';
+import { BenchmarkPage } from './BenchmarkPage';
+import { BenchmarkTab } from './BenchmarkTab';
+import { PluginRoot } from './PluginRoot';
 
 const register: PluginRegisterFn = (api: PluginApi) => {
-  const react = api.React;
   const pluginFetch = api.fetch.bind(api);
+  const { cssNonce } = api;
 
   api.registerExtension({
     type: 'sidebarItem',
@@ -18,7 +15,11 @@ const register: PluginRegisterFn = (api: PluginApi) => {
   api.registerExtension({
     type: 'route',
     label: 'Performance Benchmark',
-    component: (props: PluginRouteProps) => react.createElement(BenchmarkPage, { ...props, react }),
+    component: () => (
+      <PluginRoot nonce={cssNonce}>
+        <BenchmarkPage />
+      </PluginRoot>
+    ),
   });
 
   api.registerExtension({
@@ -26,8 +27,11 @@ const register: PluginRegisterFn = (api: PluginApi) => {
     label: 'Performance Benchmark',
     path: 'performance-benchmark',
     providers: ['provider-cloudnative-pg', 'provider-percona-postgresql'],
-    component: (props: ClusterDetailTabProps) =>
-      react.createElement(BenchmarkTab, { ...props, react, pluginFetch }),
+    component: (props: ClusterDetailTabProps) => (
+      <PluginRoot nonce={cssNonce}>
+        <BenchmarkTab {...props} pluginFetch={pluginFetch} />
+      </PluginRoot>
+    ),
   });
 };
 
