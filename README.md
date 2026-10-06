@@ -92,6 +92,21 @@ helm lint charts/plugin-bench/
 docker build -t plugin-bench-pgbench:dev runners/pgbench
 ```
 
+## Releasing
+
+Push a `vX.Y.Z` tag, or `vX.Y.Z-<pre-release>` for a pre-release, to run the
+release workflow. It publishes:
+
+- `ghcr.io/openeverest/plugin-bench` and `ghcr.io/openeverest/plugin-bench-pgbench`
+  images for `linux/amd64` and `linux/arm64`
+- the `oci://ghcr.io/openeverest/charts/plugin-bench` Helm chart
+- a GitHub release with the chart archive and release notes
+
+GHCR creates new packages as private, so the first release fails at the
+"Verify public access" step. Make each new package public in its GHCR package
+settings, then re-run the failed job. Publishing is idempotent, so re-runs are
+safe.
+
 ## Project structure
 
 ```text
