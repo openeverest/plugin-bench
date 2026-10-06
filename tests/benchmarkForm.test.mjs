@@ -46,3 +46,18 @@ test('requires threads not to exceed clients', () => {
     'Threads cannot exceed clients.'
   );
 });
+
+test('reusing tables ignores scale and sends a valid fallback', () => {
+  for (const scale of ['', '0', '-1', 'abc', '2147483648', '10']) {
+    const values = { ...validValues, initialize: false, scale };
+    assert.deepEqual(validateBenchmarkForm(values), {});
+    assert.equal(toCreateBenchmarkRunRequest(values, target).scale, 1);
+  }
+});
+
+test('enabling initialization again requires a valid scale and uses its value', () => {
+  const values = { ...validValues, initialize: false, scale: '' };
+  assert.ok(toCreateBenchmarkRunRequest(values, target));
+  assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true }, target), undefined);
+  assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true, scale: '10' }, target).scale, 10);
+});

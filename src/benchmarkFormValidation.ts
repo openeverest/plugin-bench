@@ -45,6 +45,8 @@ export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFor
   const parsedValues: Partial<Record<BenchmarkFormField, number>> = {};
 
   for (const [field, label] of numericFields) {
+    if (field === 'scale' && !values.initialize) continue;
+
     const value = values[field].trim();
     if (!/^\d+$/.test(value)) {
       errors[field] = `${label} must be a positive whole number.`;
@@ -85,7 +87,7 @@ export function toCreateBenchmarkRunRequest(
     durationSeconds: Number(values.durationSeconds),
     clients: Number(values.clients),
     threads: Number(values.threads),
-    scale: Number(values.scale),
+    scale: values.initialize ? Number(values.scale) : 1,
     initialize: values.initialize,
   };
 }

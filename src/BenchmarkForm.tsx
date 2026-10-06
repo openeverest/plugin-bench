@@ -94,7 +94,7 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
                   value={values[field]}
                   disabled={reusesScale}
                   error={Boolean(fieldError(field))}
-                  helperText={fieldError(field) ?? (reusesScale ? 'Taken from the existing pgbench tables.' : hint)}
+                  helperText={fieldError(field) ?? (reusesScale ? 'Scale is only used when initializing pgbench tables.' : hint)}
                   onChange={event => updateValue(field, event.target.value)}
                   onBlur={() => markTouched(field)}
                   slotProps={{ htmlInput: { min: 1, step: 1 } }}
