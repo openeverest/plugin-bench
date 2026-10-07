@@ -14,7 +14,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -496,54 +495,6 @@ func benchmarkEnvironment(secretName string, options Options) []corev1.EnvVar {
 		corev1.EnvVar{Name: "BENCH_INITIALIZE", Value: strconv.FormatBool(options.Initialize)},
 	)
 	return env
-}
-
-func resourceRequirements(resources Resources) (corev1.ResourceRequirements, error) {
-	result := corev1.ResourceRequirements{}
-	requests, err := parseQuantities("request", resources.CPURequest, resources.MemoryRequest)
-	if err != nil {
-		return result, err
-	}
-	limits, err := parseQuantities("limit", resources.CPULimit, resources.MemoryLimit)
-	if err != nil {
-		return result, err
-	}
-	result.Requests = requests
-	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
-		request, hasRequest := requests[name]
-		limit, hasLimit := limits[name]
-		if hasRequest && hasLimit && request.Cmp(limit) > 0 {
-			return corev1.ResourceRequirements{}, fmt.Errorf("%s request cannot exceed limit", name)
-		}
-	}
-	result.Limits = limits
-	return result, nil
-}
-
-func parseQuantities(kind, cpu, memory string) (corev1.ResourceList, error) {
-	result := corev1.ResourceList{}
-	for name, value := range map[string]string{"cpu": cpu, "memory": memory} {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		quantity, err := resource.ParseQuantity(value)
-		if err != nil {
-			return nil, fmt.Errorf("invalid %s %s resource quantity: %w", kind, name, err)
-		}
-		resourceName := corev1.ResourceName(name)
-		if quantity.Sign() < 0 {
-			return nil, fmt.Errorf("%s %s resource quantity must be nonnegative", kind, name)
-		}
-		if resourceName == corev1.ResourceCPU {
-			// Round a copy so precision is checked without changing the value.
-			rounded := quantity.DeepCopy()
-			if !rounded.RoundUp(resource.Milli) {
-				return nil, fmt.Errorf("%s cpu resource quantity must use increments of 1m", kind)
-			}
-		}
-		result[resourceName] = quantity
-	}
-	return result, nil
 }
 
 func copyLabels(labels map[string]string) map[string]string {
