@@ -14,13 +14,17 @@ The plugin backend coordinates a benchmark run:
 
 1. Resolve connection details for the selected PostgreSQL instance through the
    OpenEverest API.
-2. Create a temporary Secret containing the database credentials.
-3. Create a Kubernetes Job using the pgbench runner image.
-4. Wait for the Job and collect the runner logs.
-5. Delete the Job and temporary Secret.
+2. Pick the database: the one entered in the form, otherwise the instance's
+   default database (the provider's `database` connection key, or the database
+   in its connection URI).
+3. Create a temporary Secret containing the database credentials.
+4. Create a Kubernetes Job using the pgbench runner image.
+5. Wait for the Job and collect the runner logs.
+6. Delete the Job and temporary Secret.
 
-The frontend is currently available as a PostgreSQL cluster detail tab. Other
-database technologies can be added later through a driver-based design.
+The frontend is currently available as a PostgreSQL cluster detail tab. It is
+built with MUI and themed from the host through `@openeverest/plugin-theme`.
+Other database technologies can be added later through a driver-based design.
 
 ## Requirements
 

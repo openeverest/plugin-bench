@@ -108,7 +108,7 @@ func TestCreateRunDecodesRequest(t *testing.T) {
 		{"valid", validCreateRunBody, "application/json", http.StatusAccepted},
 		{"charset", validCreateRunBody, "application/json; charset=utf-8", http.StatusAccepted},
 		{"missing instance", `{"target":{"k8sCluster":"local","namespace":"dbs"},"database":"bench","durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusBadRequest},
-		{"missing database", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusBadRequest},
+		{"missing database without instance default", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusUnprocessableEntity},
 		{"invalid options", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":"bench","durationSeconds":30,"clients":1,"threads":2,"scale":1}`, "application/json", http.StatusBadRequest},
 		{"connection string as database", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":"postgres://host/db","durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusBadRequest},
 		{"malformed", `{`, "application/json", http.StatusBadRequest},
@@ -207,6 +207,46 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 	}
 	if err != nil || run.Status != RunStatusSucceeded || run.JobName != "bench-run-job" || run.Output != "pgbench password=[REDACTED] done" {
 		t.Fatalf("run completion was not stored: run=%+v err=%v", run, err)
+	}
+}
+
+func TestCreateRunDefaultsToInstanceDatabase(t *testing.T) {
+	store := NewRunStore()
+	databases := make(chan string, 1)
+	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+		credentials := testCredentials()
+		credentials.Database = "app"
+		return credentials, nil
+	}, nil, testRunnerFunc(func(_ context.Context, connection coordinator.Connection, _ coordinator.Options) (coordinator.Result, error) {
+		databases <- connection.Database
+		return coordinator.Result{}, nil
+	}), store, context.Background())
+	body := `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":" ","durationSeconds":30,"clients":1,"threads":1,"scale":1}`
+	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer test-token")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.createRun(w, r)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d, want %d; body=%s", w.Code, http.StatusAccepted, w.Body.String())
+	}
+	select {
+	case database := <-databases:
+		if database != "app" {
+			t.Fatalf("runner database=%q, want app", database)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner was not started")
+	}
+	var accepted struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.Get(accepted.ID)
+	if err != nil || run.Request.Database != "app" {
+		t.Fatalf("resolved database was not stored: run=%+v err=%v", run, err)
 	}
 }
 
@@ -322,6 +362,36 @@ func TestConnectionFromCredentials(t *testing.T) {
 	}
 }
 
+func TestConnectionFromCredentialsResolvesDefaultDatabase(t *testing.T) {
+	for _, test := range []struct {
+		name, requested, database, uri, want string
+	}{
+		{name: "explicit database wins", requested: " custom ", database: "app", uri: "postgresql://u:p@host:5432/other", want: "custom"},
+		{name: "database key", database: "app", uri: "postgresql://u:p@host:5432/other", want: "app"},
+		{name: "uri path", uri: "postgresql://u:p@host:5432/pg-cluster?sslmode=require", want: "pg-cluster"},
+		{name: "escaped uri path", uri: "postgresql://u:p@host:5432/my%20db", want: "my db"},
+		{name: "uri without path", uri: "postgresql://u:p@host:5432"},
+		{name: "nested uri path", uri: "postgresql://u:p@host:5432/a/b"},
+		{name: "no hints"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			credentials := testCredentials()
+			credentials.Database = test.database
+			credentials.URI = test.uri
+			connection, err := connectionFromCredentials(test.requested, credentials)
+			if test.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "default database") {
+					t.Fatalf("expected default database error, got connection=%+v err=%v", connection, err)
+				}
+				return
+			}
+			if err != nil || connection.Database != test.want {
+				t.Fatalf("database=%q err=%v, want %q", connection.Database, err, test.want)
+			}
+		})
+	}
+}
+
 func TestGetRun(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -349,7 +419,8 @@ func TestGetRun(t *testing.T) {
 			store := NewRunStore()
 			if test.exists {
 				run, err := store.Create("run-123", CreateRunRequest{
-					Target: Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
+					Target:   Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
+					Database: "app",
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -419,7 +490,7 @@ func TestGetRun(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if response.ID != "run-123" || response.Status != test.status || response.CreatedAt.IsZero() {
+			if response.ID != "run-123" || response.Status != test.status || response.Database != "app" || response.CreatedAt.IsZero() {
 				t.Fatalf("unexpected run status response: %+v", response)
 			}
 			if test.status == RunStatusRunning {

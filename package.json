@@ -10,17 +10,23 @@
     "test:submission": "tsc src/benchmarkApi.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/submission-test && node tests/benchmarkApi.test.mjs",
     "test:status": "tsc src/benchmarkApi.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/status-test && node tests/benchmarkStatus.test.mjs",
     "test:polling": "tsc src/benchmarkRunPolling.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/polling-test && node tests/benchmarkRunPolling.test.mjs",
-    "test:result": "tsc src/BenchmarkRunResult.tsx --jsx react-jsx --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/result-test && node tests/benchmarkRunResult.test.mjs",
+    "test:result": "tsc src/BenchmarkRunResult.tsx --jsx react-jsx --target ES2020 --module ESNext --moduleResolution Bundler --esModuleInterop --skipLibCheck --outDir dist/result-test && node tests/benchmarkRunResult.test.mjs",
     "preview": "vite preview --port 3001"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "@emotion/cache": "^11.14.0",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/material": "7.3.11",
+    "@openeverest/plugin-theme": "^0.1.0"
   },
   "devDependencies": {
-    "@openeverest/plugin-sdk": "^0.3.0",
+    "@openeverest/plugin-sdk": "^0.4.0",
     "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^4.3.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.2.2",
     "vite": "^8.2.0"
   }

@@ -3,7 +3,8 @@ import type { BenchmarkTarget } from './benchmarkTarget';
 
 export type CreateBenchmarkRunRequest = {
   target: BenchmarkTarget;
-  database: string;
+  /** Omit to benchmark the instance's default database. */
+  database?: string;
   durationSeconds: number;
   clients: number;
   threads: number;
@@ -21,6 +22,7 @@ export type BenchmarkRunStatus = 'running' | 'succeeded' | 'failed';
 export type BenchmarkRun = {
   id: string;
   status: BenchmarkRunStatus;
+  database?: string;
   createdAt: string;
   completedAt?: string;
   jobName?: string;
@@ -104,7 +106,7 @@ function isBenchmarkRun(value: unknown, id: string): value is BenchmarkRun {
     timestamp(run.createdAt) && typeof run.outputTruncated === 'boolean' &&
     (run.completedAt === undefined || timestamp(run.completedAt)) &&
     (run.status === 'running' || timestamp(run.completedAt)) &&
-    ['jobName', 'output', 'error'].every(key => run[key] === undefined || typeof run[key] === 'string') &&
+    ['database', 'jobName', 'output', 'error'].every(key => run[key] === undefined || typeof run[key] === 'string') &&
     (run.status !== 'failed' || (typeof run.error === 'string' && run.error.trim() !== ''));
 }
 
