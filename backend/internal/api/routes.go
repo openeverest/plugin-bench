@@ -25,6 +25,7 @@ type API struct {
 	getCredentials      CredentialLookup
 	checkInstanceAccess InstanceAccessCheck
 	runner              BenchmarkRunner
+	resourceDefaults    coordinator.Resources
 	store               *RunStore
 	lifecycleCtx        context.Context
 	runSlots            chan struct{}
@@ -33,7 +34,7 @@ type API struct {
 	closing             bool
 }
 
-func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context) *API {
+func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources) *API {
 	if store == nil {
 		store = NewRunStore()
 	}
@@ -44,6 +45,7 @@ func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessC
 		getCredentials:      getCredentials,
 		checkInstanceAccess: checkInstanceAccess,
 		runner:              runner,
+		resourceDefaults:    resourceDefaults,
 		store:               store,
 		lifecycleCtx:        lifecycleCtx,
 		runSlots:            make(chan struct{}, maxConcurrentRuns),

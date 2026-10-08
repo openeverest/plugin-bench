@@ -35,15 +35,39 @@ type Target struct {
 	Instance   string `json:"instance"`
 }
 
+// RunResources contains Kubernetes quantity strings for the runner container.
+// Empty request fields inherit the deployment defaults.
+type RunResources struct {
+	CPURequest    string `json:"cpuRequest,omitempty"`
+	CPULimit      string `json:"cpuLimit,omitempty"`
+	MemoryRequest string `json:"memoryRequest,omitempty"`
+	MemoryLimit   string `json:"memoryLimit,omitempty"`
+}
+
+func (r RunResources) coordinatorResources() coordinator.Resources {
+	return coordinator.Resources{
+		CPURequest: r.CPURequest, CPULimit: r.CPULimit,
+		MemoryRequest: r.MemoryRequest, MemoryLimit: r.MemoryLimit,
+	}
+}
+
+func runResources(r coordinator.Resources) RunResources {
+	return RunResources{
+		CPURequest: r.CPURequest, CPULimit: r.CPULimit,
+		MemoryRequest: r.MemoryRequest, MemoryLimit: r.MemoryLimit,
+	}
+}
+
 // CreateRunRequest contains the target and per-run benchmark settings.
 type CreateRunRequest struct {
-	Target          Target `json:"target"`
-	Database        string `json:"database"`
-	DurationSeconds int    `json:"durationSeconds"`
-	Clients         int    `json:"clients"`
-	Threads         int    `json:"threads"`
-	Scale           int    `json:"scale"`
-	Initialize      bool   `json:"initialize"`
+	Target          Target       `json:"target"`
+	Database        string       `json:"database"`
+	DurationSeconds int          `json:"durationSeconds"`
+	Clients         int          `json:"clients"`
+	Threads         int          `json:"threads"`
+	Scale           int          `json:"scale"`
+	Initialize      bool         `json:"initialize"`
+	Resources       RunResources `json:"resources"`
 }
 
 // RunStatus describes the execution workflow. Running does not imply that
@@ -54,6 +78,7 @@ type RunStatus string
 type Run struct {
 	ID              string           `json:"id"`
 	Request         CreateRunRequest `json:"request"`
+	Resources       RunResources     `json:"resources"`
 	Status          RunStatus        `json:"status"`
 	CreatedAt       time.Time        `json:"createdAt"`
 	CompletedAt     *time.Time       `json:"completedAt,omitempty"`
@@ -64,15 +89,16 @@ type Run struct {
 }
 
 type RunStatusResponse struct {
-	ID              string     `json:"id"`
-	Status          RunStatus  `json:"status"`
-	Database        string     `json:"database,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	CompletedAt     *time.Time `json:"completedAt,omitempty"`
-	JobName         string     `json:"jobName,omitempty"`
-	Output          string     `json:"output,omitempty"`
-	OutputTruncated bool       `json:"outputTruncated"`
-	Error           string     `json:"error,omitempty"`
+	ID              string       `json:"id"`
+	Status          RunStatus    `json:"status"`
+	Database        string       `json:"database,omitempty"`
+	Resources       RunResources `json:"resources"`
+	CreatedAt       time.Time    `json:"createdAt"`
+	CompletedAt     *time.Time   `json:"completedAt,omitempty"`
+	JobName         string       `json:"jobName,omitempty"`
+	Output          string       `json:"output,omitempty"`
+	OutputTruncated bool         `json:"outputTruncated"`
+	Error           string       `json:"error,omitempty"`
 }
 
 func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +123,12 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateCreateRunRequest(request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	options := optionsFromRequest(request)
+	resolved, err := coordinator.ResolveResources(a.resourceDefaults, options.Resources)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -151,19 +183,12 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
-	run, err := a.store.Create(runID, request)
+	run, err := a.store.Create(runID, request, runResources(resolved))
 	if err != nil {
 		<-a.runSlots
 		a.runs.Done()
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
-	}
-	options := coordinator.Options{
-		Duration:   request.DurationSeconds,
-		Clients:    request.Clients,
-		Threads:    request.Threads,
-		Scale:      request.Scale,
-		Initialize: request.Initialize,
 	}
 	runCtx, cancel := context.WithCancel(a.lifecycleCtx)
 	go a.executeRun(runCtx, cancel, run.ID, connection, options)
@@ -310,14 +335,18 @@ func validateCreateRunRequest(request CreateRunRequest) error {
 		return errors.New("database must be a database name, not a connection string")
 	}
 
-	options := coordinator.Options{
+	return optionsFromRequest(request).Validate()
+}
+
+func optionsFromRequest(request CreateRunRequest) coordinator.Options {
+	return coordinator.Options{
 		Duration:   request.DurationSeconds,
 		Clients:    request.Clients,
 		Threads:    request.Threads,
 		Scale:      request.Scale,
 		Initialize: request.Initialize,
+		Resources:  request.Resources.coordinatorResources(),
 	}
-	return options.Validate()
 }
 
 var errUnsupportedContentType = errors.New("Content-Type must be application/json")
@@ -402,6 +431,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		ID:              run.ID,
 		Status:          run.Status,
 		Database:        run.Request.Database,
+		Resources:       run.Resources,
 		CreatedAt:       run.CreatedAt,
 		CompletedAt:     run.CompletedAt,
 		JobName:         run.JobName,

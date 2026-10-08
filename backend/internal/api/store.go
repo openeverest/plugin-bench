@@ -24,7 +24,7 @@ type RunStore struct {
 }
 
 // Create stores a new running record.
-func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
+func (s *RunStore) Create(id string, request CreateRunRequest, resources RunResources) (Run, error) {
 	if strings.TrimSpace(id) == "" {
 		return Run{}, errors.New("run ID is required")
 	}
@@ -35,7 +35,7 @@ func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
 	if _, exists := s.runs[id]; exists {
 		return Run{}, ErrRunExists
 	}
-	run := Run{ID: id, Request: request, Status: RunStatusRunning, CreatedAt: now.UTC()}
+	run := Run{ID: id, Request: request, Resources: resources, Status: RunStatusRunning, CreatedAt: now.UTC()}
 	if s.runs == nil {
 		s.runs = make(map[string]Run)
 	}

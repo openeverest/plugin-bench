@@ -47,6 +47,8 @@ type Options struct {
 	Threads    int
 	Scale      int
 	Initialize bool
+	// Resources contains optional per-run overrides of the deployment defaults.
+	Resources Resources
 }
 
 func (o Options) Validate() error {

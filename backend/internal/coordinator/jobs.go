@@ -246,7 +246,9 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 	if err := options.Validate(); err != nil {
 		return resources, fmt.Errorf("invalid benchmark options: %w", err)
 	}
-	if _, err := resourceRequirements(c.config.Resources); err != nil {
+	// Validate the combined configuration before writing the credential Secret.
+	resolvedResources, err := ResolveResources(c.config.Resources, options.Resources)
+	if err != nil {
 		return resources, fmt.Errorf("invalid runner resources: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -258,7 +260,7 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 		return resources, err
 	}
 
-	job, err := c.createBenchmarkJob(ctx, secret, options, labels)
+	job, err := c.createBenchmarkJob(ctx, secret, options, resolvedResources, labels)
 	if err == nil {
 		return benchmarkResources{secret: secret, job: job}, nil
 	}
@@ -366,8 +368,9 @@ func (c *Coordinator) cleanupBenchmarkResourcesWithContext(ctx context.Context, 
 }
 
 // createBenchmarkJob builds and creates one runner Job in the configured
-// workload namespace. It does not wait for completion or read logs.
-func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, options Options, labels map[string]string) (JobRef, error) {
+// workload namespace. resolvedResources comes from the preflight check in
+// createBenchmarkResources. It does not wait for completion or read logs.
+func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, options Options, resolvedResources Resources, labels map[string]string) (JobRef, error) {
 	var reference JobRef
 	if c == nil {
 		return reference, errors.New("coordinator is nil")
@@ -395,7 +398,7 @@ func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRe
 	if err != nil {
 		return reference, err
 	}
-	job, err := newBenchmarkJob(c.config, name, secretRef.Name, options, labels)
+	job, err := newBenchmarkJob(c.config, name, secretRef.Name, options, resolvedResources, labels)
 	if err != nil {
 		return reference, fmt.Errorf("build benchmark Job: %w", err)
 	}
@@ -417,7 +420,9 @@ func generateBenchmarkJobName() (string, error) {
 
 // newBenchmarkJob builds the per-run Job object. It only creates an in-memory
 // Kubernetes object; the caller is responsible for API calls and cleanup.
-func newBenchmarkJob(config Config, name, secretName string, options Options, labels map[string]string) (*batchv1.Job, error) {
+// resolvedResources must have been checked against deployment defaults before
+// creating the credential Secret.
+func newBenchmarkJob(config Config, name, secretName string, options Options, resolvedResources Resources, labels map[string]string) (*batchv1.Job, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid coordinator configuration: %w", err)
 	}
@@ -430,7 +435,7 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, la
 	if err := options.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid benchmark options: %w", err)
 	}
-	resources, err := resourceRequirements(config.Resources)
+	resources, err := resourceRequirements(resolvedResources)
 	if err != nil {
 		return nil, err
 	}

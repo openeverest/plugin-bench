@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -40,7 +41,7 @@ func (f testRunnerFunc) Run(ctx context.Context, connection coordinator.Connecti
 func testAPI() *API {
 	return NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
-	}, nil, testRunner{}, NewRunStore(), context.Background())
+	}, nil, testRunner{}, NewRunStore(), context.Background(), coordinator.Resources{})
 }
 
 func TestWriteErrorReturnsJSON(t *testing.T) {
@@ -114,6 +115,7 @@ func TestCreateRunDecodesRequest(t *testing.T) {
 		{"malformed", `{`, "application/json", http.StatusBadRequest},
 		{"null", `null`, "application/json", http.StatusBadRequest},
 		{"unknown field", `{"unexpected":true}`, "application/json", http.StatusBadRequest},
+		{"unknown resource field", strings.TrimSuffix(validCreateRunBody, "}") + `,"resources":{"surprise":"1"}}`, "application/json", http.StatusBadRequest},
 		{"multiple values", `{} {}`, "application/json", http.StatusBadRequest},
 		{"wrong type", `[]`, "application/json", http.StatusBadRequest},
 		{"wrong content type", `{}`, "text/plain", http.StatusUnsupportedMediaType},
@@ -132,6 +134,123 @@ func TestCreateRunDecodesRequest(t *testing.T) {
 	}
 }
 
+func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
+	defaults := coordinator.Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+	for _, test := range []struct {
+		name, resourceJSON string
+		overrides          RunResources
+		resolved           RunResources
+		fail               bool
+	}{
+		{"omitted resources", "", RunResources{}, runResources(defaults), false},
+		{"partial overrides", `,"resources":{"cpuRequest":"500m","memoryLimit":"1Gi"}`, RunResources{CPURequest: "500m", MemoryLimit: "1Gi"}, RunResources{CPURequest: "500m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "1Gi"}, false},
+		{"full overrides", `,"resources":{"cpuRequest":"500m","cpuLimit":"2","memoryRequest":"256Mi","memoryLimit":"1Gi"}`, RunResources{CPURequest: "500m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "1Gi"}, RunResources{CPURequest: "500m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "1Gi"}, false},
+		{"failed run", `,"resources":{"cpuRequest":"250m"}`, RunResources{CPURequest: "250m"}, RunResources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewRunStore()
+			started := make(chan coordinator.Options, 1)
+			runner := testRunnerFunc(func(_ context.Context, _ coordinator.Connection, options coordinator.Options) (coordinator.Result, error) {
+				started <- options
+				if test.fail {
+					return coordinator.Result{}, errors.New("runner failed")
+				}
+				return coordinator.Result{}, nil
+			})
+			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+				return testCredentials(), nil
+			}, func(context.Context, string, string, string, string) error { return nil }, runner, store, context.Background(), defaults)
+			body := strings.TrimSuffix(validCreateRunBody, "}") + test.resourceJSON + "}"
+			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer test-token")
+			r.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			api.createRun(w, r)
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("create status=%d; body=%s", w.Code, w.Body.String())
+			}
+			var accepted struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &accepted); err != nil || accepted.ID == "" {
+				t.Fatalf("acceptance response=%s; err=%v", w.Body.String(), err)
+			}
+			select {
+			case options := <-started:
+				if options.Resources != test.overrides.coordinatorResources() {
+					t.Fatalf("runner overrides=%+v; want %+v", options.Resources, test.overrides)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("runner was not started")
+			}
+			wantStatus := RunStatusSucceeded
+			if test.fail {
+				wantStatus = RunStatusFailed
+			}
+			deadline := time.Now().Add(time.Second)
+			for {
+				run, err := store.Get(accepted.ID)
+				if err == nil && run.Status == wantStatus {
+					if run.Resources != test.resolved || run.Request.Resources != test.overrides {
+						t.Fatalf("stored resources=%+v request=%+v; want %+v and %+v", run.Resources, run.Request.Resources, test.resolved, test.overrides)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("run did not complete: %+v, %v", run, err)
+				}
+				time.Sleep(time.Millisecond)
+			}
+			// A later change to deployment defaults must not rewrite stored history.
+			api.resourceDefaults = coordinator.Resources{CPURequest: "900m"}
+			statusRequest := httptest.NewRequest(http.MethodGet, "/api/runs/"+accepted.ID, nil)
+			statusRequest.Header.Set("Authorization", "Bearer test-token")
+			statusRequest.SetPathValue("id", accepted.ID)
+			statusWriter := httptest.NewRecorder()
+			api.getRun(statusWriter, statusRequest)
+			if statusWriter.Code != http.StatusOK {
+				t.Fatalf("status=%d; body=%s", statusWriter.Code, statusWriter.Body.String())
+			}
+			var response RunStatusResponse
+			if err := json.Unmarshal(statusWriter.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Status != wantStatus || response.Resources != test.resolved {
+				t.Fatalf("status response=%+v; want status %s and resources %+v", response, wantStatus, test.resolved)
+			}
+		})
+	}
+}
+
+func TestCreateRunRejectsInvalidResourcesBeforeCredentialLookup(t *testing.T) {
+	defaults := coordinator.Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+	for _, test := range []struct{ name, resources string }{
+		{"invalid cpu", `{"cpuRequest":"bad"}`},
+		{"zero limit", `{"memoryLimit":"0"}`},
+		{"negative request", `{"cpuRequest":"-1"}`},
+		{"cpu request exceeds default limit", `{"cpuRequest":"2"}`},
+		{"memory limit below default request", `{"memoryLimit":"64Mi"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lookupCalls := 0
+			store := NewRunStore()
+			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+				lookupCalls++
+				return testCredentials(), nil
+			}, nil, testRunner{}, store, context.Background(), defaults)
+			body := strings.TrimSuffix(validCreateRunBody, "}") + `,"resources":` + test.resources + "}"
+			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer test-token")
+			r.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			api.createRun(w, r)
+			if w.Code != http.StatusBadRequest || lookupCalls != 0 || len(store.runs) != 0 || len(api.runSlots) != 0 {
+				t.Fatalf("invalid resource handling: status=%d lookups=%d runs=%d slots=%d body=%s", w.Code, lookupCalls, len(store.runs), len(api.runSlots), w.Body.String())
+			}
+		})
+	}
+}
+
 func TestCreateRunResolvesTargetCredentials(t *testing.T) {
 	called := false
 	api := NewAPI(func(ctx context.Context, token, cluster, namespace, instance string) (*everest.Credentials, error) {
@@ -140,7 +259,7 @@ func TestCreateRunResolvesTargetCredentials(t *testing.T) {
 			t.Fatalf("unexpected credential lookup arguments: token=%q target=%q/%q/%q", token, cluster, namespace, instance)
 		}
 		return testCredentials(), nil
-	}, nil, testRunner{}, NewRunStore(), context.Background())
+	}, nil, testRunner{}, NewRunStore(), context.Background(), coordinator.Resources{})
 	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
 	r.Header.Set("Authorization", "Bearer test-token")
 	r.Header.Set("Content-Type", "application/json")
@@ -168,7 +287,7 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 	})
 	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
-	}, nil, runner, store, context.Background())
+	}, nil, runner, store, context.Background(), coordinator.Resources{})
 	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
 	r.Header.Set("Authorization", "Bearer test-token")
 	r.Header.Set("Content-Type", "application/json")
@@ -220,7 +339,7 @@ func TestCreateRunDefaultsToInstanceDatabase(t *testing.T) {
 	}, nil, testRunnerFunc(func(_ context.Context, connection coordinator.Connection, _ coordinator.Options) (coordinator.Result, error) {
 		databases <- connection.Database
 		return coordinator.Result{}, nil
-	}), store, context.Background())
+	}), store, context.Background(), coordinator.Resources{})
 	body := `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":" ","durationSeconds":30,"clients":1,"threads":1,"scale":1}`
 	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
 	r.Header.Set("Authorization", "Bearer test-token")
@@ -259,7 +378,7 @@ func TestShutdownWaitsForActiveRuns(t *testing.T) {
 		close(started)
 		<-release
 		return coordinator.Result{}, nil
-	}), NewRunStore(), context.Background())
+	}), NewRunStore(), context.Background(), coordinator.Resources{})
 
 	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
 	r.Header.Set("Authorization", "Bearer test-token")
@@ -327,7 +446,7 @@ func TestCreateRunMapsCredentialLookupErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				return nil, test.err
-			}, nil, testRunner{}, NewRunStore(), context.Background())
+			}, nil, testRunner{}, NewRunStore(), context.Background(), coordinator.Resources{})
 			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
 			r.Header.Set("Authorization", "Bearer test-token")
 			r.Header.Set("Content-Type", "application/json")
@@ -417,11 +536,12 @@ func TestGetRun(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := NewRunStore()
+			snapshot := RunResources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 			if test.exists {
 				run, err := store.Create("run-123", CreateRunRequest{
 					Target:   Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
 					Database: "app",
-				})
+				}, snapshot)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -443,7 +563,7 @@ func TestGetRun(t *testing.T) {
 					t.Fatalf("unexpected instance access check arguments: token=%q target=%q/%q/%q", token, cluster, namespace, instance)
 				}
 				return test.accessErr
-			}, testRunner{}, store, context.Background())
+			}, testRunner{}, store, context.Background(), coordinator.Resources{})
 			if test.omitAccessCheck {
 				api.checkInstanceAccess = nil
 			}
@@ -490,7 +610,7 @@ func TestGetRun(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if response.ID != "run-123" || response.Status != test.status || response.Database != "app" || response.CreatedAt.IsZero() {
+			if response.ID != "run-123" || response.Status != test.status || response.Database != "app" || response.Resources != snapshot || response.CreatedAt.IsZero() {
 				t.Fatalf("unexpected run status response: %+v", response)
 			}
 			if test.status == RunStatusRunning {

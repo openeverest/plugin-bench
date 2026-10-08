@@ -40,6 +40,25 @@ type diagnosticClient struct {
 	check func(context.Context)
 }
 
+func TestRunRejectsInvalidResourceOverridesBeforeKubernetesWrites(t *testing.T) {
+	config := validConfig()
+	config.Resources = Resources{CPURequest: "100m", CPULimit: "1"}
+	client := fake.NewSimpleClientset()
+	c, err := New(config, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.Resources = Resources{CPURequest: "2"}
+	_, err = c.Run(context.Background(), validConnection(), options)
+	if err == nil || !strings.Contains(err.Error(), "cpu request cannot exceed limit") {
+		t.Fatalf("Run() error = %v; want resource validation error", err)
+	}
+	if len(client.Actions()) != 0 {
+		t.Fatalf("invalid resources caused Kubernetes API calls: %v", client.Actions())
+	}
+}
+
 func (c diagnosticClient) CoreV1() typedcorev1.CoreV1Interface {
 	return diagnosticCore{CoreV1Interface: c.Clientset.CoreV1(), check: c.check}
 }
