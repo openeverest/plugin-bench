@@ -112,7 +112,7 @@ func run() error {
 
 	lifecycleCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, api.NewRunStore(), lifecycleCtx)
+	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, api.NewRunStore(), lifecycleCtx, config.Resources)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /main.js", handleBundle)

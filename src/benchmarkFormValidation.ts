@@ -7,6 +7,10 @@ export type BenchmarkFormValues = {
   clients: string;
   threads: string;
   scale: string;
+  cpuRequest: string;
+  cpuLimit: string;
+  memoryRequest: string;
+  memoryLimit: string;
   initialize: boolean;
 };
 
@@ -16,6 +20,10 @@ export const initialBenchmarkFormValues: BenchmarkFormValues = {
   clients: '1',
   threads: '1',
   scale: '1',
+  cpuRequest: '',
+  cpuLimit: '',
+  memoryRequest: '',
+  memoryLimit: '',
   initialize: true,
 };
 
@@ -69,6 +77,28 @@ export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFor
     errors.threads = 'Threads cannot exceed clients.';
   }
 
+  for (const [field, label] of [
+    ['cpuRequest', 'CPU request'],
+    ['cpuLimit', 'CPU limit'],
+    ['memoryRequest', 'Memory request'],
+    ['memoryLimit', 'Memory limit'],
+  ] as const) {
+    const value = values[field].trim();
+    if (value === '') continue;
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) < 1) {
+      errors[field] = `${label} must be a positive whole number.`;
+    }
+  }
+
+  if (!errors.cpuRequest && !errors.cpuLimit && values.cpuRequest.trim() && values.cpuLimit.trim() &&
+      Number(values.cpuRequest) > Number(values.cpuLimit)) {
+    errors.cpuLimit = 'CPU limit must be at least the CPU request.';
+  }
+  if (!errors.memoryRequest && !errors.memoryLimit && values.memoryRequest.trim() && values.memoryLimit.trim() &&
+      Number(values.memoryRequest) > Number(values.memoryLimit)) {
+    errors.memoryLimit = 'Memory limit must be at least the memory request.';
+  }
+
   return errors;
 }
 
@@ -81,6 +111,12 @@ export function toCreateBenchmarkRunRequest(
   }
 
   const database = values.database.trim();
+  const resources = {
+    ...(values.cpuRequest.trim() ? { cpuRequest: `${Number(values.cpuRequest)}m` } : {}),
+    ...(values.cpuLimit.trim() ? { cpuLimit: `${Number(values.cpuLimit)}m` } : {}),
+    ...(values.memoryRequest.trim() ? { memoryRequest: `${Number(values.memoryRequest)}Mi` } : {}),
+    ...(values.memoryLimit.trim() ? { memoryLimit: `${Number(values.memoryLimit)}Mi` } : {}),
+  };
   return {
     target,
     ...(database ? { database } : {}),
@@ -89,5 +125,6 @@ export function toCreateBenchmarkRunRequest(
     threads: Number(values.threads),
     scale: values.initialize ? Number(values.scale) : 1,
     initialize: values.initialize,
+    ...(Object.keys(resources).length > 0 ? { resources } : {}),
   };
 }
