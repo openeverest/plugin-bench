@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -668,6 +669,168 @@ func TestCreateBenchmarkResourcesCreatesSecretBeforeJob(t *testing.T) {
 	}
 	if got := job.Spec.Template.Spec.Containers[0].Env[0].ValueFrom.SecretKeyRef.Name; got != resources.secret.Name {
 		t.Fatalf("Job references Secret %q, want %q", got, resources.secret.Name)
+	}
+}
+
+func TestCreateBenchmarkResourcesAppliesNodeAffinity(t *testing.T) {
+	combined := validNodeAffinity()
+	for name, input := range map[string]*corev1.NodeAffinity{
+		"omitted":   nil,
+		"empty":     {},
+		"required":  {RequiredDuringSchedulingIgnoredDuringExecution: combined.RequiredDuringSchedulingIgnoredDuringExecution},
+		"preferred": {PreferredDuringSchedulingIgnoredDuringExecution: combined.PreferredDuringSchedulingIgnoredDuringExecution},
+		"combined":  combined,
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			c, err := New(validConfig(), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := input.DeepCopy()
+			options := DefaultOptions()
+			options.NodeAffinity = input
+			resources, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := client.BatchV1().Jobs(validConfig().WorkloadNamespace).Get(context.Background(), resources.job.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "omitted" || name == "empty" {
+				if job.Spec.Template.Spec.Affinity != nil {
+					t.Fatal("unconstrained runs must omit Pod affinity")
+				}
+			} else if job.Spec.Template.Spec.Affinity == nil || !reflect.DeepEqual(job.Spec.Template.Spec.Affinity.NodeAffinity, before) {
+				t.Fatal("Job must preserve all submitted required/preferred rules")
+			}
+			if options.NodeAffinity != input || !reflect.DeepEqual(input, before) {
+				t.Fatal("resource creation modified submitted options")
+			}
+		})
+	}
+}
+
+func TestCreateBenchmarkResourcesRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
+	for _, input := range []*corev1.NodeAffinity{
+		{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{}},
+		{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{}}}},
+		{PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{{Weight: 101}}},
+	} {
+		client := fake.NewSimpleClientset()
+		c, err := New(validConfig(), client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := DefaultOptions()
+		options.NodeAffinity = input
+		_, err = c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+		if err == nil || !strings.Contains(err.Error(), "nodeAffinity.") {
+			t.Fatalf("want affinity validation error with a field path, got %v", err)
+		}
+		if len(client.Actions()) != 0 {
+			t.Fatalf("invalid affinity made Kubernetes calls: %v", client.Actions())
+		}
+	}
+}
+
+func TestCreateBenchmarkResourcesCopiesAffinityBeforeSecretCreation(t *testing.T) {
+	input := validNodeAffinity()
+	want := input.DeepCopy()
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		// Changes after preparation must not affect the eventual Job manifest.
+		input.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values[0] = "changed"
+		input.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 0
+		return false, nil, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = input
+	resources, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs(validConfig().WorkloadNamespace).Get(context.Background(), resources.job.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Spec.Template.Spec.Affinity == nil || !reflect.DeepEqual(job.Spec.Template.Spec.Affinity.NodeAffinity, want) {
+		t.Fatal("Job did not use the snapshot prepared before Secret creation")
+	}
+}
+
+func TestConcurrentResourceCreationKeepsNodeAffinityIndependent(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	createdJobs := make(chan *batchv1.Job, 2)
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		createdJobs <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+		return false, nil, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validNodeAffinity()
+	want := input.DeepCopy()
+	options := DefaultOptions()
+	options.NodeAffinity = input
+	outcomes := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			outcomes <- err
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-outcomes; err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := <-createdJobs, <-createdJobs
+	if first.Name == second.Name || first.Spec.Template.Spec.Affinity == nil || second.Spec.Template.Spec.Affinity == nil {
+		t.Fatal("concurrent runs must create separate Jobs with their affinity")
+	}
+	first.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values[0] = "changed"
+	first.Spec.Template.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 1
+	if !reflect.DeepEqual(second.Spec.Template.Spec.Affinity.NodeAffinity, want) || !reflect.DeepEqual(input, want) {
+		t.Fatal("concurrent runs share mutable affinity state")
+	}
+}
+
+func TestNewBenchmarkJobCopiesPreparedNodeAffinity(t *testing.T) {
+	input := validNodeAffinity()
+	want := input.DeepCopy()
+	prepared, err := PrepareNodeAffinity(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = prepared
+	first, err := newBenchmarkJob(validConfig(), "job-1", "secret-1", options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newBenchmarkJob(validConfig(), "job-2", "secret-2", options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affinity := first.Spec.Template.Spec.Affinity.NodeAffinity
+	affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values[0] = "changed"
+	affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[1].MatchFields[0].Values[0] = "changed"
+	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 1
+	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchExpressions[0].Values[0] = "changed"
+	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchFields[0].Values[0] = "changed"
+	if !reflect.DeepEqual(prepared, want) || !reflect.DeepEqual(input, want) || !reflect.DeepEqual(second.Spec.Template.Spec.Affinity.NodeAffinity, want) {
+		t.Fatal("Job manifest shares nested affinity state with options or another Job")
+	}
+	prepared.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 2
+	if !reflect.DeepEqual(second.Spec.Template.Spec.Affinity.NodeAffinity, want) {
+		t.Fatal("changing prepared options modified the Job manifest")
 	}
 }
 

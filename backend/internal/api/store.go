@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const completedRunRetention = time.Hour
@@ -23,8 +24,9 @@ type RunStore struct {
 	now  func() time.Time
 }
 
-// Create stores a new running record.
-func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
+// Create stores independent copies of the request and prepared affinity snapshot.
+// A nil prepared affinity is retained as an empty object in status responses.
+func (s *RunStore) Create(id string, request CreateRunRequest, nodeAffinity *corev1.NodeAffinity) (Run, error) {
 	if strings.TrimSpace(id) == "" {
 		return Run{}, errors.New("run ID is required")
 	}
@@ -35,12 +37,16 @@ func (s *RunStore) Create(id string, request CreateRunRequest) (Run, error) {
 	if _, exists := s.runs[id]; exists {
 		return Run{}, ErrRunExists
 	}
+	request.NodeAffinity = request.NodeAffinity.DeepCopy()
 	run := Run{ID: id, Request: request, Status: RunStatusRunning, CreatedAt: now.UTC()}
+	if nodeAffinity != nil {
+		run.NodeAffinity = *nodeAffinity.DeepCopy()
+	}
 	if s.runs == nil {
 		s.runs = make(map[string]Run)
 	}
 	s.runs[id] = run
-	return run, nil
+	return copyRun(run), nil
 }
 
 // Get returns a copy so callers cannot change the stored record without locking.
@@ -54,11 +60,17 @@ func (s *RunStore) Get(id string) (Run, error) {
 	if isExpired(run, s.clock()) {
 		return Run{}, ErrRunNotFound
 	}
+	return copyRun(run), nil
+}
+
+func copyRun(run Run) Run {
+	run.Request.NodeAffinity = run.Request.NodeAffinity.DeepCopy()
+	run.NodeAffinity = *run.NodeAffinity.DeepCopy()
 	if run.CompletedAt != nil {
 		completedAt := *run.CompletedAt
 		run.CompletedAt = &completedAt
 	}
-	return run, nil
+	return run
 }
 
 func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Result, message string) error {

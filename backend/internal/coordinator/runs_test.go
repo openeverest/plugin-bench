@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,74 @@ func (p diagnosticPods) List(ctx context.Context, options metav1.ListOptions) (*
 type diagnosticClient struct {
 	*fake.Clientset
 	check func(context.Context)
+}
+
+func TestRunRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{}}
+	result, err := c.Run(context.Background(), validConnection(), options)
+	if err == nil || !strings.Contains(err.Error(), "nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms") {
+		t.Fatalf("want required term validation error, got %v", err)
+	}
+	if result.JobName != "" || len(client.Actions()) != 0 {
+		t.Fatal("invalid affinity created resources or started execution")
+	}
+}
+
+func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	input := validNodeAffinity()
+	want := input.DeepCopy()
+	var jobName string
+	client.PrependReactor("create", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
+		action.(ktesting.CreateAction).GetObject().(*corev1.Secret).UID = "secret-uid"
+		return false, nil, nil
+	})
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+		if job.Spec.Template.Spec.Affinity == nil || !reflect.DeepEqual(job.Spec.Template.Spec.Affinity.NodeAffinity, want) {
+			t.Fatal("Run did not pass node affinity into the created Job")
+		}
+		job.UID = "job-uid"
+		jobName = job.Name
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{
+			Name: "runner-pod", Labels: map[string]string{batchv1.JobNameLabel: jobName},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}},
+		}}}}, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = input
+	result, err := c.Run(context.Background(), validConnection(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.JobName != jobName || result.Output != "fake logs" {
+		t.Fatalf("unexpected run result: %+v", result)
+	}
+	if !reflect.DeepEqual(input, want) {
+		t.Fatal("Run modified submitted affinity")
+	}
+	jobDeleted, secretDeleted := false, false
+	for _, action := range client.Actions() {
+		jobDeleted = jobDeleted || action.Matches("delete", "jobs")
+		secretDeleted = secretDeleted || action.Matches("delete", "secrets")
+	}
+	if !jobDeleted || !secretDeleted {
+		t.Fatal("completed run did not clean up its Job and Secret")
+	}
 }
 
 func (c diagnosticClient) CoreV1() typedcorev1.CoreV1Interface {

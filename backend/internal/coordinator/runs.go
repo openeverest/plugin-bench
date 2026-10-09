@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 const failureLogTimeout = 10 * time.Second
@@ -47,8 +49,12 @@ type Options struct {
 	Threads    int
 	Scale      int
 	Initialize bool
+	// NodeAffinity is optional and is prepared before Kubernetes resource creation.
+	NodeAffinity *corev1.NodeAffinity
 }
 
+// Validate checks scalar runner settings. Node affinity is validated and copied
+// separately by PrepareNodeAffinity at the resource creation boundary.
 func (o Options) Validate() error {
 	// Match the runner's supported positive 31-bit integer range.
 	const maximum = 1<<31 - 1

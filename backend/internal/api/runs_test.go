@@ -418,10 +418,12 @@ func TestGetRun(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := NewRunStore()
 			if test.exists {
+				affinity := testNodeAffinity()
 				run, err := store.Create("run-123", CreateRunRequest{
-					Target:   Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
-					Database: "app",
-				})
+					Target:       Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
+					Database:     "app",
+					NodeAffinity: affinity,
+				}, affinity)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -480,6 +482,9 @@ func TestGetRun(t *testing.T) {
 				t.Fatalf("missing access-check dependency was not logged: %q", logOutput.String())
 			}
 			if test.wantHTTP != http.StatusOK {
+				if strings.Contains(w.Body.String(), "nodeAffinity") {
+					t.Fatal("unauthorized or unavailable status response exposed scheduling configuration")
+				}
 				if strings.Contains(w.Body.String(), "test-token") || strings.Contains(w.Body.String(), "bench-password") {
 					t.Fatal("error response exposed sensitive data")
 				}

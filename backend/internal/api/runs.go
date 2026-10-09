@@ -17,6 +17,7 @@ import (
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const maxCreateRunRequestBytes = 16 << 10
@@ -37,13 +38,14 @@ type Target struct {
 
 // CreateRunRequest contains the target and per-run benchmark settings.
 type CreateRunRequest struct {
-	Target          Target `json:"target"`
-	Database        string `json:"database"`
-	DurationSeconds int    `json:"durationSeconds"`
-	Clients         int    `json:"clients"`
-	Threads         int    `json:"threads"`
-	Scale           int    `json:"scale"`
-	Initialize      bool   `json:"initialize"`
+	Target          Target               `json:"target"`
+	Database        string               `json:"database"`
+	DurationSeconds int                  `json:"durationSeconds"`
+	Clients         int                  `json:"clients"`
+	Threads         int                  `json:"threads"`
+	Scale           int                  `json:"scale"`
+	Initialize      bool                 `json:"initialize"`
+	NodeAffinity    *corev1.NodeAffinity `json:"nodeAffinity,omitempty"`
 }
 
 // RunStatus describes the execution workflow. Running does not imply that
@@ -52,27 +54,29 @@ type RunStatus string
 
 // Run is the record retained for status and result retrieval.
 type Run struct {
-	ID              string           `json:"id"`
-	Request         CreateRunRequest `json:"request"`
-	Status          RunStatus        `json:"status"`
-	CreatedAt       time.Time        `json:"createdAt"`
-	CompletedAt     *time.Time       `json:"completedAt,omitempty"`
-	JobName         string           `json:"jobName,omitempty"`
-	Output          string           `json:"output,omitempty"`
-	OutputTruncated bool             `json:"outputTruncated"`
-	Error           string           `json:"error,omitempty"`
+	ID              string              `json:"id"`
+	Request         CreateRunRequest    `json:"request"`
+	NodeAffinity    corev1.NodeAffinity `json:"nodeAffinity"`
+	Status          RunStatus           `json:"status"`
+	CreatedAt       time.Time           `json:"createdAt"`
+	CompletedAt     *time.Time          `json:"completedAt,omitempty"`
+	JobName         string              `json:"jobName,omitempty"`
+	Output          string              `json:"output,omitempty"`
+	OutputTruncated bool                `json:"outputTruncated"`
+	Error           string              `json:"error,omitempty"`
 }
 
 type RunStatusResponse struct {
-	ID              string     `json:"id"`
-	Status          RunStatus  `json:"status"`
-	Database        string     `json:"database,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	CompletedAt     *time.Time `json:"completedAt,omitempty"`
-	JobName         string     `json:"jobName,omitempty"`
-	Output          string     `json:"output,omitempty"`
-	OutputTruncated bool       `json:"outputTruncated"`
-	Error           string     `json:"error,omitempty"`
+	ID              string              `json:"id"`
+	Status          RunStatus           `json:"status"`
+	Database        string              `json:"database,omitempty"`
+	NodeAffinity    corev1.NodeAffinity `json:"nodeAffinity"`
+	CreatedAt       time.Time           `json:"createdAt"`
+	CompletedAt     *time.Time          `json:"completedAt,omitempty"`
+	JobName         string              `json:"jobName,omitempty"`
+	Output          string              `json:"output,omitempty"`
+	OutputTruncated bool                `json:"outputTruncated"`
+	Error           string              `json:"error,omitempty"`
 }
 
 func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +100,8 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	if err := validateCreateRunRequest(request); err != nil {
+	options, err := prepareRunOptions(request)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -151,19 +156,12 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
-	run, err := a.store.Create(runID, request)
+	run, err := a.store.Create(runID, request, options.NodeAffinity)
 	if err != nil {
 		<-a.runSlots
 		a.runs.Done()
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
-	}
-	options := coordinator.Options{
-		Duration:   request.DurationSeconds,
-		Clients:    request.Clients,
-		Threads:    request.Threads,
-		Scale:      request.Scale,
-		Initialize: request.Initialize,
 	}
 	runCtx, cancel := context.WithCancel(a.lifecycleCtx)
 	go a.executeRun(runCtx, cancel, run.ID, connection, options)
@@ -296,18 +294,20 @@ func defaultDatabase(credentials *everest.Credentials) string {
 	return strings.TrimSpace(database)
 }
 
-func validateCreateRunRequest(request CreateRunRequest) error {
+// prepareRunOptions validates HTTP input before credential lookup or admission.
+// The coordinator reuses the same affinity validator to protect direct callers.
+func prepareRunOptions(request CreateRunRequest) (coordinator.Options, error) {
 	if strings.TrimSpace(request.Target.K8sCluster) == "" {
-		return errors.New("target.k8sCluster is required")
+		return coordinator.Options{}, errors.New("target.k8sCluster is required")
 	}
 	if strings.TrimSpace(request.Target.Namespace) == "" {
-		return errors.New("target.namespace is required")
+		return coordinator.Options{}, errors.New("target.namespace is required")
 	}
 	if strings.TrimSpace(request.Target.Instance) == "" {
-		return errors.New("target.instance is required")
+		return coordinator.Options{}, errors.New("target.instance is required")
 	}
 	if strings.Contains(request.Database, "=") || strings.HasPrefix(strings.ToLower(request.Database), "postgres://") || strings.HasPrefix(strings.ToLower(request.Database), "postgresql://") {
-		return errors.New("database must be a database name, not a connection string")
+		return coordinator.Options{}, errors.New("database must be a database name, not a connection string")
 	}
 
 	options := coordinator.Options{
@@ -317,7 +317,15 @@ func validateCreateRunRequest(request CreateRunRequest) error {
 		Scale:      request.Scale,
 		Initialize: request.Initialize,
 	}
-	return options.Validate()
+	if err := options.Validate(); err != nil {
+		return coordinator.Options{}, err
+	}
+	affinity, err := coordinator.PrepareNodeAffinity(request.NodeAffinity)
+	if err != nil {
+		return coordinator.Options{}, err
+	}
+	options.NodeAffinity = affinity
+	return options, nil
 }
 
 var errUnsupportedContentType = errors.New("Content-Type must be application/json")
@@ -402,6 +410,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		ID:              run.ID,
 		Status:          run.Status,
 		Database:        run.Request.Database,
+		NodeAffinity:    run.NodeAffinity,
 		CreatedAt:       run.CreatedAt,
 		CompletedAt:     run.CompletedAt,
 		JobName:         run.JobName,
