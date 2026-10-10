@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import type { BenchmarkRun, BenchmarkRunStatus } from './benchmarkApi';
 import type { PollingFeedback } from './benchmarkRunPolling';
+import { BenchmarkNodeAffinitySummary } from './BenchmarkNodeAffinitySummary.js';
 
 const STATUS_LABELS: Record<BenchmarkRunStatus, string> = {
   running: 'Running',
@@ -103,6 +104,8 @@ export function BenchmarkRunResult({ id, run, feedback, onRetry, onDismiss }: Be
           )}
 
           {run?.status === 'failed' && <Alert severity="error">{run.error}</Alert>}
+
+          {run?.nodeAffinity !== undefined && <BenchmarkNodeAffinitySummary affinity={run.nodeAffinity} />}
 
           {completed && (
             <Box>

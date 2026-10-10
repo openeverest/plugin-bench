@@ -48,3 +48,51 @@ test('retrieval failure preserves last known run status and offers retry', () =>
   assert.match(render(null, feedback), /Retry status check/);
   assert.match(render(null), /Checking status/);
 });
+
+test('saved affinity displays required alternatives, AND conditions, weights, and native fields for all statuses', () => {
+  const nodeAffinity = {
+    requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [
+      { matchExpressions: [
+        { key: 'workload', operator: 'In', values: ['benchmark'] },
+        { key: 'generation', operator: 'Gt', values: ['3'] },
+      ] },
+      { matchFields: [{ key: 'metadata.name', operator: 'NotIn', values: ['node-2'] }] },
+    ] },
+    preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 75, preference: {
+      matchExpressions: [{ key: 'disk', operator: 'In', values: ['ssd', 'nvme'] }],
+      matchFields: [{ key: 'metadata.name', operator: 'In', values: ['node-1'] }],
+    } }],
+  };
+  for (const status of ['running', 'succeeded', 'failed']) {
+    const html = render({ ...base, status, nodeAffinity, ...(status === 'failed' ? { error: 'failed' } : {}) });
+    assert.match(html, /Configured node affinity/);
+    assert.match(html, /Required group 1 \(AND\)/);
+    assert.match(html, /OR — Required group 2/);
+    assert.match(html, /Label: workload In/);
+    assert.match(html, /Label: generation Gt/);
+    assert.match(html, /Field: metadata.name NotIn/);
+    assert.match(html, /Preferred group 1 — weight 75/);
+    assert.match(html, /Field: metadata.name In/);
+    assert.match(html, /ssd/);
+    assert.match(html, /nvme/);
+    assert.match(html, /not the node ultimately selected/);
+  }
+});
+
+test('empty affinity is explicit; older responses without affinity do not imply no rules', () => {
+  assert.match(render({ ...base, nodeAffinity: {} }), /No node affinity configured/);
+  assert.doesNotMatch(render(base), /Configured node affinity|No node affinity configured/);
+  assert.doesNotMatch(render(null), /Configured node affinity/);
+});
+
+test('affinity strings are escaped as text, including field values and empty label values', () => {
+  const html = render({ ...base, nodeAffinity: {
+    requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{ matchExpressions: [
+      { key: '<script>key</script>', operator: 'In', values: ['<img src=x onerror=alert(1)>', ''] },
+    ], matchFields: [{ key: 'metadata.name', operator: 'In', values: ['<script>node</script>'] }] }] },
+  } });
+  assert.doesNotMatch(html, /<script>|<img/);
+  assert.match(html, /&lt;script&gt;key/);
+  assert.match(html, /&lt;script&gt;node/);
+  assert.match(html, /&quot;&quot;/);
+});

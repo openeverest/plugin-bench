@@ -13,12 +13,16 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { BenchmarkTargetSummary } from './BenchmarkTargetSummary';
-import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation';
+import { BenchmarkTargetSummary } from './BenchmarkTargetSummary.js';
+import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation.js';
 import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormValidation';
 import type { BenchmarkTarget } from './benchmarkTarget';
+import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity.js';
+import type { NodeAffinityDraft } from './benchmarkNodeAffinity';
+import { BenchmarkNodeAffinityForm } from './BenchmarkNodeAffinityForm.js';
 
 type NumericField = Exclude<BenchmarkFormField, 'database'>;
+type FormState = BenchmarkFormValues & { nodeAffinity: NodeAffinityDraft };
 
 const NUMERIC_FIELDS: ReadonlyArray<{ field: NumericField; label: string; hint: string }> = [
   { field: 'durationSeconds', label: 'Duration (seconds)', hint: 'How long the benchmark runs.' },
@@ -34,12 +38,15 @@ interface BenchmarkFormProps {
 }
 
 export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormProps) {
-  const [values, setValues] = useState<BenchmarkFormValues>({ ...initialBenchmarkFormValues });
+  const [values, setValues] = useState<FormState>(() => ({
+    ...initialBenchmarkFormValues, nodeAffinity: createNodeAffinityDraft(),
+  }));
   const [touched, setTouched] = useState<Partial<Record<BenchmarkFormField, boolean>>>({});
   const errors = validateBenchmarkForm(values);
-  const canSubmit = Object.keys(errors).length === 0 && !isSubmitting;
+  const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
+  const canSubmit = Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
 
-  const updateValue = <K extends keyof BenchmarkFormValues>(key: K, value: BenchmarkFormValues[K]) => {
+  const updateValue = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setValues(current => ({ ...current, [key]: value }));
   };
   const markTouched = (field: BenchmarkFormField) => {
@@ -121,6 +128,9 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
                 : 'Reuses the existing pgbench tables. The run fails if they don\'t exist yet.'}
             </FormHelperText>
           </Box>
+          <BenchmarkNodeAffinityForm draft={values.nodeAffinity}
+            errors={'errors' in affinity ? affinity.errors : {}} disabled={isSubmitting}
+            onChange={draft => updateValue('nodeAffinity', draft)} />
         </Stack>
       </CardContent>
       <CardActions sx={{ px: 2, pb: 2 }}>

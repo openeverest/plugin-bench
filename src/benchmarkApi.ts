@@ -1,5 +1,7 @@
 import type { PluginApi } from '@openeverest/plugin-sdk';
 import type { BenchmarkTarget } from './benchmarkTarget';
+import { isNodeAffinity } from './benchmarkNodeAffinity.js';
+import type { NodeAffinity } from './benchmarkNodeAffinity';
 
 export type CreateBenchmarkRunRequest = {
   target: BenchmarkTarget;
@@ -10,6 +12,7 @@ export type CreateBenchmarkRunRequest = {
   threads: number;
   scale: number;
   initialize: boolean;
+  nodeAffinity?: NodeAffinity;
 };
 
 export type CreateBenchmarkRunResponse = {
@@ -24,6 +27,8 @@ export type BenchmarkRun = {
   status: BenchmarkRunStatus;
   database?: string;
   createdAt: string;
+  /** Absent on older backends; an empty object means no configured affinity. */
+  nodeAffinity?: NodeAffinity;
   completedAt?: string;
   jobName?: string;
   output?: string;
@@ -104,6 +109,7 @@ function isBenchmarkRun(value: unknown, id: string): value is BenchmarkRun {
   return run.id === id &&
     (run.status === 'running' || run.status === 'succeeded' || run.status === 'failed') &&
     timestamp(run.createdAt) && typeof run.outputTruncated === 'boolean' &&
+    (run.nodeAffinity === undefined || isNodeAffinity(run.nodeAffinity)) &&
     (run.completedAt === undefined || timestamp(run.completedAt)) &&
     (run.status === 'running' || timestamp(run.completedAt)) &&
     ['database', 'jobName', 'output', 'error'].every(key => run[key] === undefined || typeof run[key] === 'string') &&

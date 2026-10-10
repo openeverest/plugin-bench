@@ -61,3 +61,34 @@ test('enabling initialization again requires a valid scale and uses its value', 
   assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true }, target), undefined);
   assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true, scale: '10' }, target).scale, 10);
 });
+
+test('request mapping omits disabled affinity and includes validated enabled rules', () => {
+  assert.equal(initialBenchmarkFormValues.nodeAffinity.enabled, false);
+  const nodeAffinity = {
+    enabled: false, required: [{ matchExpressions: [{ key: 'workload', operator: 'In', values: ['benchmark'] }] }],
+    preferred: [{ weight: '50', matchExpressions: [{ key: 'disk', operator: 'In', values: ['ssd', 'nvme'] }] }],
+  };
+  const values = { ...validValues, nodeAffinity };
+  assert.equal('nodeAffinity' in toCreateBenchmarkRunRequest(values, target), false);
+  assert.equal('nodeAffinity' in toCreateBenchmarkRunRequest({ ...validValues, nodeAffinity: undefined }, target), false);
+  const enabled = { ...values, nodeAffinity: { ...nodeAffinity, enabled: true } };
+  const request = toCreateBenchmarkRunRequest(enabled, target);
+  assert.deepEqual(request.nodeAffinity, {
+    requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: nodeAffinity.required },
+    preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 50, preference: {
+      matchExpressions: nodeAffinity.preferred[0].matchExpressions,
+    } }],
+  });
+  assert.equal(toCreateBenchmarkRunRequest({ ...enabled, clients: '0' }, target), undefined);
+});
+
+test('invalid affinity blocks request mapping without polluting scalar field errors', () => {
+  const values = { ...validValues, nodeAffinity: {
+    enabled: true, required: [], preferred: [{ weight: '101', matchExpressions: [
+      { key: 'disk', operator: 'In', values: ['ssd'] },
+    ] }],
+  } };
+  assert.deepEqual(validateBenchmarkForm(values), {});
+  assert.equal(toCreateBenchmarkRunRequest(values, target), undefined);
+  assert.ok(toCreateBenchmarkRunRequest({ ...values, nodeAffinity: { ...values.nodeAffinity, enabled: false } }, target));
+});
