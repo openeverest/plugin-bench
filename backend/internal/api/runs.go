@@ -188,6 +188,13 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 	status, message := RunStatusSucceeded, ""
 	if err != nil {
 		status, message = RunStatusFailed, "benchmark execution failed"
+		var schedulingErr *coordinator.SchedulingError
+		if errors.As(err, &schedulingErr) {
+			message = sanitizeRunnerOutput(schedulingErr.Error(), connection.Password)
+			if errors.Is(err, context.DeadlineExceeded) {
+				message = "benchmark execution timed out: " + message
+			}
+		}
 		log.Printf(
 			"benchmark run %q failed: %v (job=%q, output_bytes=%d, output_truncated=%t)",
 			id, err, result.JobName, len(result.Output), result.OutputTruncated,

@@ -126,6 +126,12 @@ func (c *Coordinator) Run(ctx context.Context, connection Connection, options Op
 	logCtx := ctx
 	if err := c.waitForJob(ctx, resources.job); err != nil {
 		runErr = fmt.Errorf("wait for benchmark Job %q: %w", resources.job.Name, err)
+		var schedulingErr *SchedulingError
+		if errors.As(err, &schedulingErr) {
+			// The scheduling failure already contains the last observed diagnostic.
+			// This runner never started, so no container logs are available.
+			return result, runErr
+		}
 		// Preserve diagnostics even when the execution context has expired.
 		// Both Pod discovery and log retrieval share this bounded budget.
 		var cancel context.CancelFunc
@@ -136,6 +142,14 @@ func (c *Coordinator) Run(ctx context.Context, connection Connection, options Op
 	pod, err := c.findJobPod(logCtx, resources.job)
 	if err != nil {
 		return result, errors.Join(runErr, fmt.Errorf("find runner Pod for Job %q: %w", resources.job.Name, err))
+	}
+	if runErr != nil {
+		if condition := unschedulableCondition(pod); condition != nil {
+			runErr = errors.Join(runErr, &SchedulingError{PodName: pod.Name, Message: condition.Message})
+		}
+		if !runnerHasStarted(pod) {
+			return result, runErr
+		}
 	}
 
 	result.Output, result.OutputTruncated, err = c.collectRunnerLogs(logCtx, pod)

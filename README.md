@@ -26,6 +26,22 @@ The frontend is currently available as a PostgreSQL cluster detail tab. It is
 built with MUI and themed from the host through `@openeverest/plugin-theme`.
 Other database technologies can be added later through a driver-based design.
 
+### Scheduling failures
+
+The coordinator checks the runner Pod's scheduling condition while waiting for
+the Job. If the same Pod is continuously observed as `PodScheduled=False` with
+reason `Unschedulable` for 60 seconds, the run fails with the scheduler's
+explanation and its Job and temporary credential Secret are cleaned up.
+
+This grace period starts at the first observation of scheduler rejection, not
+at submission. Scheduling recovery, Pod replacement, or a gap in scheduling
+observations resets it. It does not limit pgbench runtime or image downloading.
+The existing `BENCHMARK_EXECUTION_TIMEOUT` (default `5m`) still bounds the whole
+run, including startup, initialization, and execution. Scheduling diagnostics
+are also preserved when that overall timeout expires before the grace period.
+The scheduling grace period is currently a fixed backend policy, not a Helm
+setting; clusters waiting for new autoscaled nodes may need a longer policy.
+
 ## Requirements
 
 For local development, install:

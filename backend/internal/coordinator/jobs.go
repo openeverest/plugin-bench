@@ -64,6 +64,7 @@ func (c *Coordinator) waitForJobAtInterval(ctx context.Context, reference JobRef
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var scheduling schedulingTracker
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -92,6 +93,19 @@ func (c *Coordinator) waitForJobAtInterval(ctx context.Context, reference JobRef
 			}
 		}
 
+		// Pod creation and scheduler decisions are asynchronous. Missing Pods,
+		// ambiguous results, and diagnostic API errors are not proof of an
+		// unschedulable run; reset the observation window and keep waiting.
+		pod, podErr := c.lookupJobPod(ctx, reference)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if podErr != nil {
+			scheduling = schedulingTracker{}
+		} else if err := scheduling.observe(pod, time.Now()); err != nil {
+			return err
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -109,6 +123,16 @@ type benchmarkResources struct {
 // controller ownership so a same-named Job from another run cannot match.
 // Multiple owned Pods are an error: choosing one arbitrarily could hide output.
 func (c *Coordinator) findJobPod(ctx context.Context, reference JobRef) (*corev1.Pod, error) {
+	pod, err := c.lookupJobPod(ctx, reference)
+	if err == nil && pod == nil {
+		return nil, fmt.Errorf("no Pod found for benchmark Job %q", reference.Name)
+	}
+	return pod, err
+}
+
+// lookupJobPod returns nil without error while the Job has no owned Pod yet.
+// Unlike final log discovery, scheduling observation must tolerate that state.
+func (c *Coordinator) lookupJobPod(ctx context.Context, reference JobRef) (*corev1.Pod, error) {
 	if c == nil {
 		return nil, errors.New("coordinator is nil")
 	}
@@ -149,9 +173,6 @@ func (c *Coordinator) findJobPod(ctx context.Context, reference JobRef) (*corev1
 			return nil, fmt.Errorf("multiple Pods found for benchmark Job %q", reference.Name)
 		}
 		found = pod
-	}
-	if found == nil {
-		return nil, fmt.Errorf("no Pod found for benchmark Job %q", reference.Name)
 	}
 	return found, nil
 }

@@ -177,15 +177,16 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 				return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{batchv1.JobNameLabel: jobName},
 					Name:   "runner-pod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}},
-				}}}}, nil
+				}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+					Name: runnerContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
+				}}}}}}, nil
 			})
 			checked := false
 			c, err := New(config, diagnosticClient{Clientset: client, check: func(logCtx context.Context) {
-				checked = true
 				deadline, ok := logCtx.Deadline()
-				if logCtx.Err() != nil || !ok || time.Until(deadline) <= 0 || time.Until(deadline) > failureLogTimeout {
-					t.Fatal("diagnostics need an active, bounded context")
-				}
+				// Monitoring can race execution cancellation. The final Pod lookup
+				// must still use an active, independently bounded diagnostic context.
+				checked = logCtx.Err() == nil && ok && time.Until(deadline) > 0 && time.Until(deadline) <= failureLogTimeout
 			}})
 			if err != nil {
 				t.Fatal(err)
