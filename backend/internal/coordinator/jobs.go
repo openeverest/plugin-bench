@@ -64,6 +64,7 @@ func (c *Coordinator) waitForJobAtInterval(ctx context.Context, reference JobRef
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var scheduling schedulingTracker
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -92,6 +93,19 @@ func (c *Coordinator) waitForJobAtInterval(ctx context.Context, reference JobRef
 			}
 		}
 
+		// Pod creation and scheduler decisions are asynchronous. Missing Pods,
+		// ambiguous results, and diagnostic API errors are not proof of an
+		// unschedulable run; reset the observation window and keep waiting.
+		pod, podErr := c.lookupJobPod(ctx, reference)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if podErr != nil {
+			scheduling = schedulingTracker{}
+		} else if err := scheduling.observe(pod, time.Now()); err != nil {
+			return err
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -109,6 +123,16 @@ type benchmarkResources struct {
 // controller ownership so a same-named Job from another run cannot match.
 // Multiple owned Pods are an error: choosing one arbitrarily could hide output.
 func (c *Coordinator) findJobPod(ctx context.Context, reference JobRef) (*corev1.Pod, error) {
+	pod, err := c.lookupJobPod(ctx, reference)
+	if err == nil && pod == nil {
+		return nil, fmt.Errorf("no Pod found for benchmark Job %q", reference.Name)
+	}
+	return pod, err
+}
+
+// lookupJobPod returns nil without error while the Job has no owned Pod yet.
+// Unlike final log discovery, scheduling observation must tolerate that state.
+func (c *Coordinator) lookupJobPod(ctx context.Context, reference JobRef) (*corev1.Pod, error) {
 	if c == nil {
 		return nil, errors.New("coordinator is nil")
 	}
@@ -149,9 +173,6 @@ func (c *Coordinator) findJobPod(ctx context.Context, reference JobRef) (*corev1
 			return nil, fmt.Errorf("multiple Pods found for benchmark Job %q", reference.Name)
 		}
 		found = pod
-	}
-	if found == nil {
-		return nil, fmt.Errorf("no Pod found for benchmark Job %q", reference.Name)
 	}
 	return found, nil
 }
@@ -254,12 +275,21 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 		return resources, err
 	}
 
+	// Prepare the caller's rules once, before the first Kubernetes write. Options
+	// is a value copy, so replacing its affinity does not modify the caller.
+	preparedOptions := options
+	affinity, err := PrepareNodeAffinity(options.NodeAffinity)
+	if err != nil {
+		return resources, fmt.Errorf("invalid benchmark node affinity: %w", err)
+	}
+	preparedOptions.NodeAffinity = affinity
+
 	secret, err := c.createCredentialSecret(ctx, connection, labels)
 	if err != nil {
 		return resources, err
 	}
 
-	job, err := c.createBenchmarkJob(ctx, secret, options, labels)
+	job, err := c.createBenchmarkJob(ctx, secret, preparedOptions, labels)
 	if err == nil {
 		return benchmarkResources{secret: secret, job: job}, nil
 	}
@@ -368,6 +398,7 @@ func (c *Coordinator) cleanupBenchmarkResourcesWithContext(ctx context.Context, 
 
 // createBenchmarkJob builds and creates one runner Job in the configured
 // workload namespace. It does not wait for completion or read logs.
+// Node affinity must already be prepared by createBenchmarkResources.
 func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, options Options, labels map[string]string) (JobRef, error) {
 	var reference JobRef
 	if c == nil {
@@ -418,6 +449,7 @@ func generateBenchmarkJobName() (string, error) {
 
 // newBenchmarkJob builds the per-run Job object. It only creates an in-memory
 // Kubernetes object; the caller is responsible for API calls and cleanup.
+// Node affinity must be prepared before calling; the manifest owns its own copy.
 func newBenchmarkJob(config Config, name, secretName string, options Options, labels map[string]string) (*batchv1.Job, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid coordinator configuration: %w", err)
@@ -436,6 +468,11 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, la
 		return nil, err
 	}
 
+	var affinity *corev1.Affinity
+	if options.NodeAffinity != nil {
+		affinity = &corev1.Affinity{NodeAffinity: options.NodeAffinity.DeepCopy()}
+	}
+
 	backoffLimit := int32(0)
 	activeDeadlineSeconds := int64(config.ExecutionTimeout.Seconds())
 	return &batchv1.Job{
@@ -450,6 +487,7 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, la
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: copyLabels(labels)},
 				Spec: corev1.PodSpec{
+					Affinity:                     affinity,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					ServiceAccountName:           config.RunnerServiceAccount,
 					AutomountServiceAccountToken: boolPtr(false),

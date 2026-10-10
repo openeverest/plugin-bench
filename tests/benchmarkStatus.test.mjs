@@ -80,3 +80,40 @@ test('successful retrieval removes the caller cancellation listener', async () =
   controller.abort();
   assert.equal(signal.aborted, false);
 });
+
+test('GET preserves saved affinity for every status and accepts older responses without it', async () => {
+  const term = { matchExpressions: [{ key: 'workload', operator: 'In', values: ['benchmark'] }],
+    matchFields: [{ key: 'metadata.name', operator: 'NotIn', values: ['node-2'] }] };
+  const custom = {
+    requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [term] },
+    preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 75, preference: term }],
+  };
+  for (const status of ['running', 'succeeded', 'failed']) {
+    for (const nodeAffinity of [undefined, {}, custom]) {
+      const run = { ...running, status,
+        ...(nodeAffinity === undefined ? {} : { nodeAffinity }),
+        ...(status === 'running' ? {} : { completedAt: running.createdAt }),
+        ...(status === 'failed' ? { error: 'benchmark execution failed' } : {}),
+      };
+      assert.deepEqual(await getBenchmarkRun(async () => response(run), running.id), run);
+    }
+  }
+});
+
+test('GET rejects malformed affinity instead of silently dropping scheduling rules', async () => {
+  for (const nodeAffinity of [null, [], 'rules', { requiredDuringSchedulingIgnoredDuringExecution: {} },
+    { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{}] } },
+    { preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 101, preference: {
+      matchExpressions: [{ key: 'disk', operator: 'In', values: ['ssd'] }],
+    } }] },
+    { preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 50, preference: {
+      matchExpressions: [{ key: 'disk', operator: 'In', values: [42] }],
+    } }] },
+    { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{ matchFields: [
+      { key: 'metadata.name', operator: 'In', values: ['BAD'] },
+    ] }] } },
+  ]) {
+    await assert.rejects(getBenchmarkRun(async () => response({ ...running, nodeAffinity }), running.id),
+      error => error instanceof BenchmarkStatusError && !error.retryable && /invalid response/.test(error.message));
+  }
+});

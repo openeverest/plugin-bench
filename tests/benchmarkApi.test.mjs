@@ -90,3 +90,24 @@ test('accepted response succeeds and disconnects the caller abort listener', asy
   controller.abort();
   assert.equal(signal.aborted, false);
 });
+
+test('POST forwards native affinity without changing the acceptance contract', async () => {
+  const nodeAffinity = {
+    requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{
+      matchExpressions: [{ key: 'workload', operator: 'In', values: ['benchmark'] }],
+    }] },
+    preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 50, preference: {
+      matchExpressions: [{ key: 'disk', operator: 'In', values: ['ssd'] }],
+    } }],
+  };
+  for (const payload of [request, { ...request, nodeAffinity }]) {
+    const before = structuredClone(payload);
+    assert.deepEqual(await createBenchmarkRun(async (path, init) => {
+      assert.equal(path, '/api/runs');
+      assert.equal(init.method, 'POST');
+      assert.deepEqual(JSON.parse(init.body), before);
+      return new Response('{"id":"run-1","status":"running"}', { status: 202 });
+    }, payload), { id: 'run-1', status: 'running' });
+    assert.deepEqual(payload, before);
+  }
+});

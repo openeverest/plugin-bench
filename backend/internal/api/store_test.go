@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -14,12 +15,12 @@ func TestRunStoreLifecycle(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			s := NewRunStore()
 			request := CreateRunRequest{Database: "benchmark"}
-			created, err := s.Create("run-1", request)
+			created, err := s.Create("run-1", request, nil)
 			if err != nil || created.Status != RunStatusRunning || created.CreatedAt.IsZero() {
 				t.Fatalf("Create = %+v, %v", created, err)
 			}
 			created.Request.Database = "changed"
-			if _, err := s.Create("run-1", CreateRunRequest{}); !errors.Is(err, ErrRunExists) {
+			if _, err := s.Create("run-1", CreateRunRequest{}, nil); !errors.Is(err, ErrRunExists) {
 				t.Fatalf("duplicate Create: %v", err)
 			}
 			message := ""
@@ -48,7 +49,7 @@ func TestRunStoreLifecycle(t *testing.T) {
 
 func TestRunStoreRejectsInvalidOperations(t *testing.T) {
 	s := NewRunStore()
-	if _, err := s.Create(" ", CreateRunRequest{}); err == nil {
+	if _, err := s.Create(" ", CreateRunRequest{}, nil); err == nil {
 		t.Fatal("accepted empty ID")
 	}
 	if _, err := s.Get("missing"); !errors.Is(err, ErrRunNotFound) {
@@ -57,7 +58,7 @@ func TestRunStoreRejectsInvalidOperations(t *testing.T) {
 	if err := s.Complete("missing", RunStatusSucceeded, coordinator.Result{}, ""); !errors.Is(err, ErrRunNotFound) {
 		t.Fatal(err)
 	}
-	if _, err := s.Create("run", CreateRunRequest{}); err != nil {
+	if _, err := s.Create("run", CreateRunRequest{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
@@ -76,9 +77,49 @@ func TestRunStoreRejectsInvalidOperations(t *testing.T) {
 	}
 }
 
+func TestRunStoreOwnsRequestAndNodeAffinitySnapshots(t *testing.T) {
+	for _, status := range []RunStatus{RunStatusSucceeded, RunStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			store := NewRunStore()
+			submitted := testNodeAffinity()
+			prepared := submitted.DeepCopy()
+			prepared.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 50
+			wantRequest, wantSnapshot := submitted.DeepCopy(), prepared.DeepCopy()
+			created, err := store.Create("run-1", CreateRunRequest{NodeAffinity: submitted}, prepared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutateTestNodeAffinity(submitted)
+			mutateTestNodeAffinity(prepared)
+			mutateTestNodeAffinity(created.Request.NodeAffinity)
+			mutateTestNodeAffinity(&created.NodeAffinity)
+			got, err := store.Get("run-1")
+			if err != nil || !reflect.DeepEqual(got.Request.NodeAffinity, wantRequest) || !reflect.DeepEqual(&got.NodeAffinity, wantSnapshot) {
+				t.Fatalf("Create exposed its stored pointers: run=%+v err=%v", got, err)
+			}
+			mutateTestNodeAffinity(got.Request.NodeAffinity)
+			if !reflect.DeepEqual(&got.NodeAffinity, wantSnapshot) {
+				t.Fatal("returned request and prepared snapshot share nested data")
+			}
+			mutateTestNodeAffinity(&got.NodeAffinity)
+			message := ""
+			if status == RunStatusFailed {
+				message = "benchmark failed"
+			}
+			if err := store.Complete("run-1", status, coordinator.Result{}, message); err != nil {
+				t.Fatal(err)
+			}
+			completed, err := store.Get("run-1")
+			if err != nil || completed.Status != status || !reflect.DeepEqual(completed.Request.NodeAffinity, wantRequest) || !reflect.DeepEqual(&completed.NodeAffinity, wantSnapshot) {
+				t.Fatalf("Get mutations or completion changed history: run=%+v err=%v", completed, err)
+			}
+		})
+	}
+}
+
 func TestRunStoreConcurrentCompletion(t *testing.T) {
 	s := NewRunStore()
-	if _, err := s.Create("run", CreateRunRequest{}); err != nil {
+	if _, err := s.Create("run", CreateRunRequest{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -119,7 +160,7 @@ func TestRunStoreExpiresCompletedRuns(t *testing.T) {
 			s := NewRunStore()
 			s.now = func() time.Time { return now }
 
-			if _, err := s.Create("completed", CreateRunRequest{}); err != nil {
+			if _, err := s.Create("completed", CreateRunRequest{}, nil); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Complete("completed", test.status, coordinator.Result{}, test.message); err != nil {
@@ -130,7 +171,7 @@ func TestRunStoreExpiresCompletedRuns(t *testing.T) {
 			if _, err := s.Get("completed"); !errors.Is(err, ErrRunNotFound) {
 				t.Fatalf("Get expired run error = %v, want %v", err, ErrRunNotFound)
 			}
-			if _, err := s.Create("completed", CreateRunRequest{}); err != nil {
+			if _, err := s.Create("completed", CreateRunRequest{}, nil); err != nil {
 				t.Fatalf("Create should prune the expired run before reusing its ID: %v", err)
 			}
 		})
@@ -142,11 +183,11 @@ func TestRunStoreRetainsRunningRunsPastRetention(t *testing.T) {
 	s := NewRunStore()
 	s.now = func() time.Time { return now }
 
-	if _, err := s.Create("running", CreateRunRequest{}); err != nil {
+	if _, err := s.Create("running", CreateRunRequest{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(completedRunRetention + time.Second)
-	if _, err := s.Create("another", CreateRunRequest{}); err != nil {
+	if _, err := s.Create("another", CreateRunRequest{}, nil); err != nil {
 		t.Fatal(err)
 	}
 

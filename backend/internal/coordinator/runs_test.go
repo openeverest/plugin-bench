@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,74 @@ func (p diagnosticPods) List(ctx context.Context, options metav1.ListOptions) (*
 type diagnosticClient struct {
 	*fake.Clientset
 	check func(context.Context)
+}
+
+func TestRunRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{}}
+	result, err := c.Run(context.Background(), validConnection(), options)
+	if err == nil || !strings.Contains(err.Error(), "nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms") {
+		t.Fatalf("want required term validation error, got %v", err)
+	}
+	if result.JobName != "" || len(client.Actions()) != 0 {
+		t.Fatal("invalid affinity created resources or started execution")
+	}
+}
+
+func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	input := validNodeAffinity()
+	want := input.DeepCopy()
+	var jobName string
+	client.PrependReactor("create", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
+		action.(ktesting.CreateAction).GetObject().(*corev1.Secret).UID = "secret-uid"
+		return false, nil, nil
+	})
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+		if job.Spec.Template.Spec.Affinity == nil || !reflect.DeepEqual(job.Spec.Template.Spec.Affinity.NodeAffinity, want) {
+			t.Fatal("Run did not pass node affinity into the created Job")
+		}
+		job.UID = "job-uid"
+		jobName = job.Name
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{
+			Name: "runner-pod", Labels: map[string]string{batchv1.JobNameLabel: jobName},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}},
+		}}}}, nil
+	})
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = input
+	result, err := c.Run(context.Background(), validConnection(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.JobName != jobName || result.Output != "fake logs" {
+		t.Fatalf("unexpected run result: %+v", result)
+	}
+	if !reflect.DeepEqual(input, want) {
+		t.Fatal("Run modified submitted affinity")
+	}
+	jobDeleted, secretDeleted := false, false
+	for _, action := range client.Actions() {
+		jobDeleted = jobDeleted || action.Matches("delete", "jobs")
+		secretDeleted = secretDeleted || action.Matches("delete", "secrets")
+	}
+	if !jobDeleted || !secretDeleted {
+		t.Fatal("completed run did not clean up its Job and Secret")
+	}
 }
 
 func (c diagnosticClient) CoreV1() typedcorev1.CoreV1Interface {
@@ -108,15 +177,16 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 				return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{batchv1.JobNameLabel: jobName},
 					Name:   "runner-pod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}},
-				}}}}, nil
+				}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+					Name: runnerContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
+				}}}}}}, nil
 			})
 			checked := false
 			c, err := New(config, diagnosticClient{Clientset: client, check: func(logCtx context.Context) {
-				checked = true
 				deadline, ok := logCtx.Deadline()
-				if logCtx.Err() != nil || !ok || time.Until(deadline) <= 0 || time.Until(deadline) > failureLogTimeout {
-					t.Fatal("diagnostics need an active, bounded context")
-				}
+				// Monitoring can race execution cancellation. The final Pod lookup
+				// must still use an active, independently bounded diagnostic context.
+				checked = logCtx.Err() == nil && ok && time.Until(deadline) > 0 && time.Until(deadline) <= failureLogTimeout
 			}})
 			if err != nil {
 				t.Fatal(err)
