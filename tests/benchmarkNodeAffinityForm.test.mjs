@@ -9,12 +9,21 @@ import { toCreateBenchmarkRunRequest } from '../dist/form-test/benchmarkFormVali
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>');
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
+// Node 20 has no navigator by default; newer Node versions expose a getter.
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 const { Accordion, Button, Switch, TextField, Chip } = await import('@mui/material');
 const { CacheProvider } = await import('@emotion/react');
 const { default: createCache } = await import('@emotion/cache');
 const { BenchmarkForm } = await import('../dist/form-test/BenchmarkForm.js');
 const { BenchmarkNodeAffinityForm } = await import('../dist/form-test/BenchmarkNodeAffinityForm.js');
-test.after(() => { dom.window.close(); delete globalThis.window; delete globalThis.document; });
+test.after(() => {
+  dom.window.close();
+  delete globalThis.window;
+  delete globalThis.document;
+  if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+  else delete globalThis.navigator;
+});
 
 const { act } = renderer;
 const target = { k8sCluster: 'main', namespace: 'default', instance: 'pg-1' };
