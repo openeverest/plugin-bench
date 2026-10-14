@@ -146,6 +146,8 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			config := validConfig()
+			// Exercise monitoring alongside the final diagnostic lookup.
+			config.SchedulingGracePeriod = time.Minute
 			if scenario == "execution timeout" || scenario == "caller deadline" {
 				config.ExecutionTimeout = time.Second
 			}
@@ -208,12 +210,14 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 					Name: runnerContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
 				}}}}}}, nil
 			})
-			checked := false
-			c, err := New(config, diagnosticClient{Clientset: client, check: func(logCtx context.Context) {
-				deadline, ok := logCtx.Deadline()
-				// Monitoring can race execution cancellation. The final Pod lookup
-				// must still use an active, independently bounded diagnostic context.
-				checked = logCtx.Err() == nil && ok && time.Until(deadline) > 0 && time.Until(deadline) <= failureLogTimeout
+			diagnosticLookups := 0
+			c, err := New(config, diagnosticClient{Clientset: client, check: func(lookupCtx context.Context) {
+				// Monitoring also lists Pods; only the diagnostic lookup gets a fresh failureLogTimeout budget.
+				deadline, ok := lookupCtx.Deadline()
+				remaining := time.Until(deadline)
+				if lookupCtx.Err() == nil && ok && remaining > failureLogTimeout-time.Second && remaining <= failureLogTimeout {
+					diagnosticLookups++
+				}
 			}})
 			if err != nil {
 				t.Fatal(err)
@@ -225,8 +229,8 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 			if scenario == "caller deadline" && time.Since(callerDeadline) > 500*time.Millisecond {
 				t.Fatal("Run did not honor the earlier caller deadline")
 			}
-			if err == nil || !checked {
-				t.Fatalf("error = %v, diagnostics attempted = %v", err, checked)
+			if err == nil || diagnosticLookups != 1 {
+				t.Fatalf("error = %v, diagnostic lookups = %d, want 1", err, diagnosticLookups)
 			}
 			if originalErr != nil && !errors.Is(err, originalErr) {
 				t.Fatalf("lost original error: %v", err)

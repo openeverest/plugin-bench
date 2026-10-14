@@ -109,7 +109,8 @@ func TestUnschedulableRunsReleaseCapacity(t *testing.T) {
 			}}}, nil
 		})
 		runner, err := coordinator.New(coordinator.Config{WorkloadNamespace: "workloads", RunnerImage: "runner:test",
-			ImagePullPolicy: "IfNotPresent", RunnerServiceAccount: "runner", ExecutionTimeout: 5 * time.Minute}, client)
+			ImagePullPolicy: "IfNotPresent", RunnerServiceAccount: "runner", ExecutionTimeout: 5 * time.Minute,
+			SchedulingGracePeriod: time.Minute}, client)
 		if err != nil {
 			t.Fatal(err)
 		}

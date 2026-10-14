@@ -14,7 +14,7 @@ export type BenchmarkFormValues = {
   memoryRequest: string;
   memoryLimit: string;
   initialize: boolean;
-  nodeAffinity?: NodeAffinityDraft;
+  nodeAffinity: NodeAffinityDraft;
 };
 
 export const initialBenchmarkFormValues: BenchmarkFormValues = {

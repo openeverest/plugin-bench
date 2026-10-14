@@ -95,14 +95,16 @@ func (c *Coordinator) waitForJobAtInterval(ctx context.Context, reference JobRef
 		// Pod creation and scheduler decisions are asynchronous. Missing Pods,
 		// ambiguous results, and diagnostic API errors are not proof of an
 		// unschedulable run; reset the observation window and keep waiting.
-		pod, podErr := c.lookupJobPod(ctx, reference)
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if podErr != nil {
-			scheduling = schedulingTracker{}
-		} else if err := scheduling.observe(pod, time.Now()); err != nil {
-			return err
+		if gracePeriod := c.config.SchedulingGracePeriod; gracePeriod > 0 {
+			pod, podErr := c.lookupJobPod(ctx, reference)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if podErr != nil {
+				scheduling = schedulingTracker{}
+			} else if err := scheduling.observe(pod, time.Now(), gracePeriod); err != nil {
+				return err
+			}
 		}
 
 		select {

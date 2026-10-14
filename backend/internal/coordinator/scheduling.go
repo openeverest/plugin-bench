@@ -8,10 +8,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// This limits continuously observed scheduler rejection, not benchmark runtime
-// or image downloading. The overall execution timeout remains the final bound.
-const schedulingGracePeriod = time.Minute
-
 // SchedulingError contains the scheduler's placement diagnostic, not runner
 // logs or connection details. The API may expose it instead of a generic error.
 type SchedulingError struct {
@@ -35,7 +31,7 @@ type schedulingTracker struct {
 	since  time.Time
 }
 
-func (s *schedulingTracker) observe(pod *corev1.Pod, now time.Time) error {
+func (s *schedulingTracker) observe(pod *corev1.Pod, now time.Time, gracePeriod time.Duration) error {
 	condition := unschedulableCondition(pod)
 	if condition == nil || pod.UID == "" {
 		*s = schedulingTracker{}
@@ -44,10 +40,10 @@ func (s *schedulingTracker) observe(pod *corev1.Pod, now time.Time) error {
 	if s.since.IsZero() || s.podUID != pod.UID {
 		s.podUID, s.since = pod.UID, now
 	}
-	if now.Sub(s.since) < schedulingGracePeriod {
+	if now.Sub(s.since) < gracePeriod {
 		return nil
 	}
-	return &SchedulingError{PodName: pod.Name, Message: condition.Message, GracePeriod: schedulingGracePeriod}
+	return &SchedulingError{PodName: pod.Name, Message: condition.Message, GracePeriod: gracePeriod}
 }
 
 func unschedulableCondition(pod *corev1.Pod) *corev1.PodCondition {

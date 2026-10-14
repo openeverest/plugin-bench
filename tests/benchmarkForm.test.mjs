@@ -70,7 +70,7 @@ test('request mapping omits disabled affinity and includes validated enabled rul
   };
   const values = { ...validValues, nodeAffinity };
   assert.equal('nodeAffinity' in toCreateBenchmarkRunRequest(values, target), false);
-  assert.equal('nodeAffinity' in toCreateBenchmarkRunRequest({ ...validValues, nodeAffinity: undefined }, target), false);
+  assert.equal('nodeAffinity' in toCreateBenchmarkRunRequest(validValues, target), false);
   const enabled = { ...values, nodeAffinity: { ...nodeAffinity, enabled: true } };
   const request = toCreateBenchmarkRunRequest(enabled, target);
   assert.deepEqual(request.nodeAffinity, {

@@ -164,9 +164,9 @@ export function isNodeAffinity(value: unknown): value is NodeAffinity {
   return Object.keys(validateNodeAffinity(value)).length === 0;
 }
 
-export function prepareNodeAffinityDraft(draft?: NodeAffinityDraft): PreparedNodeAffinityDraft {
+export function prepareNodeAffinityDraft(draft: NodeAffinityDraft): PreparedNodeAffinityDraft {
   // Preserve disabled drafts in the form, but never send their rules.
-  if (!draft?.enabled) return { ok: true };
+  if (!draft.enabled) return { ok: true };
   if (draft.required.length === 0 && draft.preferred.length === 0) {
     return { ok: false, errors: { nodeAffinity: 'Add at least one required or preferred group.' } };
   }

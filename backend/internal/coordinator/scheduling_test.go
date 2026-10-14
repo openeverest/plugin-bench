@@ -55,6 +55,7 @@ func TestRunnerHasStarted(t *testing.T) {
 }
 
 func TestSchedulingTrackerGraceAndResets(t *testing.T) {
+	const gracePeriod = time.Minute
 	start := time.Unix(100, 0)
 	for _, test := range []struct {
 		name   string
@@ -73,13 +74,13 @@ func TestSchedulingTrackerGraceAndResets(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			pod := schedulingTestPod(JobRef{Name: "job", UID: "job-uid"})
 			var tracker schedulingTracker
-			if err := tracker.observe(pod, start); err != nil {
+			if err := tracker.observe(pod, start, gracePeriod); err != nil {
 				t.Fatal(err)
 			}
-			if err := tracker.observe(test.mutate(pod.DeepCopy()), start.Add(50*time.Second)); err != nil {
+			if err := tracker.observe(test.mutate(pod.DeepCopy()), start.Add(50*time.Second), gracePeriod); err != nil {
 				t.Fatal(err)
 			}
-			if err := tracker.observe(pod, start.Add(60*time.Second)); err != nil {
+			if err := tracker.observe(pod, start.Add(60*time.Second), gracePeriod); err != nil {
 				t.Fatalf("timer was not reset: %v", err)
 			}
 		})
@@ -89,14 +90,14 @@ func TestSchedulingTrackerGraceAndResets(t *testing.T) {
 	pod := schedulingTestPod(JobRef{Name: "job", UID: "job-uid"})
 	// Server timestamps must not make the grace period expire immediately.
 	pod.Status.Conditions[0].LastTransitionTime = metav1.NewTime(start.Add(-time.Hour))
-	if err := tracker.observe(pod, start); err != nil {
+	if err := tracker.observe(pod, start, gracePeriod); err != nil {
 		t.Fatal(err)
 	}
-	if err := tracker.observe(pod, start.Add(schedulingGracePeriod-time.Nanosecond)); err != nil {
+	if err := tracker.observe(pod, start.Add(gracePeriod-time.Nanosecond), gracePeriod); err != nil {
 		t.Fatalf("failed before the grace boundary: %v", err)
 	}
 	pod.Status.Conditions[0].Message = "latest scheduling diagnosis"
-	err := tracker.observe(pod, start.Add(schedulingGracePeriod))
+	err := tracker.observe(pod, start.Add(gracePeriod), gracePeriod)
 	var schedulingErr *SchedulingError
 	if !errors.As(err, &schedulingErr) || schedulingErr.Message != pod.Status.Conditions[0].Message {
 		t.Fatalf("want scheduling failure with latest message, got %v", err)
@@ -188,7 +189,9 @@ func TestWaitForJobScheduling(t *testing.T) {
 					}
 					return true, &corev1.PodList{Items: []corev1.Pod{*pod}}, nil
 				})
-				c, err := New(validConfig(), client)
+				config := validConfig()
+				config.SchedulingGracePeriod = time.Minute
+				c, err := New(config, client)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -224,6 +227,68 @@ func TestWaitForJobScheduling(t *testing.T) {
 	}
 }
 
+func TestWaitForJobConfigurableSchedulingGracePeriod(t *testing.T) {
+	for _, test := range []struct {
+		name                              string
+		gracePeriod, completeAt, wantTime time.Duration
+	}{
+		{"disabled allows delayed scheduling", 0, 90 * time.Second, 90 * time.Second},
+		{"disabled remains bounded", 0, 0, 3 * time.Minute},
+		{"custom period fails early", 90 * time.Second, 0, 90 * time.Second},
+		{"longer period allows delayed scheduling", 2 * time.Minute, 90 * time.Second, 90 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				ref := JobRef{Name: "job", UID: "job-uid"}
+				client := fake.NewSimpleClientset()
+				client.PrependReactor("get", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+					job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, UID: ref.UID}}
+					if test.completeAt > 0 && time.Since(start) >= test.completeAt {
+						job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+					}
+					return true, job, nil
+				})
+				podLookups := 0
+				client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+					podLookups++
+					return true, &corev1.PodList{Items: []corev1.Pod{*schedulingTestPod(ref)}}, nil
+				})
+				config := validConfig()
+				config.SchedulingGracePeriod = test.gracePeriod
+				c, err := New(config, client)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+				err = c.waitForJob(ctx, ref)
+				var schedulingErr *SchedulingError
+				switch {
+				case test.completeAt > 0:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case test.gracePeriod > 0:
+					if !errors.As(err, &schedulingErr) || schedulingErr.GracePeriod != test.gracePeriod {
+						t.Fatalf("want configured scheduling error, got %v", err)
+					}
+				default:
+					if !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("want overall deadline, got %v", err)
+					}
+				}
+				if test.gracePeriod == 0 && podLookups != 0 {
+					t.Fatalf("disabled monitoring made %d Pod lookups", podLookups)
+				}
+				if elapsed := time.Since(start); elapsed != test.wantTime {
+					t.Fatalf("elapsed = %s, want %s", elapsed, test.wantTime)
+				}
+			})
+		})
+	}
+}
+
 func TestRunSchedulingFailureCleansUpWithoutLogs(t *testing.T) {
 	for _, scenario := range []string{"early failure", "overall timeout", "diagnostic lookup failure"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -231,7 +296,9 @@ func TestRunSchedulingFailureCleansUpWithoutLogs(t *testing.T) {
 				client := fake.NewSimpleClientset()
 				config := validConfig()
 				config.ExecutionTimeout = 5 * time.Minute
-				if scenario != "early failure" {
+				if scenario == "early failure" {
+					config.SchedulingGracePeriod = time.Minute
+				} else {
 					config.ExecutionTimeout = 30 * time.Second
 				}
 				var ref JobRef
@@ -273,7 +340,7 @@ func TestRunSchedulingFailureCleansUpWithoutLogs(t *testing.T) {
 				}
 				wantTime := config.ExecutionTimeout
 				if scenario == "early failure" {
-					wantTime = schedulingGracePeriod
+					wantTime = config.SchedulingGracePeriod
 				}
 				if elapsed := time.Since(start); elapsed != wantTime {
 					t.Fatalf("elapsed = %s, want %s", elapsed, wantTime)

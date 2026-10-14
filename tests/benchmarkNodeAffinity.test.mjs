@@ -21,7 +21,7 @@ test('disabled drafts omit affinity without destroying entered rules; initial dr
   const before = structuredClone(input);
   assert.deepEqual(prepareNodeAffinityDraft(input), { ok: true });
   assert.deepEqual(input, before);
-  assert.deepEqual(prepareNodeAffinityDraft(), { ok: true });
+  assert.deepEqual(prepareNodeAffinityDraft(createNodeAffinityDraft()), { ok: true });
   const first = createNodeAffinityDraft();
   first.required.push({ matchExpressions: [condition()] });
   assert.deepEqual(createNodeAffinityDraft(), { enabled: false, required: [], preferred: [] });

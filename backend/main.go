@@ -75,12 +75,17 @@ func coordinatorConfigFromEnv() (coordinator.Config, error) {
 	if err != nil {
 		return coordinator.Config{}, fmt.Errorf("parse BENCHMARK_EXECUTION_TIMEOUT: %w", err)
 	}
+	schedulingGracePeriod, err := time.ParseDuration(envOrDefault("BENCHMARK_SCHEDULING_GRACE_PERIOD", "0"))
+	if err != nil {
+		return coordinator.Config{}, fmt.Errorf("parse BENCHMARK_SCHEDULING_GRACE_PERIOD: %w", err)
+	}
 	return coordinator.Config{
-		WorkloadNamespace:    os.Getenv("WORKLOAD_NAMESPACE"),
-		RunnerImage:          os.Getenv("RUNNER_IMAGE"),
-		ImagePullPolicy:      envOrDefault("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
-		RunnerServiceAccount: os.Getenv("RUNNER_SERVICE_ACCOUNT_NAME"),
-		ExecutionTimeout:     executionTimeout,
+		WorkloadNamespace:     os.Getenv("WORKLOAD_NAMESPACE"),
+		RunnerImage:           os.Getenv("RUNNER_IMAGE"),
+		ImagePullPolicy:       envOrDefault("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
+		RunnerServiceAccount:  os.Getenv("RUNNER_SERVICE_ACCOUNT_NAME"),
+		ExecutionTimeout:      executionTimeout,
+		SchedulingGracePeriod: schedulingGracePeriod,
 		Resources: coordinator.Resources{
 			CPURequest:    os.Getenv("RUNNER_CPU_REQUEST"),
 			MemoryRequest: os.Getenv("RUNNER_MEMORY_REQUEST"),

@@ -21,12 +21,10 @@ import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFo
 import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormValidation';
 import type { BenchmarkTarget } from './benchmarkTarget';
 import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity.js';
-import type { NodeAffinityDraft } from './benchmarkNodeAffinity';
 import { BenchmarkNodeAffinityForm } from './BenchmarkNodeAffinityForm.js';
 
 type NumericField = 'durationSeconds' | 'clients' | 'threads' | 'scale';
 type ResourceField = 'cpuRequest' | 'cpuLimit' | 'memoryRequest' | 'memoryLimit';
-type FormState = BenchmarkFormValues & { nodeAffinity: NodeAffinityDraft };
 
 const NUMERIC_FIELDS: ReadonlyArray<{ field: NumericField; label: string; hint: string }> = [
   { field: 'durationSeconds', label: 'Duration (seconds)', hint: 'How long the benchmark runs.' },
@@ -49,7 +47,7 @@ interface BenchmarkFormProps {
 }
 
 export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormProps) {
-  const [values, setValues] = useState<FormState>(() => ({
+  const [values, setValues] = useState<BenchmarkFormValues>(() => ({
     ...initialBenchmarkFormValues, nodeAffinity: createNodeAffinityDraft(),
   }));
   const [touched, setTouched] = useState<Partial<Record<BenchmarkFormField, boolean>>>({});
@@ -59,7 +57,7 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
   const canSubmit = Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
   const resourceError = RESOURCE_FIELDS.some(({ field }) => Boolean(errors[field]));
 
-  const updateValue = <K extends keyof FormState>(key: K, value: FormState[K]) => {
+  const updateValue = <K extends keyof BenchmarkFormValues>(key: K, value: BenchmarkFormValues[K]) => {
     setValues(current => ({ ...current, [key]: value }));
   };
   const markTouched = (field: BenchmarkFormField) => {

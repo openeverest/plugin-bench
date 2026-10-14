@@ -20,6 +20,8 @@ type Config struct {
 	RunnerServiceAccount string
 	Resources            Resources
 	ExecutionTimeout     time.Duration
+	// SchedulingGracePeriod limits continuously observed scheduler rejection; zero disables it.
+	SchedulingGracePeriod time.Duration
 }
 
 func (c Config) Validate() error {
@@ -39,6 +41,9 @@ func (c Config) Validate() error {
 	}
 	if c.ExecutionTimeout < time.Second || c.ExecutionTimeout%time.Second != 0 {
 		return errors.New("execution timeout must be a positive whole number of seconds")
+	}
+	if c.SchedulingGracePeriod < 0 || c.SchedulingGracePeriod%time.Second != 0 {
+		return errors.New("scheduling grace period must be a nonnegative whole number of seconds")
 	}
 	if _, err := resourceRequirements(c.Resources); err != nil {
 		return fmt.Errorf("invalid runner resources: %w", err)

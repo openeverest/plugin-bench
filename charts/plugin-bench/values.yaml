@@ -55,6 +55,8 @@ runner:
     tag: ""
     pullPolicy: IfNotPresent
   executionTimeout: 5m
+  # Zero disables early unschedulable failure. Allow enough time for node autoscaling.
+  schedulingGracePeriod: "0"
   resources:
     requests:
       cpu: 100m
