@@ -26,7 +26,7 @@ type RunStore struct {
 
 // Create stores independent copies of the request and prepared affinity snapshot.
 // A nil prepared affinity is retained as an empty object in status responses.
-func (s *RunStore) Create(id string, request CreateRunRequest, nodeAffinity *corev1.NodeAffinity) (Run, error) {
+func (s *RunStore) Create(id string, request CreateRunRequest, resources coordinator.Resources, nodeAffinity *corev1.NodeAffinity) (Run, error) {
 	if strings.TrimSpace(id) == "" {
 		return Run{}, errors.New("run ID is required")
 	}
@@ -38,7 +38,7 @@ func (s *RunStore) Create(id string, request CreateRunRequest, nodeAffinity *cor
 		return Run{}, ErrRunExists
 	}
 	request.NodeAffinity = request.NodeAffinity.DeepCopy()
-	run := Run{ID: id, Request: request, Status: RunStatusRunning, CreatedAt: now.UTC()}
+	run := Run{ID: id, Request: request, Resources: resources, Status: RunStatusRunning, CreatedAt: now.UTC()}
 	if nodeAffinity != nil {
 		run.NodeAffinity = *nodeAffinity.DeepCopy()
 	}

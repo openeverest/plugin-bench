@@ -79,6 +79,16 @@ test('explicit rejection retains its message and is distinguishable from uncerta
     error.status === 429 && error.message === 'capacity full');
 });
 
+test('submits resource overrides and surfaces early validation errors', async () => {
+  const withResources = { ...request, resources: { cpuRequest: '500m', memoryLimit: '1Gi' } };
+  await assert.rejects(createBenchmarkRun(async (path, init) => {
+    assert.equal(path, '/api/runs');
+    assert.deepEqual(JSON.parse(init.body), withResources);
+    return new Response('{"error":"cpu request cannot exceed limit"}', { status: 400 });
+  }, withResources), error => error instanceof BenchmarkApiError && !error.outcomeUnknown &&
+    error.status === 400 && error.message === 'cpu request cannot exceed limit');
+});
+
 test('accepted response succeeds and disconnects the caller abort listener', async () => {
   const controller = new AbortController();
   let signal;

@@ -14,7 +14,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -268,7 +267,9 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 	if err := options.Validate(); err != nil {
 		return resources, fmt.Errorf("invalid benchmark options: %w", err)
 	}
-	if _, err := resourceRequirements(c.config.Resources); err != nil {
+	// Validate the combined configuration before writing the credential Secret.
+	resolvedResources, err := ResolveResources(c.config.Resources, options.Resources)
+	if err != nil {
 		return resources, fmt.Errorf("invalid runner resources: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -289,7 +290,7 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 		return resources, err
 	}
 
-	job, err := c.createBenchmarkJob(ctx, secret, preparedOptions, labels)
+	job, err := c.createBenchmarkJob(ctx, secret, preparedOptions, resolvedResources, labels)
 	if err == nil {
 		return benchmarkResources{secret: secret, job: job}, nil
 	}
@@ -397,9 +398,9 @@ func (c *Coordinator) cleanupBenchmarkResourcesWithContext(ctx context.Context, 
 }
 
 // createBenchmarkJob builds and creates one runner Job in the configured
-// workload namespace. It does not wait for completion or read logs.
-// Node affinity must already be prepared by createBenchmarkResources.
-func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, options Options, labels map[string]string) (JobRef, error) {
+// workload namespace. Resources and node affinity must already be prepared by
+// createBenchmarkResources. It does not wait for completion or read logs.
+func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, options Options, resolvedResources Resources, labels map[string]string) (JobRef, error) {
 	var reference JobRef
 	if c == nil {
 		return reference, errors.New("coordinator is nil")
@@ -427,7 +428,7 @@ func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRe
 	if err != nil {
 		return reference, err
 	}
-	job, err := newBenchmarkJob(c.config, name, secretRef.Name, options, labels)
+	job, err := newBenchmarkJob(c.config, name, secretRef.Name, options, resolvedResources, labels)
 	if err != nil {
 		return reference, fmt.Errorf("build benchmark Job: %w", err)
 	}
@@ -449,8 +450,9 @@ func generateBenchmarkJobName() (string, error) {
 
 // newBenchmarkJob builds the per-run Job object. It only creates an in-memory
 // Kubernetes object; the caller is responsible for API calls and cleanup.
-// Node affinity must be prepared before calling; the manifest owns its own copy.
-func newBenchmarkJob(config Config, name, secretName string, options Options, labels map[string]string) (*batchv1.Job, error) {
+// Resources and node affinity must be prepared before creating the credential
+// Secret. The manifest owns its own copy of the affinity rules.
+func newBenchmarkJob(config Config, name, secretName string, options Options, resolvedResources Resources, labels map[string]string) (*batchv1.Job, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid coordinator configuration: %w", err)
 	}
@@ -463,7 +465,7 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, la
 	if err := options.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid benchmark options: %w", err)
 	}
-	resources, err := resourceRequirements(config.Resources)
+	resources, err := resourceRequirements(resolvedResources)
 	if err != nil {
 		return nil, err
 	}
@@ -534,54 +536,6 @@ func benchmarkEnvironment(secretName string, options Options) []corev1.EnvVar {
 		corev1.EnvVar{Name: "BENCH_INITIALIZE", Value: strconv.FormatBool(options.Initialize)},
 	)
 	return env
-}
-
-func resourceRequirements(resources Resources) (corev1.ResourceRequirements, error) {
-	result := corev1.ResourceRequirements{}
-	requests, err := parseQuantities("request", resources.CPURequest, resources.MemoryRequest)
-	if err != nil {
-		return result, err
-	}
-	limits, err := parseQuantities("limit", resources.CPULimit, resources.MemoryLimit)
-	if err != nil {
-		return result, err
-	}
-	result.Requests = requests
-	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
-		request, hasRequest := requests[name]
-		limit, hasLimit := limits[name]
-		if hasRequest && hasLimit && request.Cmp(limit) > 0 {
-			return corev1.ResourceRequirements{}, fmt.Errorf("%s request cannot exceed limit", name)
-		}
-	}
-	result.Limits = limits
-	return result, nil
-}
-
-func parseQuantities(kind, cpu, memory string) (corev1.ResourceList, error) {
-	result := corev1.ResourceList{}
-	for name, value := range map[string]string{"cpu": cpu, "memory": memory} {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		quantity, err := resource.ParseQuantity(value)
-		if err != nil {
-			return nil, fmt.Errorf("invalid %s %s resource quantity: %w", kind, name, err)
-		}
-		resourceName := corev1.ResourceName(name)
-		if quantity.Sign() < 0 {
-			return nil, fmt.Errorf("%s %s resource quantity must be nonnegative", kind, name)
-		}
-		if resourceName == corev1.ResourceCPU {
-			// Round a copy so precision is checked without changing the value.
-			rounded := quantity.DeepCopy()
-			if !rounded.RoundUp(resource.Milli) {
-				return nil, fmt.Errorf("%s cpu resource quantity must use increments of 1m", kind)
-			}
-		}
-		result[resourceName] = quantity
-	}
-	return result, nil
 }
 
 func copyLabels(labels map[string]string) map[string]string {

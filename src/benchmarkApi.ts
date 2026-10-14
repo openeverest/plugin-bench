@@ -3,6 +3,13 @@ import type { BenchmarkTarget } from './benchmarkTarget';
 import { isNodeAffinity } from './benchmarkNodeAffinity.js';
 import type { NodeAffinity } from './benchmarkNodeAffinity';
 
+export type BenchmarkRunResources = {
+  cpuRequest?: string;
+  cpuLimit?: string;
+  memoryRequest?: string;
+  memoryLimit?: string;
+};
+
 export type CreateBenchmarkRunRequest = {
   target: BenchmarkTarget;
   /** Omit to benchmark the instance's default database. */
@@ -12,6 +19,7 @@ export type CreateBenchmarkRunRequest = {
   threads: number;
   scale: number;
   initialize: boolean;
+  resources?: BenchmarkRunResources;
   nodeAffinity?: NodeAffinity;
 };
 
@@ -26,6 +34,7 @@ export type BenchmarkRun = {
   id: string;
   status: BenchmarkRunStatus;
   database?: string;
+  resources?: BenchmarkRunResources;
   createdAt: string;
   /** Absent on older backends; an empty object means no configured affinity. */
   nodeAffinity?: NodeAffinity;
@@ -112,8 +121,16 @@ function isBenchmarkRun(value: unknown, id: string): value is BenchmarkRun {
     (run.nodeAffinity === undefined || isNodeAffinity(run.nodeAffinity)) &&
     (run.completedAt === undefined || timestamp(run.completedAt)) &&
     (run.status === 'running' || timestamp(run.completedAt)) &&
+    (run.resources === undefined || isBenchmarkRunResources(run.resources)) &&
     ['database', 'jobName', 'output', 'error'].every(key => run[key] === undefined || typeof run[key] === 'string') &&
     (run.status !== 'failed' || (typeof run.error === 'string' && run.error.trim() !== ''));
+}
+
+function isBenchmarkRunResources(value: unknown): value is BenchmarkRunResources {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const resources = value as Record<string, unknown>;
+  return ['cpuRequest', 'cpuLimit', 'memoryRequest', 'memoryLimit']
+    .every(key => resources[key] === undefined || typeof resources[key] === 'string');
 }
 
 export class BenchmarkApiError extends Error {

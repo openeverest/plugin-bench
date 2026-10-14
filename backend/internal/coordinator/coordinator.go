@@ -46,14 +46,6 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// Resources uses Kubernetes quantity strings; empty fields remain unspecified.
-type Resources struct {
-	CPURequest    string
-	MemoryRequest string
-	CPULimit      string
-	MemoryLimit   string
-}
-
 // Coordinator holds shared configuration, not per-run credentials or options.
 // The Kubernetes client is injected so the coordinator remains testable.
 type Coordinator struct {

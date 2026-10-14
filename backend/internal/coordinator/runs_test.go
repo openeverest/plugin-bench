@@ -60,6 +60,8 @@ func TestRunRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
 
 func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 	client := fake.NewSimpleClientset()
+	config := validConfig()
+	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 	input := validNodeAffinity()
 	want := input.DeepCopy()
 	var jobName string
@@ -72,6 +74,11 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 		if job.Spec.Template.Spec.Affinity == nil || !reflect.DeepEqual(job.Spec.Template.Spec.Affinity.NodeAffinity, want) {
 			t.Fatal("Run did not pass node affinity into the created Job")
 		}
+		resources := job.Spec.Template.Spec.Containers[0].Resources
+		if resources.Requests.Cpu().String() != "500m" || resources.Limits.Cpu().String() != "1" ||
+			resources.Requests.Memory().String() != "128Mi" || resources.Limits.Memory().String() != "1Gi" {
+			t.Fatalf("Run did not apply resource overrides and defaults alongside affinity: %+v", resources)
+		}
 		job.UID = "job-uid"
 		jobName = job.Name
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
@@ -83,12 +90,13 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}},
 		}}}}, nil
 	})
-	c, err := New(validConfig(), client)
+	c, err := New(config, client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	options := DefaultOptions()
 	options.NodeAffinity = input
+	options.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
 	result, err := c.Run(context.Background(), validConnection(), options)
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +114,25 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 	}
 	if !jobDeleted || !secretDeleted {
 		t.Fatal("completed run did not clean up its Job and Secret")
+	}
+}
+
+func TestRunRejectsInvalidResourceOverridesBeforeKubernetesWrites(t *testing.T) {
+	config := validConfig()
+	config.Resources = Resources{CPURequest: "100m", CPULimit: "1"}
+	client := fake.NewSimpleClientset()
+	c, err := New(config, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.Resources = Resources{CPURequest: "2"}
+	_, err = c.Run(context.Background(), validConnection(), options)
+	if err == nil || !strings.Contains(err.Error(), "cpu request cannot exceed limit") {
+		t.Fatalf("Run() error = %v; want resource validation error", err)
+	}
+	if len(client.Actions()) != 0 {
+		t.Fatalf("invalid resources caused Kubernetes API calls: %v", client.Actions())
 	}
 }
 

@@ -48,14 +48,14 @@ const fields = (view, label) => view.root.findAllByType(TextField).filter(item =
 const click = (view, label) => act(() => button(view, label).props.onClick());
 const change = (field, value) => act(() => field.props.onChange({ target: { value } }));
 const enable = (view, checked) => act(() => view.root.findByType(Switch).props.onChange({ target: { checked } }));
-const collapse = (view, expanded) => act(() => view.root.findByType(Accordion).props.onChange({}, expanded));
+const collapse = (view, expanded) => act(() => editor(view).findByType(Accordion).props.onChange({}, expanded));
 const submit = view => act(() => view.root.findByType('form').props.onSubmit({ preventDefault() {} }));
 const remove = (view, label) => act(() => view.root.findAllByType(Button)
   .find(item => item.props['aria-label'] === label).props.onClick());
 
 test('placement is off and collapsed by default; ordinary submissions omit affinity', t => {
   const { view, submissions } = setup(t);
-  assert.equal(view.root.findByType(Accordion).props.expanded, false);
+  assert.equal(editor(view).findByType(Accordion).props.expanded, false);
   assert.equal(view.root.findByType(Switch).props.checked, false);
   assert.equal(button(view, 'Start benchmark').props.disabled, false);
   assert.equal(fields(view, 'Label key').length, 0);
@@ -87,6 +87,8 @@ test('editing required AND/OR groups, multiple values, and weighted preferences 
   change(fields(view, 'Label key')[3], 'disk');
   change(fields(view, 'Value 1')[3], 'ssd');
   change(fields(view, 'Weight')[0], '75');
+  change(fields(view, 'CPU request (millicores)')[0], '500');
+  change(fields(view, 'Memory limit (MiB)')[0], '1024');
   assert.equal(button(view, 'Start benchmark').props.disabled, false);
   submit(view);
   assert.deepEqual(submissions[0].nodeAffinity, {
@@ -101,6 +103,7 @@ test('editing required AND/OR groups, multiple values, and weighted preferences 
       matchExpressions: [{ key: 'disk', operator: 'In', values: ['ssd'] }],
     } }],
   });
+  assert.deepEqual(submissions[0].resources, { cpuRequest: '500m', memoryLimit: '1024Mi' });
 });
 
 test('collapse and the enable switch preserve drafts; invalid rules block only enabled submissions', t => {
@@ -193,9 +196,9 @@ test('pending submission disables placement controls and two forms own independe
 test('collapsed placement errors remain discoverable', t => {
   const { view } = setup(t);
   enable(view, true);
-  assert.equal(view.root.findByType(Accordion).props.expanded, false);
+  assert.equal(editor(view).findByType(Accordion).props.expanded, false);
   assert.ok(view.root.findAllByType(Chip).some(item => item.props.label === '1 placement error'));
-  const summary = view.root.findAllByType('button').find(item => item.props['aria-expanded'] === false);
+  const summary = editor(view).findAllByType('button').find(item => item.props['aria-expanded'] === false);
   const controlledId = summary.props['aria-controls'];
   assert.ok(controlledId);
   const regions = view.root.findAll(item => typeof item.type === 'string' && item.props.id === controlledId);

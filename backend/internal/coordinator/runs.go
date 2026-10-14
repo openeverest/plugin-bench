@@ -51,6 +51,8 @@ type Options struct {
 	Initialize bool
 	// NodeAffinity is optional and is prepared before Kubernetes resource creation.
 	NodeAffinity *corev1.NodeAffinity
+	// Resources contains optional per-run overrides of the deployment defaults.
+	Resources Resources
 }
 
 // Validate checks scalar runner settings. Node affinity is validated and copied

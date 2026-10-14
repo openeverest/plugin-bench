@@ -79,7 +79,7 @@ func TestCreateRunPreparesNodeAffinityAndKeepsStoredSnapshot(t *testing.T) {
 				calls <- options
 				<-release
 				return coordinator.Result{}, nil
-			}), store, context.Background())
+			}), store, context.Background(), coordinator.Resources{})
 			t.Cleanup(func() {
 				close(release)
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -164,7 +164,7 @@ func TestCreateRunRejectsInvalidNodeAffinityBeforeAdmission(t *testing.T) {
 			}, nil, testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
 				runnerCalled.Store(true)
 				return coordinator.Result{}, nil
-			}), store, context.Background())
+			}), store, context.Background(), coordinator.Resources{})
 			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(bodyWithNodeAffinity(test.value)))
 			r.Header.Set("Authorization", "Bearer test-token")
 			r.Header.Set("Content-Type", "application/json")
@@ -194,7 +194,7 @@ func TestGetRunReturnsStoredNodeAffinityForEveryStatus(t *testing.T) {
 					// from the separately retained original request.
 					request.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 5
 				}
-				_, err := store.Create("run-1", request, input)
+				_, err := store.Create("run-1", request, coordinator.Resources{}, input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -207,7 +207,7 @@ func TestGetRunReturnsStoredNodeAffinityForEveryStatus(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				a := NewAPI(nil, func(context.Context, string, string, string, string) error { return nil }, nil, store, context.Background())
+				a := NewAPI(nil, func(context.Context, string, string, string, string) error { return nil }, nil, store, context.Background(), coordinator.Resources{})
 				mux := http.NewServeMux()
 				a.RegisterRoutes(mux)
 				r := httptest.NewRequest(http.MethodGet, "/api/runs/run-1", nil)
