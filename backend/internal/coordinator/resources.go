@@ -10,10 +10,10 @@ import (
 
 // Resources uses Kubernetes quantity strings; empty fields remain unspecified.
 type Resources struct {
-	CPURequest    string
-	MemoryRequest string
-	CPULimit      string
-	MemoryLimit   string
+	CPURequest    string `json:"cpuRequest,omitempty"`
+	MemoryRequest string `json:"memoryRequest,omitempty"`
+	CPULimit      string `json:"cpuLimit,omitempty"`
+	MemoryLimit   string `json:"memoryLimit,omitempty"`
 }
 
 // ResolveResources merges per-run overrides with deployment defaults by value.

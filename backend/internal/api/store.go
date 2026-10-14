@@ -24,7 +24,7 @@ type RunStore struct {
 }
 
 // Create stores a new running record.
-func (s *RunStore) Create(id string, request CreateRunRequest, resources RunResources) (Run, error) {
+func (s *RunStore) Create(id string, request CreateRunRequest, resources coordinator.Resources) (Run, error) {
 	if strings.TrimSpace(id) == "" {
 		return Run{}, errors.New("run ID is required")
 	}

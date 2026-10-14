@@ -137,10 +137,10 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
           </Box>
 
           <Accordion
+            variant="outlined"
             expanded={resourcesExpanded}
             onChange={(_, expanded) => setResourcesExpanded(expanded)}
             disableGutters
-            sx={{ boxShadow: 'none', border: 1, borderColor: 'divider', borderRadius: 1, '&:before': { display: 'none' } }}
           >
             <AccordionSummary expandIcon={<span aria-hidden="true">⌄</span>}>
               <Stack spacing={0.5}>
@@ -152,9 +152,6 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
               <Stack spacing={2}>
                 <Typography variant="body2" color="text.secondary">
                   CPU and memory for the benchmark workload generator. Leave a field empty to use its deployment default.
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Chart defaults (unless changed at deployment): CPU request 100m, limit 1000m; memory request 128Mi, limit 512Mi.
                 </Typography>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
                   {RESOURCE_FIELDS.map(({ field, label, hint }) => (

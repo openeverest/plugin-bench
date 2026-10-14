@@ -138,14 +138,14 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 	defaults := coordinator.Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 	for _, test := range []struct {
 		name, resourceJSON string
-		overrides          RunResources
-		resolved           RunResources
+		overrides          coordinator.Resources
+		resolved           coordinator.Resources
 		fail               bool
 	}{
-		{"omitted resources", "", RunResources{}, runResources(defaults), false},
-		{"partial overrides", `,"resources":{"cpuRequest":"500m","memoryLimit":"1Gi"}`, RunResources{CPURequest: "500m", MemoryLimit: "1Gi"}, RunResources{CPURequest: "500m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "1Gi"}, false},
-		{"full overrides", `,"resources":{"cpuRequest":"500m","cpuLimit":"2","memoryRequest":"256Mi","memoryLimit":"1Gi"}`, RunResources{CPURequest: "500m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "1Gi"}, RunResources{CPURequest: "500m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "1Gi"}, false},
-		{"failed run", `,"resources":{"cpuRequest":"250m"}`, RunResources{CPURequest: "250m"}, RunResources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}, true},
+		{"omitted resources", "", coordinator.Resources{}, defaults, false},
+		{"partial overrides", `,"resources":{"cpuRequest":"500m","memoryLimit":"1Gi"}`, coordinator.Resources{CPURequest: "500m", MemoryLimit: "1Gi"}, coordinator.Resources{CPURequest: "500m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "1Gi"}, false},
+		{"full overrides", `,"resources":{"cpuRequest":"500m","cpuLimit":"2","memoryRequest":"256Mi","memoryLimit":"1Gi"}`, coordinator.Resources{CPURequest: "500m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "1Gi"}, coordinator.Resources{CPURequest: "500m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "1Gi"}, false},
+		{"failed run", `,"resources":{"cpuRequest":"250m"}`, coordinator.Resources{CPURequest: "250m"}, coordinator.Resources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := NewRunStore()
@@ -177,7 +177,7 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 			}
 			select {
 			case options := <-started:
-				if options.Resources != test.overrides.coordinatorResources() {
+				if options.Resources != test.overrides {
 					t.Fatalf("runner overrides=%+v; want %+v", options.Resources, test.overrides)
 				}
 			case <-time.After(time.Second):
@@ -536,7 +536,7 @@ func TestGetRun(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := NewRunStore()
-			snapshot := RunResources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+			snapshot := coordinator.Resources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 			if test.exists {
 				run, err := store.Create("run-123", CreateRunRequest{
 					Target:   Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},

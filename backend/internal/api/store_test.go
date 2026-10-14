@@ -13,8 +13,8 @@ func TestRunStoreLifecycle(t *testing.T) {
 	for _, status := range []RunStatus{RunStatusSucceeded, RunStatusFailed} {
 		t.Run(string(status), func(t *testing.T) {
 			s := NewRunStore()
-			request := CreateRunRequest{Database: "benchmark", Resources: RunResources{CPURequest: "500m"}}
-			resolved := RunResources{CPURequest: "500m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+			request := CreateRunRequest{Database: "benchmark", Resources: coordinator.Resources{CPURequest: "500m"}}
+			resolved := coordinator.Resources{CPURequest: "500m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 			created, err := s.Create("run-1", request, resolved)
 			if err != nil || created.Status != RunStatusRunning || created.CreatedAt.IsZero() {
 				t.Fatalf("Create = %+v, %v", created, err)
@@ -22,7 +22,7 @@ func TestRunStoreLifecycle(t *testing.T) {
 			created.Request.Database = "changed"
 			created.Request.Resources.CPURequest = "changed"
 			created.Resources.CPURequest = "changed"
-			if _, err := s.Create("run-1", CreateRunRequest{}, RunResources{}); !errors.Is(err, ErrRunExists) {
+			if _, err := s.Create("run-1", CreateRunRequest{}, coordinator.Resources{}); !errors.Is(err, ErrRunExists) {
 				t.Fatalf("duplicate Create: %v", err)
 			}
 			message := ""
@@ -53,7 +53,7 @@ func TestRunStoreLifecycle(t *testing.T) {
 
 func TestRunStoreRejectsInvalidOperations(t *testing.T) {
 	s := NewRunStore()
-	if _, err := s.Create(" ", CreateRunRequest{}, RunResources{}); err == nil {
+	if _, err := s.Create(" ", CreateRunRequest{}, coordinator.Resources{}); err == nil {
 		t.Fatal("accepted empty ID")
 	}
 	if _, err := s.Get("missing"); !errors.Is(err, ErrRunNotFound) {
@@ -62,7 +62,7 @@ func TestRunStoreRejectsInvalidOperations(t *testing.T) {
 	if err := s.Complete("missing", RunStatusSucceeded, coordinator.Result{}, ""); !errors.Is(err, ErrRunNotFound) {
 		t.Fatal(err)
 	}
-	if _, err := s.Create("run", CreateRunRequest{}, RunResources{}); err != nil {
+	if _, err := s.Create("run", CreateRunRequest{}, coordinator.Resources{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
@@ -83,7 +83,7 @@ func TestRunStoreRejectsInvalidOperations(t *testing.T) {
 
 func TestRunStoreConcurrentCompletion(t *testing.T) {
 	s := NewRunStore()
-	if _, err := s.Create("run", CreateRunRequest{}, RunResources{}); err != nil {
+	if _, err := s.Create("run", CreateRunRequest{}, coordinator.Resources{}); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -124,7 +124,7 @@ func TestRunStoreExpiresCompletedRuns(t *testing.T) {
 			s := NewRunStore()
 			s.now = func() time.Time { return now }
 
-			if _, err := s.Create("completed", CreateRunRequest{}, RunResources{}); err != nil {
+			if _, err := s.Create("completed", CreateRunRequest{}, coordinator.Resources{}); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Complete("completed", test.status, coordinator.Result{}, test.message); err != nil {
@@ -135,7 +135,7 @@ func TestRunStoreExpiresCompletedRuns(t *testing.T) {
 			if _, err := s.Get("completed"); !errors.Is(err, ErrRunNotFound) {
 				t.Fatalf("Get expired run error = %v, want %v", err, ErrRunNotFound)
 			}
-			if _, err := s.Create("completed", CreateRunRequest{}, RunResources{}); err != nil {
+			if _, err := s.Create("completed", CreateRunRequest{}, coordinator.Resources{}); err != nil {
 				t.Fatalf("Create should prune the expired run before reusing its ID: %v", err)
 			}
 		})
@@ -147,11 +147,11 @@ func TestRunStoreRetainsRunningRunsPastRetention(t *testing.T) {
 	s := NewRunStore()
 	s.now = func() time.Time { return now }
 
-	if _, err := s.Create("running", CreateRunRequest{}, RunResources{}); err != nil {
+	if _, err := s.Create("running", CreateRunRequest{}, coordinator.Resources{}); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(completedRunRetention + time.Second)
-	if _, err := s.Create("another", CreateRunRequest{}, RunResources{}); err != nil {
+	if _, err := s.Create("another", CreateRunRequest{}, coordinator.Resources{}); err != nil {
 		t.Fatal(err)
 	}
 
