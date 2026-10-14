@@ -124,6 +124,38 @@ func TestResourceCreationRejectsInvalidResourcesBeforeAPIWrite(t *testing.T) {
 	}
 }
 
+func TestResourceCreationRejectsInvalidOverridesBeforeAPIWrite(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		overrides Resources
+		wantError string
+	}{
+		{"invalid cpu", Resources{CPURequest: "invalid"}, "request cpu"},
+		{"zero memory", Resources{MemoryLimit: "0"}, "limit memory resource override must be positive"},
+		{"cpu request exceeds inherited limit", Resources{CPURequest: "2"}, "cpu request cannot exceed limit"},
+		{"memory limit below inherited request", Resources{MemoryLimit: "64Mi"}, "memory request cannot exceed limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := validConfig()
+			config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+			client := fake.NewSimpleClientset()
+			c, err := New(config, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			options := DefaultOptions()
+			options.Resources = test.overrides
+			_, err = c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("resource error = %v; want %q", err, test.wantError)
+			}
+			if len(client.Actions()) != 0 {
+				t.Fatalf("invalid overrides caused Kubernetes API calls: %v", client.Actions())
+			}
+		})
+	}
+}
+
 func TestResourceCreationPreservesJobAndCleanupErrors(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	jobErr, cleanupErr := errors.New("job failed"), errors.New("cleanup failed")
@@ -610,7 +642,7 @@ func TestCreateBenchmarkJob(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	jobRef, err := coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "plugin-bench-credentials-run-1"}, DefaultOptions(), nil)
+	jobRef, err := coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "plugin-bench-credentials-run-1"}, DefaultOptions(), coordinator.config.Resources, nil)
 	if err != nil {
 		t.Fatalf("createBenchmarkJob() error = %v", err)
 	}
@@ -644,12 +676,16 @@ func TestCreateBenchmarkResourcesCreatesSecretBeforeJob(t *testing.T) {
 		job.UID = types.UID("job-uid-1")
 		return false, nil, nil
 	})
-	coordinator, err := New(validConfig(), client)
+	config := validConfig()
+	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+	coordinator, err := New(config, client)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	resources, err := coordinator.createBenchmarkResources(context.Background(), validConnection(), DefaultOptions(), nil)
+	options := DefaultOptions()
+	options.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
+	resources, err := coordinator.createBenchmarkResources(context.Background(), validConnection(), options, nil)
 	if err != nil {
 		t.Fatalf("createBenchmarkResources() error = %v", err)
 	}
@@ -668,6 +704,22 @@ func TestCreateBenchmarkResourcesCreatesSecretBeforeJob(t *testing.T) {
 	}
 	if got := job.Spec.Template.Spec.Containers[0].Env[0].ValueFrom.SecretKeyRef.Name; got != resources.secret.Name {
 		t.Fatalf("Job references Secret %q, want %q", got, resources.secret.Name)
+	}
+	got := job.Spec.Template.Spec.Containers[0].Resources
+	for _, field := range []struct {
+		values corev1.ResourceList
+		name   corev1.ResourceName
+		want   string
+	}{
+		{got.Requests, corev1.ResourceCPU, "500m"},
+		{got.Limits, corev1.ResourceCPU, "1"},
+		{got.Requests, corev1.ResourceMemory, "128Mi"},
+		{got.Limits, corev1.ResourceMemory, "1Gi"},
+	} {
+		value, ok := field.values[field.name]
+		if !ok || value.Cmp(resource.MustParse(field.want)) != 0 {
+			t.Fatalf("Job %s resource = %s; want %s", field.name, value.String(), field.want)
+		}
 	}
 }
 
@@ -738,7 +790,7 @@ func TestCreateBenchmarkJobRejectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = coordinator.createBenchmarkJob(ctx, SecretRef{Name: "credentials-run-1"}, DefaultOptions(), nil)
+	_, err = coordinator.createBenchmarkJob(ctx, SecretRef{Name: "credentials-run-1"}, DefaultOptions(), coordinator.config.Resources, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
@@ -754,7 +806,7 @@ func TestCreateBenchmarkJobDoesNotExposeCredentialsOnAPIError(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "credentials-run-1"}, DefaultOptions(), nil)
+	_, err = coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "credentials-run-1"}, DefaultOptions(), coordinator.config.Resources, nil)
 	if err == nil || !strings.Contains(err.Error(), "Kubernetes API unavailable") {
 		t.Fatalf("error = %v, want API error", err)
 	}
@@ -771,7 +823,7 @@ func TestNewBenchmarkJobBuildsRunnerManifest(t *testing.T) {
 
 	config := validConfig()
 	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "64Mi", MemoryLimit: "128Mi"}
-	job, err := newBenchmarkJob(config, "pgbench-run-1", "pgbench-secret-1", options, labels)
+	job, err := newBenchmarkJob(config, "pgbench-run-1", "pgbench-secret-1", options, config.Resources, labels)
 	if err != nil {
 		t.Fatalf("newBenchmarkJob() error = %v", err)
 	}
@@ -882,7 +934,72 @@ func TestNewBenchmarkJobRejectsInvalidResourceQuantity(t *testing.T) {
 	config := validConfig()
 	config.Resources.CPURequest = "not-a-quantity"
 
-	if _, err := newBenchmarkJob(config, "pgbench-run-1", "pgbench-secret-1", DefaultOptions(), nil); err == nil {
+	if _, err := newBenchmarkJob(config, "pgbench-run-1", "pgbench-secret-1", DefaultOptions(), config.Resources, nil); err == nil {
 		t.Fatal("newBenchmarkJob() error = nil, want invalid resource quantity error")
+	}
+}
+
+func TestNewBenchmarkJobUsesIndependentRunResources(t *testing.T) {
+	config := validConfig()
+	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+	firstOptions := DefaultOptions()
+	firstOptions.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
+	secondOptions := DefaultOptions()
+	secondOptions.Resources = Resources{CPULimit: "2", MemoryRequest: "256Mi"}
+
+	for _, test := range []struct {
+		name    string
+		options Options
+		want    Resources
+	}{
+		{"first run", firstOptions, Resources{CPURequest: "500m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "1Gi"}},
+		{"second run", secondOptions, Resources{CPURequest: "100m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "512Mi"}},
+		{"legacy caller", DefaultOptions(), config.Resources},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolved, err := ResolveResources(config.Resources, test.options.Resources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := newBenchmarkJob(config, "pgbench-run", "pgbench-secret", test.options, resolved, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := job.Spec.Template.Spec.Containers[0].Resources
+			for _, field := range []struct {
+				values corev1.ResourceList
+				name   corev1.ResourceName
+				want   string
+			}{
+				{got.Requests, corev1.ResourceCPU, test.want.CPURequest},
+				{got.Limits, corev1.ResourceCPU, test.want.CPULimit},
+				{got.Requests, corev1.ResourceMemory, test.want.MemoryRequest},
+				{got.Limits, corev1.ResourceMemory, test.want.MemoryLimit},
+			} {
+				value, ok := field.values[field.name]
+				if !ok || value.Cmp(resource.MustParse(field.want)) != 0 {
+					t.Fatalf("%s resource = %s; want %s", field.name, value.String(), field.want)
+				}
+			}
+		})
+	}
+	if config.Resources != (Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}) {
+		t.Fatalf("run overrides mutated deployment defaults: %+v", config.Resources)
+	}
+}
+
+func TestNewBenchmarkJobPreservesInheritedZero(t *testing.T) {
+	config := validConfig()
+	config.Resources = Resources{CPURequest: "0", MemoryLimit: "0"}
+	job, err := newBenchmarkJob(config, "pgbench-run", "pgbench-secret", DefaultOptions(), config.Resources, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources := job.Spec.Template.Spec.Containers[0].Resources
+	if cpu := resources.Requests.Cpu(); cpu == nil || cpu.Sign() != 0 {
+		t.Fatalf("inherited CPU request = %v; want zero", cpu)
+	}
+	if memory := resources.Limits.Memory(); memory == nil || memory.Sign() != 0 {
+		t.Fatalf("inherited memory limit = %v; want zero", memory)
 	}
 }

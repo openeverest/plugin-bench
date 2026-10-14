@@ -20,10 +20,19 @@ test('GET encodes the ID and accepts all statuses and optional diagnostics', asy
   }
 });
 
+test('status accepts optional resolved resource snapshots without changing them', async () => {
+  const resources = { cpuRequest: '500m', cpuLimit: '1', memoryRequest: '128Mi', memoryLimit: '1Gi' };
+  for (const run of [running, { ...running, resources }, { ...running, resources: {} }]) {
+    assert.deepEqual(await getBenchmarkRun(async () => response(run), running.id), run);
+  }
+});
+
 test('invalid JSON, shapes, IDs and terminal fields are rejected', async () => {
   for (const body of [null, {}, { ...running, id: 'other' }, { ...running, status: 'pending' },
     { ...running, createdAt: 'invalid' }, { ...running, outputTruncated: 'false' },
     { ...running, output: 123 }, { ...running, completedAt: null },
+    { ...running, resources: null }, { ...running, resources: [] },
+    { ...running, resources: { cpuRequest: 500 } }, { ...running, resources: { memoryLimit: null } },
     { ...running, status: 'succeeded' },
     { ...running, status: 'failed', completedAt: running.createdAt }]) {
     await assert.rejects(getBenchmarkRun(async () => response(body), running.id),

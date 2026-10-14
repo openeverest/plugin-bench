@@ -61,3 +61,42 @@ test('enabling initialization again requires a valid scale and uses its value', 
   assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true }, target), undefined);
   assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true, scale: '10' }, target).scale, 10);
 });
+
+test('resource fields are optional and omitted when empty', () => {
+  for (const field of ['cpuRequest', 'cpuLimit', 'memoryRequest', 'memoryLimit']) {
+    assert.equal(initialBenchmarkFormValues[field], '');
+  }
+  const request = toCreateBenchmarkRunRequest(validValues, target);
+  assert.ok(request);
+  assert.equal('resources' in request, false);
+  assert.equal('resources' in toCreateBenchmarkRunRequest({ ...validValues, cpuRequest: '  ' }, target), false);
+});
+
+test('partial and full resource overrides use Kubernetes units', () => {
+  assert.deepEqual(toCreateBenchmarkRunRequest({
+    ...validValues, cpuRequest: '500', memoryLimit: '1024',
+  }, target).resources, { cpuRequest: '500m', memoryLimit: '1024Mi' });
+  assert.deepEqual(toCreateBenchmarkRunRequest({
+    ...validValues, cpuRequest: '500', cpuLimit: '1000', memoryRequest: '128', memoryLimit: '512',
+  }, target).resources, {
+    cpuRequest: '500m', cpuLimit: '1000m', memoryRequest: '128Mi', memoryLimit: '512Mi',
+  });
+});
+
+test('resource overrides require positive, safe whole numbers', () => {
+  for (const field of ['cpuRequest', 'cpuLimit', 'memoryRequest', 'memoryLimit']) {
+    for (const invalid of ['0', '-1', '1.5', 'abc', '1e3', '9007199254740992']) {
+      const values = { ...validValues, [field]: invalid };
+      assert.match(validateBenchmarkForm(values)[field], /positive whole number/);
+      assert.equal(toCreateBenchmarkRunRequest(values, target), undefined);
+    }
+  }
+});
+
+test('entered request cannot exceed entered limit; inherited pairs are checked by backend', () => {
+  assert.match(validateBenchmarkForm({ ...validValues, cpuRequest: '1001', cpuLimit: '1000' }).cpuLimit,
+    /at least the CPU request/);
+  assert.match(validateBenchmarkForm({ ...validValues, memoryRequest: '513', memoryLimit: '512' }).memoryLimit,
+    /at least the memory request/);
+  assert.deepEqual(validateBenchmarkForm({ ...validValues, cpuRequest: '1001', memoryLimit: '64' }), {});
+});

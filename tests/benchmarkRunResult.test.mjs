@@ -27,6 +27,27 @@ test('shows the database the run used', () => {
   assert.doesNotMatch(render(base), /Database/);
 });
 
+test('shows each run resource snapshot without implying measured usage', () => {
+  const withoutStyles = html => html.replace(/<style[^>]*>[\s\S]*?<\/style>/g, '');
+  const first = withoutStyles(render({ ...base, resources: {
+    cpuRequest: '500m', cpuLimit: '1', memoryRequest: '128Mi', memoryLimit: '1Gi',
+  } }));
+  assert.match(first, /Configured runner resources/);
+  assert.match(first, /CPU request<\/dt><dd[^>]*>500m<\/dd>/);
+  assert.match(first, /Memory limit<\/dt><dd[^>]*>1Gi<\/dd>/);
+  assert.match(first, /not measured resource usage/);
+
+  const second = withoutStyles(render({ ...base, resources: { cpuRequest: '250m' } }));
+  assert.match(second, /CPU request<\/dt><dd[^>]*>250m<\/dd>/);
+  assert.match(second, /Memory limit<\/dt><dd[^>]*>Not specified<\/dd>/);
+  assert.doesNotMatch(second, /500m|1Gi/);
+  assert.match(render({ ...base, status: 'running', completedAt: undefined, resources: { cpuRequest: '250m' } }),
+    /Configured runner resources/);
+  assert.match(render({ ...base, status: 'failed', error: 'runner failed', resources: { cpuRequest: '250m' } }),
+    /Configured runner resources/);
+  assert.doesNotMatch(render(base), /Configured runner resources/);
+});
+
 test('empty completed output is explicit and running output is not displayed', () => {
   assert.match(render(base), /No output was captured/);
   const html = render({ ...base, status: 'running', completedAt: undefined });

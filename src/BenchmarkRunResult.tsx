@@ -86,6 +86,33 @@ export function BenchmarkRunResult({ id, run, feedback, onRetry, onDismiss }: Be
             )}
           </Box>
 
+          {run?.resources !== undefined && (
+            <Box component="section" aria-label="Configured runner resources">
+              <Typography variant="subtitle2" component="h4" gutterBottom>
+                Configured runner resources
+              </Typography>
+              <Box
+                component="dl"
+                sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 2, rowGap: 0.5, m: 0 }}
+              >
+                {([
+                  ['CPU request', run.resources.cpuRequest],
+                  ['CPU limit', run.resources.cpuLimit],
+                  ['Memory request', run.resources.memoryRequest],
+                  ['Memory limit', run.resources.memoryLimit],
+                ] as const).map(([label, value]) => (
+                  <Fragment key={label}>
+                    <Typography component="dt" variant="body2" color="text.secondary">{label}</Typography>
+                    <Typography component="dd" variant="body2" sx={{ m: 0 }}>{value || 'Not specified'}</Typography>
+                  </Fragment>
+                ))}
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                Configured limits and requests, not measured resource usage.
+              </Typography>
+            </Box>
+          )}
+
           {feedback && (
             <Alert
               severity={feedback.paused ? 'error' : 'warning'}

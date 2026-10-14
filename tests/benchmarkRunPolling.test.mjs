@@ -63,6 +63,14 @@ test('requests never overlap and terminal success/failure stops polling', async 
   }
 });
 
+test('polling retains each run resource snapshot', async () => {
+  const resources = { cpuRequest: '500m', memoryLimit: '1Gi' };
+  const h = harness(async () => ({ ...snapshot('succeeded'), resources }));
+  h.start();
+  await flush();
+  assert.deepEqual(h.runs[0].resources, resources);
+});
+
 test('retry exhaustion pauses after three retries; restarting uses the same ID', async () => {
   const h = harness(async () => { throw new BenchmarkStatusError('offline', undefined, true); });
   h.start();
