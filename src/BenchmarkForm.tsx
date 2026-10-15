@@ -16,12 +16,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { BenchmarkTargetSummary } from './BenchmarkTargetSummary.js';
-import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation.js';
+import { BenchmarkTargetSummary } from './BenchmarkTargetSummary';
+import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation';
 import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormValidation';
 import type { BenchmarkTarget } from './benchmarkTarget';
-import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity.js';
-import { BenchmarkNodeAffinityForm } from './BenchmarkNodeAffinityForm.js';
+import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity';
+import { BenchmarkNodeAffinityForm } from './BenchmarkNodeAffinityForm';
 
 type NumericField = 'durationSeconds' | 'clients' | 'threads' | 'scale';
 type ResourceField = 'cpuRequest' | 'cpuLimit' | 'memoryRequest' | 'memoryLimit';
