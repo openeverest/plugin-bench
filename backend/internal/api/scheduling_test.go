@@ -23,7 +23,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestExecuteRunExposesOnlySchedulingDiagnostics(t *testing.T) {
+func TestExecuteRunHidesSchedulingDiagnostics(t *testing.T) {
 	for _, scenario := range []string{"generic", "scheduling", "timeout with scheduling"} {
 		t.Run(scenario, func(t *testing.T) {
 			store := NewRunStore()
@@ -60,18 +60,17 @@ func TestExecuteRunExposesOnlySchedulingDiagnostics(t *testing.T) {
 			if w.Code != http.StatusOK || response.Status != RunStatusFailed || response.Output != "[REDACTED]" {
 				t.Fatalf("unexpected status response: %s", w.Body.String())
 			}
-			if strings.Contains(w.Body.String(), "secret-password") || strings.Contains(response.Error, "private backend failure") {
-				t.Fatal("status response exposed an unrelated error or credential")
+			if strings.Contains(w.Body.String(), "secret-password") || strings.Contains(response.Error, "private backend failure") ||
+				strings.Contains(response.Error, "no node matches") {
+				t.Fatal("status response exposed an unrelated error, a scheduler diagnostic, or a credential")
 			}
-			if scenario != "generic" {
-				if !strings.Contains(response.Error, "unschedulable for 1m0s") || !strings.Contains(response.Error, "no node matches [REDACTED]") {
-					t.Fatalf("missing scheduling diagnostic: %q", response.Error)
-				}
-				if scenario == "timeout with scheduling" && !strings.Contains(response.Error, "execution timed out") {
-					t.Fatalf("timeout context missing: %q", response.Error)
-				}
-			} else if response.Error != "benchmark execution failed" {
-				t.Fatalf("unexpected generic error: %q", response.Error)
+			want := map[string]string{
+				"generic":                 "benchmark execution failed",
+				"scheduling":              unschedulableRunMessage,
+				"timeout with scheduling": unschedulableRunTimeoutMessage,
+			}[scenario]
+			if response.Error != want {
+				t.Fatalf("error = %q, want %q", response.Error, want)
 			}
 			if len(api.runSlots) != 0 || ctx.Err() == nil {
 				t.Fatal("execution did not release its slot and context")
@@ -150,7 +149,7 @@ func TestUnschedulableRunsReleaseCapacity(t *testing.T) {
 		synctest.Wait()
 		for _, id := range ids {
 			run, err := store.Get(id)
-			if err != nil || run.Status != RunStatusFailed || !strings.Contains(run.Error, "no nodes match required affinity") {
+			if err != nil || run.Status != RunStatusFailed || run.Error != unschedulableRunMessage {
 				t.Fatalf("unexpected failed run: %+v, %v", run, err)
 			}
 		}

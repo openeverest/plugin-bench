@@ -24,6 +24,11 @@ const maxCreateRunRequestBytes = 16 << 10
 const maxConcurrentRuns = 2
 
 const (
+	unschedulableRunMessage        = "benchmark runner could not be scheduled: no node satisfies the placement rules and resource requests"
+	unschedulableRunTimeoutMessage = "benchmark execution timed out before the runner could be scheduled: no node satisfies the placement rules and resource requests"
+)
+
+const (
 	RunStatusRunning   RunStatus = "running"
 	RunStatusSucceeded RunStatus = "succeeded"
 	RunStatusFailed    RunStatus = "failed"
@@ -196,11 +201,13 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 	status, message := RunStatusSucceeded, ""
 	if err != nil {
 		status, message = RunStatusFailed, "benchmark execution failed"
+		// Scheduler diagnostics reveal node counts and taints, so users get a
+		// generic message and the details stay in the backend log.
 		var schedulingErr *coordinator.SchedulingError
 		if errors.As(err, &schedulingErr) {
-			message = sanitizeRunnerOutput(schedulingErr.Error(), connection.Password)
+			message = unschedulableRunMessage
 			if errors.Is(err, context.DeadlineExceeded) {
-				message = "benchmark execution timed out: " + message
+				message = unschedulableRunTimeoutMessage
 			}
 		}
 		log.Printf(

@@ -26,26 +26,47 @@ The frontend is currently available as a PostgreSQL cluster detail tab. It is
 built with MUI and themed from the host through `@openeverest/plugin-theme`.
 Other database technologies can be added later through a driver-based design.
 
+### Runner placement
+
+Administrators can pin every runner Job to specific nodes, such as a tainted,
+dedicated benchmark node pool, with `runner.nodeSelector` and `runner.tolerations`
+in Helm:
+
+```yaml
+runner:
+  nodeSelector:
+    node-role/benchmark: "true"
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: benchmark
+      effect: NoSchedule
+```
+
+Invalid values stop the backend at startup. Users can additionally require node
+labels for a single run under **Job placement** in the UI. Those rules are sent as
+`nodeAffinity` and apply on top of the deployment's node selector, so a node must
+satisfy both.
+
 ### Scheduling failures
 
-Early scheduling failure is disabled by default (`runner.schedulingGracePeriod: "0"`
-in Helm, or `BENCHMARK_SCHEDULING_GRACE_PERIOD=0`). The overall execution timeout
-still bounds waiting, and scheduler diagnostics are returned when it expires.
+While waiting for a Job, the coordinator checks the runner Pod's scheduling
+condition. If the same Pod is continuously observed as `PodScheduled=False` with
+reason `Unschedulable` for `runner.schedulingGracePeriod` (default `2m`, or
+`BENCHMARK_SCHEDULING_GRACE_PERIOD`), the run fails and its Job and temporary
+credential Secret are cleaned up. Users see a generic "could not be scheduled"
+message; the scheduler's explanation, which reveals node counts and taints, is
+written to the backend log.
 
-To enable early failure, set a positive whole-second duration such as `1m`.
-The coordinator then checks the runner Pod's scheduling condition while waiting
-for the Job. If the same Pod is continuously observed as `PodScheduled=False`
-with reason `Unschedulable` for that period, the run fails with the scheduler's
-explanation and its Job and temporary credential Secret are cleaned up.
-
-This grace period starts at the first observation of scheduler rejection, not
-at submission. Scheduling recovery, Pod replacement, or a gap in scheduling
+The grace period starts at the first observation of scheduler rejection, not at
+submission. Scheduling recovery, Pod replacement, or a gap in scheduling
 observations resets it. It does not limit pgbench runtime or image downloading.
+Choose a period that allows enough time for autoscalers to provision nodes, or
+set `"0"` to disable early failure and skip the extra Pod lookup on each Job poll.
+
 The existing `BENCHMARK_EXECUTION_TIMEOUT` (default `5m`) still bounds the whole
-run, including startup, initialization, and execution. Scheduling diagnostics
-are also preserved when that overall timeout expires before the grace period.
-Choose a grace period that allows enough time for autoscalers to provision nodes.
-When disabled, the coordinator skips the extra Pod lookup on each Job poll.
+run, and time spent waiting to be scheduled counts against it. A run that waits
+long for a node therefore has less time left to benchmark.
 
 ## Requirements
 

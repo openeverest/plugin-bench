@@ -111,16 +111,11 @@ test('GET preserves saved affinity for every status and accepts older responses 
 
 test('GET rejects malformed affinity instead of silently dropping scheduling rules', async () => {
   for (const nodeAffinity of [null, [], 'rules', { requiredDuringSchedulingIgnoredDuringExecution: {} },
-    { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{}] } },
-    { preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 101, preference: {
-      matchExpressions: [{ key: 'disk', operator: 'In', values: ['ssd'] }],
-    } }] },
+    { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [null] } },
+    { preferredDuringSchedulingIgnoredDuringExecution: [{ weight: '50', preference: {} }] },
     { preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 50, preference: {
       matchExpressions: [{ key: 'disk', operator: 'In', values: [42] }],
     } }] },
-    { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{ matchFields: [
-      { key: 'metadata.name', operator: 'In', values: ['BAD'] },
-    ] }] } },
   ]) {
     await assert.rejects(getBenchmarkRun(async () => response({ ...running, nodeAffinity }), running.id),
       error => error instanceof BenchmarkStatusError && !error.retryable && /invalid response/.test(error.message));

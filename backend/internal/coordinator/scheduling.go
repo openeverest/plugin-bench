@@ -9,7 +9,8 @@ import (
 )
 
 // SchedulingError contains the scheduler's placement diagnostic, not runner
-// logs or connection details. The API may expose it instead of a generic error.
+// logs or connection details. It is for backend logs: the diagnostic reveals
+// cluster topology, so the API reports a generic message to users.
 type SchedulingError struct {
 	PodName     string
 	Message     string

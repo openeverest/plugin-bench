@@ -62,32 +62,23 @@ test('enabling initialization again requires a valid scale and uses its value', 
   assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true, scale: '10' }, target).scale, 10);
 });
 
-test('request mapping omits disabled affinity and includes validated enabled rules', () => {
+test('request mapping omits disabled affinity and includes enabled label rows', () => {
   assert.equal(initialBenchmarkFormValues.nodeAffinity.enabled, false);
-  const nodeAffinity = {
-    enabled: false, required: [{ matchExpressions: [{ key: 'workload', operator: 'In', values: ['benchmark'] }] }],
-    preferred: [{ weight: '50', matchExpressions: [{ key: 'disk', operator: 'In', values: ['ssd', 'nvme'] }] }],
-  };
+  const nodeAffinity = { enabled: false, rows: [{ id: 1, key: 'pool', value: 'benchmark' }] };
   const values = { ...validValues, nodeAffinity };
   assert.equal('nodeAffinity' in toCreateBenchmarkRunRequest(values, target), false);
   assert.equal('nodeAffinity' in toCreateBenchmarkRunRequest(validValues, target), false);
   const enabled = { ...values, nodeAffinity: { ...nodeAffinity, enabled: true } };
-  const request = toCreateBenchmarkRunRequest(enabled, target);
-  assert.deepEqual(request.nodeAffinity, {
-    requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: nodeAffinity.required },
-    preferredDuringSchedulingIgnoredDuringExecution: [{ weight: 50, preference: {
-      matchExpressions: nodeAffinity.preferred[0].matchExpressions,
-    } }],
+  assert.deepEqual(toCreateBenchmarkRunRequest(enabled, target).nodeAffinity, {
+    requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{
+      matchExpressions: [{ key: 'pool', operator: 'In', values: ['benchmark'] }],
+    }] },
   });
   assert.equal(toCreateBenchmarkRunRequest({ ...enabled, clients: '0' }, target), undefined);
 });
 
 test('invalid affinity blocks request mapping without polluting scalar field errors', () => {
-  const values = { ...validValues, nodeAffinity: {
-    enabled: true, required: [], preferred: [{ weight: '101', matchExpressions: [
-      { key: 'disk', operator: 'In', values: ['ssd'] },
-    ] }],
-  } };
+  const values = { ...validValues, nodeAffinity: { enabled: true, rows: [{ id: 1, key: 'pool', value: '' }] } };
   assert.deepEqual(validateBenchmarkForm(values), {});
   assert.equal(toCreateBenchmarkRunRequest(values, target), undefined);
   assert.ok(toCreateBenchmarkRunRequest({ ...values, nodeAffinity: { ...values.nodeAffinity, enabled: false } }, target));

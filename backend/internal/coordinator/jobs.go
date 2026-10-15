@@ -491,6 +491,8 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, re
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: copyLabels(labels)},
 				Spec: corev1.PodSpec{
+					NodeSelector:                 copyLabels(config.NodeSelector),
+					Tolerations:                  copyTolerations(config.Tolerations),
 					Affinity:                     affinity,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					ServiceAccountName:           config.RunnerServiceAccount,
