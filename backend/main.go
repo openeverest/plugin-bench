@@ -79,6 +79,15 @@ func coordinatorConfigFromEnv() (coordinator.Config, error) {
 	if err != nil {
 		return coordinator.Config{}, fmt.Errorf("parse BENCHMARK_SCHEDULING_GRACE_PERIOD: %w", err)
 	}
+	var allowedTolerationKeys []string
+	if raw := strings.TrimSpace(os.Getenv("BENCHMARK_ALLOWED_TOLERATION_KEYS")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &allowedTolerationKeys); err != nil {
+			return coordinator.Config{}, fmt.Errorf("parse BENCHMARK_ALLOWED_TOLERATION_KEYS: %w", err)
+		}
+		if allowedTolerationKeys == nil {
+			return coordinator.Config{}, errors.New("BENCHMARK_ALLOWED_TOLERATION_KEYS must be a JSON array of keys, not null")
+		}
+	}
 	return coordinator.Config{
 		WorkloadNamespace:     os.Getenv("WORKLOAD_NAMESPACE"),
 		RunnerImage:           os.Getenv("RUNNER_IMAGE"),
@@ -86,6 +95,7 @@ func coordinatorConfigFromEnv() (coordinator.Config, error) {
 		RunnerServiceAccount:  os.Getenv("RUNNER_SERVICE_ACCOUNT_NAME"),
 		ExecutionTimeout:      executionTimeout,
 		SchedulingGracePeriod: schedulingGracePeriod,
+		AllowedTolerationKeys: allowedTolerationKeys,
 		Resources: coordinator.Resources{
 			CPURequest:    os.Getenv("RUNNER_CPU_REQUEST"),
 			MemoryRequest: os.Getenv("RUNNER_MEMORY_REQUEST"),
@@ -117,7 +127,7 @@ func run() error {
 
 	lifecycleCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, api.NewRunStore(), lifecycleCtx, config.Resources)
+	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, api.NewRunStore(), lifecycleCtx, config.Resources, config.AllowedTolerationKeys)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /main.js", handleBundle)

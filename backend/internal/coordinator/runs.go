@@ -51,12 +51,14 @@ type Options struct {
 	Initialize bool
 	// NodeAffinity is optional and is prepared before Kubernetes resource creation.
 	NodeAffinity *corev1.NodeAffinity
+	// Tolerations are optional and must use keys allowed by deployment policy.
+	Tolerations []corev1.Toleration
 	// Resources contains optional per-run overrides of the deployment defaults.
 	Resources Resources
 }
 
-// Validate checks scalar runner settings. Node affinity is validated and copied
-// separately by PrepareNodeAffinity at the resource creation boundary.
+// Validate checks scalar runner settings. Placement is validated and copied by
+// PrepareNodeAffinity and PrepareTolerations at the resource creation boundary.
 func (o Options) Validate() error {
 	// Match the runner's supported positive 31-bit integer range.
 	const maximum = 1<<31 - 1

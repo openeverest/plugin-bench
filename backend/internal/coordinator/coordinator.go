@@ -3,6 +3,7 @@ package coordinator
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +23,9 @@ type Config struct {
 	ExecutionTimeout     time.Duration
 	// SchedulingGracePeriod limits continuously observed scheduler rejection; zero disables it.
 	SchedulingGracePeriod time.Duration
+	// AllowedTolerationKeys permits custom tolerations for these exact keys only.
+	// An empty list disables custom tolerations, not ordinary benchmark runs.
+	AllowedTolerationKeys []string
 }
 
 func (c Config) Validate() error {
@@ -45,6 +49,9 @@ func (c Config) Validate() error {
 	if c.SchedulingGracePeriod < 0 || c.SchedulingGracePeriod%time.Second != 0 {
 		return errors.New("scheduling grace period must be a nonnegative whole number of seconds")
 	}
+	if err := validateAllowedTolerationKeys(c.AllowedTolerationKeys); err != nil {
+		return fmt.Errorf("invalid toleration key allowlist: %w", err)
+	}
 	if _, err := resourceRequirements(c.Resources); err != nil {
 		return fmt.Errorf("invalid runner resources: %w", err)
 	}
@@ -67,6 +74,7 @@ func New(config Config, kubeClient kubernetes.Interface) (*Coordinator, error) {
 	if kubeClient == nil {
 		return nil, ErrKubernetesClientRequired
 	}
+	config.AllowedTolerationKeys = slices.Clone(config.AllowedTolerationKeys)
 	return &Coordinator{config: config, kubeClient: kubeClient}, nil
 }
 

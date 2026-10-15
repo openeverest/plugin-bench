@@ -724,6 +724,160 @@ func TestCreateBenchmarkResourcesCreatesSecretBeforeJob(t *testing.T) {
 	}
 }
 
+func validTolerations() []corev1.Toleration {
+	seconds := int64(120)
+	return []corev1.Toleration{
+		{Key: "dedicated", Operator: corev1.TolerationOpEqual, Value: "benchmark", Effect: corev1.TaintEffectNoSchedule},
+		{Key: "dedicated", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
+	}
+}
+
+func TestCreateBenchmarkResourcesAppliesTolerations(t *testing.T) {
+	for _, name := range []string{"omitted", "empty", "configured allowlist without input", "tolerations only", "with affinity"} {
+		t.Run(name, func(t *testing.T) {
+			config := validConfig()
+			options := DefaultOptions()
+			if name == "empty" {
+				options.Tolerations = []corev1.Toleration{}
+			}
+			if name == "configured allowlist without input" || name == "tolerations only" || name == "with affinity" {
+				config.AllowedTolerationKeys = []string{"dedicated"}
+			}
+			if name == "tolerations only" || name == "with affinity" {
+				options.Tolerations = validTolerations()
+				// The Job should receive the default operator without mutating input.
+				options.Tolerations[0].Operator = ""
+			}
+			if name == "with affinity" {
+				options.NodeAffinity = validNodeAffinity()
+			}
+			before := (&corev1.PodSpec{Tolerations: options.Tolerations}).DeepCopy().Tolerations
+			client := fake.NewSimpleClientset()
+			c, err := New(config, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resources, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := client.BatchV1().Jobs(config.WorkloadNamespace).Get(context.Background(), resources.job.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod := job.Spec.Template.Spec
+			if len(options.Tolerations) == 0 {
+				if len(pod.Tolerations) != 0 {
+					t.Fatal("allowlist must not inject tolerations into ordinary runs")
+				}
+			} else if !reflect.DeepEqual(pod.Tolerations, validTolerations()) {
+				t.Fatalf("Job tolerations = %+v; want normalized native fields", pod.Tolerations)
+			}
+			if options.NodeAffinity == nil {
+				if pod.Affinity != nil {
+					t.Fatal("tolerations must not inject node affinity")
+				}
+			} else if pod.Affinity == nil || !reflect.DeepEqual(pod.Affinity.NodeAffinity, options.NodeAffinity) {
+				t.Fatal("tolerations replaced submitted affinity")
+			}
+			if !reflect.DeepEqual(options.Tolerations, before) {
+				t.Fatal("resource creation modified submitted tolerations")
+			}
+		})
+	}
+}
+
+func TestCreateBenchmarkResourcesRejectsTolerationsBeforeAPIWrites(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		keys     []string
+		input    corev1.Toleration
+		wantPath string
+	}{
+		{"empty allowlist", nil, corev1.Toleration{Key: "dedicated"}, ".key"},
+		{"forbidden key", []string{"dedicated"}, corev1.Toleration{Key: "production"}, ".key"},
+		{"empty key wildcard", []string{"dedicated"}, corev1.Toleration{Operator: corev1.TolerationOpExists}, ".key"},
+		{"invalid value", []string{"dedicated"}, corev1.Toleration{Key: "dedicated", Value: "invalid value"}, ".value"},
+		{"invalid operator", []string{"dedicated"}, corev1.Toleration{Key: "dedicated", Operator: "In"}, ".operator"},
+		{"invalid effect", []string{"dedicated"}, corev1.Toleration{Key: "dedicated", Effect: "Schedule"}, ".effect"},
+		{"seconds wrong effect", []string{"dedicated"}, corev1.Toleration{Key: "dedicated", TolerationSeconds: validTolerations()[1].TolerationSeconds}, ".tolerationSeconds"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := validConfig()
+			config.AllowedTolerationKeys = test.keys
+			client := fake.NewSimpleClientset()
+			c, err := New(config, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			options := DefaultOptions()
+			options.Tolerations = []corev1.Toleration{test.input}
+			_, err = c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			if err == nil || !strings.Contains(err.Error(), "tolerations[0]"+test.wantPath) {
+				t.Fatalf("want toleration field error, got %v", err)
+			}
+			if len(client.Actions()) != 0 {
+				t.Fatalf("invalid tolerations caused Kubernetes API calls: %v", client.Actions())
+			}
+		})
+	}
+}
+
+func TestCreateBenchmarkResourcesCopiesTolerationsBeforeSecretCreation(t *testing.T) {
+	input := validTolerations()
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+		// Changing caller memory during the first write must not change the Job.
+		input[0].Key = "production"
+		*input[1].TolerationSeconds = -1
+		return false, nil, nil
+	})
+	config := validConfig()
+	config.AllowedTolerationKeys = []string{"dedicated"}
+	c, err := New(config, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.Tolerations = input
+	resources, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs(config.WorkloadNamespace).Get(context.Background(), resources.job.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(job.Spec.Template.Spec.Tolerations, validTolerations()) {
+		t.Fatal("Job did not use the toleration snapshot prepared before Secret creation")
+	}
+}
+
+func TestNewBenchmarkJobCopiesPreparedTolerations(t *testing.T) {
+	config := validConfig()
+	config.AllowedTolerationKeys = []string{"dedicated"}
+	options := DefaultOptions()
+	options.Tolerations = validTolerations()
+	first, err := newBenchmarkJob(config, "job-1", "secret-1", options, config.Resources, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newBenchmarkJob(config, "job-2", "secret-2", options, config.Resources, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Spec.Template.Spec.Tolerations[0].Value = "changed"
+	*first.Spec.Template.Spec.Tolerations[1].TolerationSeconds = 1
+	if !reflect.DeepEqual(options.Tolerations, validTolerations()) || !reflect.DeepEqual(second.Spec.Template.Spec.Tolerations, validTolerations()) {
+		t.Fatal("Job shares mutable tolerations with options or another Job")
+	}
+	options.Tolerations[0].Key = "production"
+	*options.Tolerations[1].TolerationSeconds = 2
+	if !reflect.DeepEqual(second.Spec.Template.Spec.Tolerations, validTolerations()) {
+		t.Fatal("changing prepared options modified the Job")
+	}
+}
+
 func TestCreateBenchmarkResourcesAppliesNodeAffinity(t *testing.T) {
 	combined := validNodeAffinity()
 	for name, input := range map[string]*corev1.NodeAffinity{

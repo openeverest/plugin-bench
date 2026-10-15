@@ -58,9 +58,31 @@ func TestRunRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
 	}
 }
 
-func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
+func TestRunRejectsTolerationsBeforeAPIWrites(t *testing.T) {
+	for _, keys := range [][]string{nil, {"dedicated"}} {
+		config := validConfig()
+		config.AllowedTolerationKeys = keys
+		client := fake.NewSimpleClientset()
+		c, err := New(config, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := DefaultOptions()
+		options.Tolerations = []corev1.Toleration{{Key: "production"}}
+		result, err := c.Run(context.Background(), validConnection(), options)
+		if err == nil || !strings.Contains(err.Error(), "tolerations[0].key") {
+			t.Fatalf("want policy rejection, got %v", err)
+		}
+		if result.JobName != "" || len(client.Actions()) != 0 {
+			t.Fatal("forbidden tolerations created resources or started execution")
+		}
+	}
+}
+
+func TestRunAppliesPlacementAndCleansUp(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	config := validConfig()
+	config.AllowedTolerationKeys = []string{"dedicated"}
 	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 	input := validNodeAffinity()
 	want := input.DeepCopy()
@@ -73,6 +95,9 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
 		if job.Spec.Template.Spec.Affinity == nil || !reflect.DeepEqual(job.Spec.Template.Spec.Affinity.NodeAffinity, want) {
 			t.Fatal("Run did not pass node affinity into the created Job")
+		}
+		if !reflect.DeepEqual(job.Spec.Template.Spec.Tolerations, validTolerations()) {
+			t.Fatal("Run did not pass tolerations into the created Job")
 		}
 		resources := job.Spec.Template.Spec.Containers[0].Resources
 		if resources.Requests.Cpu().String() != "500m" || resources.Limits.Cpu().String() != "1" ||
@@ -96,6 +121,7 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 	}
 	options := DefaultOptions()
 	options.NodeAffinity = input
+	options.Tolerations = validTolerations()
 	options.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
 	result, err := c.Run(context.Background(), validConnection(), options)
 	if err != nil {
@@ -106,6 +132,9 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 	}
 	if !reflect.DeepEqual(input, want) {
 		t.Fatal("Run modified submitted affinity")
+	}
+	if !reflect.DeepEqual(options.Tolerations, validTolerations()) {
+		t.Fatal("Run modified submitted tolerations")
 	}
 	jobDeleted, secretDeleted := false, false
 	for _, action := range client.Actions() {

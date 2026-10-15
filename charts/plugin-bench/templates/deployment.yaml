@@ -1,3 +1,14 @@
+{{- if not (kindIs "slice" .Values.runner.allowedTolerationKeys) }}
+{{- fail "runner.allowedTolerationKeys must be a list of nonempty strings" }}
+{{- end }}
+{{- range .Values.runner.allowedTolerationKeys }}
+{{- if not (kindIs "string" .) }}
+{{- fail "runner.allowedTolerationKeys must contain only nonempty strings" }}
+{{- end }}
+{{- if eq (trim .) "" }}
+{{- fail "runner.allowedTolerationKeys must contain only nonempty strings" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -43,6 +54,8 @@ spec:
               value: {{ .Values.runner.executionTimeout | quote }}
             - name: BENCHMARK_SCHEDULING_GRACE_PERIOD
               value: {{ .Values.runner.schedulingGracePeriod | quote }}
+            - name: BENCHMARK_ALLOWED_TOLERATION_KEYS
+              value: {{ .Values.runner.allowedTolerationKeys | toJson | quote }}
             - name: RUNNER_CPU_REQUEST
               value: {{ .Values.runner.resources.requests.cpu | quote }}
             - name: RUNNER_MEMORY_REQUEST

@@ -24,9 +24,9 @@ type RunStore struct {
 	now  func() time.Time
 }
 
-// Create stores independent copies of the request and prepared affinity snapshot.
-// A nil prepared affinity is retained as an empty object in status responses.
-func (s *RunStore) Create(id string, request CreateRunRequest, resources coordinator.Resources, nodeAffinity *corev1.NodeAffinity) (Run, error) {
+// Create stores independent copies of the request and prepared placement snapshots.
+// Empty affinity and tolerations are returned as {} and [], respectively.
+func (s *RunStore) Create(id string, request CreateRunRequest, resources coordinator.Resources, nodeAffinity *corev1.NodeAffinity, tolerations []corev1.Toleration) (Run, error) {
 	if strings.TrimSpace(id) == "" {
 		return Run{}, errors.New("run ID is required")
 	}
@@ -38,7 +38,12 @@ func (s *RunStore) Create(id string, request CreateRunRequest, resources coordin
 		return Run{}, ErrRunExists
 	}
 	request.NodeAffinity = request.NodeAffinity.DeepCopy()
+	request.Tolerations = copyTolerations(request.Tolerations)
 	run := Run{ID: id, Request: request, Resources: resources, Status: RunStatusRunning, CreatedAt: now.UTC()}
+	run.Tolerations = copyTolerations(tolerations)
+	if run.Tolerations == nil {
+		run.Tolerations = []corev1.Toleration{}
+	}
 	if nodeAffinity != nil {
 		run.NodeAffinity = *nodeAffinity.DeepCopy()
 	}
@@ -66,11 +71,24 @@ func (s *RunStore) Get(id string) (Run, error) {
 func copyRun(run Run) Run {
 	run.Request.NodeAffinity = run.Request.NodeAffinity.DeepCopy()
 	run.NodeAffinity = *run.NodeAffinity.DeepCopy()
+	run.Request.Tolerations = copyTolerations(run.Request.Tolerations)
+	run.Tolerations = copyTolerations(run.Tolerations)
 	if run.CompletedAt != nil {
 		completedAt := *run.CompletedAt
 		run.CompletedAt = &completedAt
 	}
 	return run
+}
+
+func copyTolerations(input []corev1.Toleration) []corev1.Toleration {
+	if input == nil {
+		return nil
+	}
+	copied := make([]corev1.Toleration, len(input))
+	for i := range input {
+		input[i].DeepCopyInto(&copied[i])
+	}
+	return copied
 }
 
 func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Result, message string) error {

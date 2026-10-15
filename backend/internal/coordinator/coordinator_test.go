@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,61 @@ func TestNewRequiresKubernetesClient(t *testing.T) {
 	}
 	if !errors.Is(err, ErrKubernetesClientRequired) {
 		t.Fatalf("New() error = %v, want ErrKubernetesClientRequired", err)
+	}
+}
+
+func TestConfigAllowedTolerationKeys(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		keys      []string
+		wantError bool
+	}{
+		{"unset", nil, false},
+		{"empty", []string{}, false},
+		{"valid", []string{"dedicated", "example.com/benchmark"}, false},
+		{"duplicates", []string{"dedicated", "dedicated"}, false},
+		{"empty key", []string{""}, true},
+		{"whitespace", []string{" dedicated "}, true},
+		{"wildcard", []string{"*"}, true},
+		{"invalid prefix", []string{"EXAMPLE.COM/benchmark"}, true},
+		{"invalid key", []string{"invalid key"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := validConfig()
+			config.AllowedTolerationKeys = test.keys
+			client := fake.NewSimpleClientset()
+			c, err := New(config, client)
+			if test.wantError {
+				if err == nil || c != nil || !strings.Contains(err.Error(), "allowedTolerationKeys") {
+					t.Fatalf("New() = %v, %v; want allowlist error", c, err)
+				}
+			} else if err != nil || c == nil {
+				t.Fatalf("New() = %v, %v; want valid config", c, err)
+			}
+			if _, err := PrepareTolerations(nil, test.keys); (err != nil) != test.wantError {
+				t.Fatalf("preparation allowlist validation disagrees with config: %v", err)
+			}
+			if len(client.Actions()) != 0 {
+				t.Fatal("allowlist validation made Kubernetes API calls")
+			}
+		})
+	}
+}
+
+func TestNewCopiesAllowedTolerationKeys(t *testing.T) {
+	config := validConfig()
+	config.AllowedTolerationKeys = []string{"dedicated"}
+	c, err := New(config, fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.AllowedTolerationKeys[0] = "production"
+	if !reflect.DeepEqual(c.config.AllowedTolerationKeys, []string{"dedicated"}) {
+		t.Fatal("coordinator shares caller's allowlist")
+	}
+	c.config.AllowedTolerationKeys[0] = "other"
+	if config.AllowedTolerationKeys[0] != "production" {
+		t.Fatal("coordinator mutation changed caller's allowlist")
 	}
 }
 

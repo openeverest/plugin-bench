@@ -27,7 +27,7 @@ func TestExecuteRunExposesOnlySchedulingDiagnostics(t *testing.T) {
 	for _, scenario := range []string{"generic", "scheduling", "timeout with scheduling"} {
 		t.Run(scenario, func(t *testing.T) {
 			store := NewRunStore()
-			if _, err := store.Create("run", CreateRunRequest{Target: Target{Instance: "postgres"}}, coordinator.Resources{}, nil); err != nil {
+			if _, err := store.Create("run", CreateRunRequest{Target: Target{Instance: "postgres"}}, coordinator.Resources{}, nil, nil); err != nil {
 				t.Fatal(err)
 			}
 			var runErr error = errors.New("private backend failure: secret-password")
@@ -42,7 +42,7 @@ func TestExecuteRunExposesOnlySchedulingDiagnostics(t *testing.T) {
 			api := NewAPI(nil, func(context.Context, string, string, string, string) error { return nil },
 				testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
 					return coordinator.Result{JobName: "job", Output: "secret-password"}, runErr
-				}), store, context.Background(), coordinator.Resources{})
+				}), store, context.Background(), coordinator.Resources{}, nil)
 			api.runSlots <- struct{}{}
 			api.runs.Add(1)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -118,7 +118,7 @@ func TestUnschedulableRunsReleaseCapacity(t *testing.T) {
 		lifecycleCtx, stop := context.WithCancel(context.Background())
 		api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 			return testCredentials(), nil
-		}, nil, runner, store, lifecycleCtx, coordinator.Resources{})
+		}, nil, runner, store, lifecycleCtx, coordinator.Resources{}, nil)
 		defer func() { stop(); api.runs.Wait() }()
 		submit := func() *httptest.ResponseRecorder {
 			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))

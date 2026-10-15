@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
@@ -22,19 +23,20 @@ type BenchmarkRunner interface {
 }
 
 type API struct {
-	getCredentials      CredentialLookup
-	checkInstanceAccess InstanceAccessCheck
-	runner              BenchmarkRunner
-	resourceDefaults    coordinator.Resources
-	store               *RunStore
-	lifecycleCtx        context.Context
-	runSlots            chan struct{}
-	runsMu              sync.Mutex
-	runs                sync.WaitGroup
-	closing             bool
+	getCredentials        CredentialLookup
+	checkInstanceAccess   InstanceAccessCheck
+	runner                BenchmarkRunner
+	resourceDefaults      coordinator.Resources
+	allowedTolerationKeys []string
+	store                 *RunStore
+	lifecycleCtx          context.Context
+	runSlots              chan struct{}
+	runsMu                sync.Mutex
+	runs                  sync.WaitGroup
+	closing               bool
 }
 
-func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources) *API {
+func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, allowedTolerationKeys []string) *API {
 	if store == nil {
 		store = NewRunStore()
 	}
@@ -42,13 +44,14 @@ func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessC
 		lifecycleCtx = context.Background()
 	}
 	return &API{
-		getCredentials:      getCredentials,
-		checkInstanceAccess: checkInstanceAccess,
-		runner:              runner,
-		resourceDefaults:    resourceDefaults,
-		store:               store,
-		lifecycleCtx:        lifecycleCtx,
-		runSlots:            make(chan struct{}, maxConcurrentRuns),
+		getCredentials:        getCredentials,
+		checkInstanceAccess:   checkInstanceAccess,
+		runner:                runner,
+		resourceDefaults:      resourceDefaults,
+		allowedTolerationKeys: slices.Clone(allowedTolerationKeys),
+		store:                 store,
+		lifecycleCtx:          lifecycleCtx,
+		runSlots:              make(chan struct{}, maxConcurrentRuns),
 	}
 }
 

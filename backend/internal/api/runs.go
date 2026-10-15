@@ -47,6 +47,7 @@ type CreateRunRequest struct {
 	Initialize      bool                  `json:"initialize"`
 	Resources       coordinator.Resources `json:"resources"`
 	NodeAffinity    *corev1.NodeAffinity  `json:"nodeAffinity,omitempty"`
+	Tolerations     []corev1.Toleration   `json:"tolerations,omitempty"`
 }
 
 // RunStatus describes the execution workflow. Running does not imply that
@@ -59,6 +60,7 @@ type Run struct {
 	Request         CreateRunRequest      `json:"request"`
 	Resources       coordinator.Resources `json:"resources"`
 	NodeAffinity    corev1.NodeAffinity   `json:"nodeAffinity"`
+	Tolerations     []corev1.Toleration   `json:"tolerations"`
 	Status          RunStatus             `json:"status"`
 	CreatedAt       time.Time             `json:"createdAt"`
 	CompletedAt     *time.Time            `json:"completedAt,omitempty"`
@@ -74,6 +76,7 @@ type RunStatusResponse struct {
 	Database        string                `json:"database,omitempty"`
 	Resources       coordinator.Resources `json:"resources"`
 	NodeAffinity    corev1.NodeAffinity   `json:"nodeAffinity"`
+	Tolerations     []corev1.Toleration   `json:"tolerations"`
 	CreatedAt       time.Time             `json:"createdAt"`
 	CompletedAt     *time.Time            `json:"completedAt,omitempty"`
 	JobName         string                `json:"jobName,omitempty"`
@@ -103,7 +106,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	options, err := prepareRunOptions(request)
+	options, err := prepareRunOptions(request, a.allowedTolerationKeys)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -164,7 +167,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
-	run, err := a.store.Create(runID, request, resolved, options.NodeAffinity)
+	run, err := a.store.Create(runID, request, resolved, options.NodeAffinity, options.Tolerations)
 	if err != nil {
 		<-a.runSlots
 		a.runs.Done()
@@ -310,8 +313,8 @@ func defaultDatabase(credentials *everest.Credentials) string {
 }
 
 // prepareRunOptions validates HTTP input before credential lookup or admission.
-// The coordinator reuses the same affinity validator to protect direct callers.
-func prepareRunOptions(request CreateRunRequest) (coordinator.Options, error) {
+// The coordinator reuses the same placement validators to protect direct callers.
+func prepareRunOptions(request CreateRunRequest, allowedTolerationKeys []string) (coordinator.Options, error) {
 	if strings.TrimSpace(request.Target.K8sCluster) == "" {
 		return coordinator.Options{}, errors.New("target.k8sCluster is required")
 	}
@@ -334,6 +337,11 @@ func prepareRunOptions(request CreateRunRequest) (coordinator.Options, error) {
 		return coordinator.Options{}, err
 	}
 	options.NodeAffinity = affinity
+	tolerations, err := coordinator.PrepareTolerations(request.Tolerations, allowedTolerationKeys)
+	if err != nil {
+		return coordinator.Options{}, err
+	}
+	options.Tolerations = tolerations
 	return options, nil
 }
 
@@ -432,6 +440,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		Database:        run.Request.Database,
 		Resources:       run.Resources,
 		NodeAffinity:    run.NodeAffinity,
+		Tolerations:     run.Tolerations,
 		CreatedAt:       run.CreatedAt,
 		CompletedAt:     run.CompletedAt,
 		JobName:         run.JobName,

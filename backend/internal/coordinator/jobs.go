@@ -279,13 +279,18 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 	}
 
 	// Prepare the caller's rules once, before the first Kubernetes write. Options
-	// is a value copy, so replacing its affinity does not modify the caller.
+	// is a value copy, so replacing its placement settings does not modify the caller.
 	preparedOptions := options
 	affinity, err := PrepareNodeAffinity(options.NodeAffinity)
 	if err != nil {
 		return resources, fmt.Errorf("invalid benchmark node affinity: %w", err)
 	}
 	preparedOptions.NodeAffinity = affinity
+	tolerations, err := PrepareTolerations(options.Tolerations, c.config.AllowedTolerationKeys)
+	if err != nil {
+		return resources, fmt.Errorf("invalid benchmark tolerations: %w", err)
+	}
+	preparedOptions.Tolerations = tolerations
 
 	secret, err := c.createCredentialSecret(ctx, connection, labels)
 	if err != nil {
@@ -452,8 +457,8 @@ func generateBenchmarkJobName() (string, error) {
 
 // newBenchmarkJob builds the per-run Job object. It only creates an in-memory
 // Kubernetes object; the caller is responsible for API calls and cleanup.
-// Resources and node affinity must be prepared before creating the credential
-// Secret. The manifest owns its own copy of the affinity rules.
+// Resources, node affinity, and tolerations must be prepared before creating the
+// credential Secret. The manifest owns its own copy of the placement settings.
 func newBenchmarkJob(config Config, name, secretName string, options Options, resolvedResources Resources, labels map[string]string) (*batchv1.Job, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid coordinator configuration: %w", err)
@@ -476,6 +481,10 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, re
 	if options.NodeAffinity != nil {
 		affinity = &corev1.Affinity{NodeAffinity: options.NodeAffinity.DeepCopy()}
 	}
+	tolerations := make([]corev1.Toleration, len(options.Tolerations))
+	for i := range options.Tolerations {
+		options.Tolerations[i].DeepCopyInto(&tolerations[i])
+	}
 
 	backoffLimit := int32(0)
 	activeDeadlineSeconds := int64(config.ExecutionTimeout.Seconds())
@@ -492,6 +501,7 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, re
 				ObjectMeta: metav1.ObjectMeta{Labels: copyLabels(labels)},
 				Spec: corev1.PodSpec{
 					Affinity:                     affinity,
+					Tolerations:                  tolerations,
 					RestartPolicy:                corev1.RestartPolicyNever,
 					ServiceAccountName:           config.RunnerServiceAccount,
 					AutomountServiceAccountToken: boolPtr(false),

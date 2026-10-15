@@ -57,6 +57,9 @@ runner:
   executionTimeout: 5m
   # Zero disables early unschedulable failure. Allow enough time for node autoscaling.
   schedulingGracePeriod: "0"
+  # Exact taint keys users may tolerate on runner Jobs. Empty disables custom tolerations.
+  # Permitting a key allows all valid values and effects for that key.
+  allowedTolerationKeys: []
   resources:
     requests:
       cpu: 100m
