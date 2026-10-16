@@ -117,7 +117,7 @@ func TestCreateRunPreparesNodeAffinityAndKeepsStoredSnapshot(t *testing.T) {
 				mutateTestNodeAffinity(options.NodeAffinity)
 			}
 			run, err := store.Get(accepted["id"])
-			if err != nil || run.Status != RunStatusRunning || !reflect.DeepEqual(run.NodeAffinity, wantSnapshot) || !reflect.DeepEqual(run.Request.NodeAffinity, input) {
+			if err != nil || run.Status != RunStatusRunning || !reflect.DeepEqual(run.NodeAffinity, wantSnapshot) || run.Request.NodeAffinity != nil {
 				t.Fatalf("stored snapshots changed: run=%+v err=%v", run, err)
 			}
 		})
@@ -190,8 +190,8 @@ func TestGetRunReturnsStoredNodeAffinityForEveryStatus(t *testing.T) {
 				store := NewRunStore()
 				request := CreateRunRequest{Target: Target{K8sCluster: "local", Namespace: "dbs", Instance: "postgres-1"}, NodeAffinity: input.DeepCopy()}
 				if request.NodeAffinity != nil {
-					// Status must use the saved prepared snapshot, not recompute it
-					// from the separately retained original request.
+					// Status must use the prepared snapshot even when the submitted
+					// affinity differs from it.
 					request.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 5
 				}
 				_, err := store.Create("run-1", request, coordinator.Resources{}, input)

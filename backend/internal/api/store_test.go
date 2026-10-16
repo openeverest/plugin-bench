@@ -82,29 +82,31 @@ func TestRunStoreRejectsInvalidOperations(t *testing.T) {
 	}
 }
 
-func TestRunStoreOwnsRequestAndNodeAffinitySnapshots(t *testing.T) {
+func TestRunStoreOwnsPreparedNodeAffinitySnapshot(t *testing.T) {
 	for _, status := range []RunStatus{RunStatusSucceeded, RunStatusFailed} {
 		t.Run(string(status), func(t *testing.T) {
 			store := NewRunStore()
 			submitted := testNodeAffinity()
 			prepared := submitted.DeepCopy()
 			prepared.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 50
-			wantRequest, wantSnapshot := submitted.DeepCopy(), prepared.DeepCopy()
-			created, err := store.Create("run-1", CreateRunRequest{NodeAffinity: submitted}, coordinator.Resources{}, prepared)
+			wantSnapshot := prepared.DeepCopy()
+			request := CreateRunRequest{Database: "benchmark", NodeAffinity: submitted}
+			created, err := store.Create("run-1", request, coordinator.Resources{}, prepared)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if created.Request.NodeAffinity != nil || created.Request.Database != request.Database {
+				t.Fatalf("stored request must retain settings without duplicate affinity: %+v", created.Request)
+			}
+			if request.NodeAffinity != submitted {
+				t.Fatal("Create changed the caller's request affinity")
+			}
 			mutateTestNodeAffinity(submitted)
 			mutateTestNodeAffinity(prepared)
-			mutateTestNodeAffinity(created.Request.NodeAffinity)
 			mutateTestNodeAffinity(&created.NodeAffinity)
 			got, err := store.Get("run-1")
-			if err != nil || !reflect.DeepEqual(got.Request.NodeAffinity, wantRequest) || !reflect.DeepEqual(&got.NodeAffinity, wantSnapshot) {
+			if err != nil || got.Request.NodeAffinity != nil || !reflect.DeepEqual(&got.NodeAffinity, wantSnapshot) {
 				t.Fatalf("Create exposed its stored pointers: run=%+v err=%v", got, err)
-			}
-			mutateTestNodeAffinity(got.Request.NodeAffinity)
-			if !reflect.DeepEqual(&got.NodeAffinity, wantSnapshot) {
-				t.Fatal("returned request and prepared snapshot share nested data")
 			}
 			mutateTestNodeAffinity(&got.NodeAffinity)
 			message := ""
@@ -115,7 +117,7 @@ func TestRunStoreOwnsRequestAndNodeAffinitySnapshots(t *testing.T) {
 				t.Fatal(err)
 			}
 			completed, err := store.Get("run-1")
-			if err != nil || completed.Status != status || !reflect.DeepEqual(completed.Request.NodeAffinity, wantRequest) || !reflect.DeepEqual(&completed.NodeAffinity, wantSnapshot) {
+			if err != nil || completed.Status != status || completed.Request.NodeAffinity != nil || !reflect.DeepEqual(&completed.NodeAffinity, wantSnapshot) {
 				t.Fatalf("Get mutations or completion changed history: run=%+v err=%v", completed, err)
 			}
 		})
