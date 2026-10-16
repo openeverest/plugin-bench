@@ -17,10 +17,16 @@ import (
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const maxCreateRunRequestBytes = 16 << 10
 const maxConcurrentRuns = 2
+
+const (
+	unschedulableRunMessage        = "benchmark runner could not be scheduled: no node satisfies the placement rules and resource requests"
+	unschedulableRunTimeoutMessage = "benchmark execution timed out before the runner could be scheduled: no node satisfies the placement rules and resource requests"
+)
 
 const (
 	RunStatusRunning   RunStatus = "running"
@@ -45,6 +51,7 @@ type CreateRunRequest struct {
 	Scale           int                   `json:"scale"`
 	Initialize      bool                  `json:"initialize"`
 	Resources       coordinator.Resources `json:"resources"`
+	NodeAffinity    *corev1.NodeAffinity  `json:"nodeAffinity,omitempty"`
 }
 
 // RunStatus describes the execution workflow. Running does not imply that
@@ -56,6 +63,7 @@ type Run struct {
 	ID              string                `json:"id"`
 	Request         CreateRunRequest      `json:"request"`
 	Resources       coordinator.Resources `json:"resources"`
+	NodeAffinity    corev1.NodeAffinity   `json:"nodeAffinity"`
 	Status          RunStatus             `json:"status"`
 	CreatedAt       time.Time             `json:"createdAt"`
 	CompletedAt     *time.Time            `json:"completedAt,omitempty"`
@@ -70,6 +78,7 @@ type RunStatusResponse struct {
 	Status          RunStatus             `json:"status"`
 	Database        string                `json:"database,omitempty"`
 	Resources       coordinator.Resources `json:"resources"`
+	NodeAffinity    corev1.NodeAffinity   `json:"nodeAffinity"`
 	CreatedAt       time.Time             `json:"createdAt"`
 	CompletedAt     *time.Time            `json:"completedAt,omitempty"`
 	JobName         string                `json:"jobName,omitempty"`
@@ -99,11 +108,11 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	if err := validateCreateRunRequest(request); err != nil {
+	options, err := prepareRunOptions(request)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	options := optionsFromRequest(request)
 	resolved, err := coordinator.ResolveResources(a.resourceDefaults, options.Resources)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -160,7 +169,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
-	run, err := a.store.Create(runID, request, resolved)
+	run, err := a.store.Create(runID, request, resolved, options.NodeAffinity)
 	if err != nil {
 		<-a.runSlots
 		a.runs.Done()
@@ -192,6 +201,15 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 	status, message := RunStatusSucceeded, ""
 	if err != nil {
 		status, message = RunStatusFailed, "benchmark execution failed"
+		// Scheduler diagnostics reveal node counts and taints, so users get a
+		// generic message and the details stay in the backend log.
+		var schedulingErr *coordinator.SchedulingError
+		if errors.As(err, &schedulingErr) {
+			message = unschedulableRunMessage
+			if errors.Is(err, context.DeadlineExceeded) {
+				message = unschedulableRunTimeoutMessage
+			}
+		}
 		log.Printf(
 			"benchmark run %q failed: %v (job=%q, output_bytes=%d, output_truncated=%t)",
 			id, err, result.JobName, len(result.Output), result.OutputTruncated,
@@ -298,21 +316,32 @@ func defaultDatabase(credentials *everest.Credentials) string {
 	return strings.TrimSpace(database)
 }
 
-func validateCreateRunRequest(request CreateRunRequest) error {
+// prepareRunOptions validates HTTP input before credential lookup or admission.
+// The coordinator reuses the same affinity validator to protect direct callers.
+func prepareRunOptions(request CreateRunRequest) (coordinator.Options, error) {
 	if strings.TrimSpace(request.Target.K8sCluster) == "" {
-		return errors.New("target.k8sCluster is required")
+		return coordinator.Options{}, errors.New("target.k8sCluster is required")
 	}
 	if strings.TrimSpace(request.Target.Namespace) == "" {
-		return errors.New("target.namespace is required")
+		return coordinator.Options{}, errors.New("target.namespace is required")
 	}
 	if strings.TrimSpace(request.Target.Instance) == "" {
-		return errors.New("target.instance is required")
+		return coordinator.Options{}, errors.New("target.instance is required")
 	}
 	if strings.Contains(request.Database, "=") || strings.HasPrefix(strings.ToLower(request.Database), "postgres://") || strings.HasPrefix(strings.ToLower(request.Database), "postgresql://") {
-		return errors.New("database must be a database name, not a connection string")
+		return coordinator.Options{}, errors.New("database must be a database name, not a connection string")
 	}
 
-	return optionsFromRequest(request).Validate()
+	options := optionsFromRequest(request)
+	if err := options.Validate(); err != nil {
+		return coordinator.Options{}, err
+	}
+	affinity, err := coordinator.PrepareNodeAffinity(request.NodeAffinity)
+	if err != nil {
+		return coordinator.Options{}, err
+	}
+	options.NodeAffinity = affinity
+	return options, nil
 }
 
 func optionsFromRequest(request CreateRunRequest) coordinator.Options {
@@ -409,6 +438,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		Status:          run.Status,
 		Database:        run.Request.Database,
 		Resources:       run.Resources,
+		NodeAffinity:    run.NodeAffinity,
 		CreatedAt:       run.CreatedAt,
 		CompletedAt:     run.CompletedAt,
 		JobName:         run.JobName,

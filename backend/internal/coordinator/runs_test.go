@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,82 @@ type diagnosticClient struct {
 	check func(context.Context)
 }
 
+func TestRunRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{}}
+	result, err := c.Run(context.Background(), validConnection(), options)
+	if err == nil || !strings.Contains(err.Error(), "nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms") {
+		t.Fatalf("want required term validation error, got %v", err)
+	}
+	if result.JobName != "" || len(client.Actions()) != 0 {
+		t.Fatal("invalid affinity created resources or started execution")
+	}
+}
+
+func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	config := validConfig()
+	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+	input := validNodeAffinity()
+	want := input.DeepCopy()
+	var jobName string
+	client.PrependReactor("create", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
+		action.(ktesting.CreateAction).GetObject().(*corev1.Secret).UID = "secret-uid"
+		return false, nil, nil
+	})
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+		if job.Spec.Template.Spec.Affinity == nil || !reflect.DeepEqual(job.Spec.Template.Spec.Affinity.NodeAffinity, want) {
+			t.Fatal("Run did not pass node affinity into the created Job")
+		}
+		resources := job.Spec.Template.Spec.Containers[0].Resources
+		if resources.Requests.Cpu().String() != "500m" || resources.Limits.Cpu().String() != "1" ||
+			resources.Requests.Memory().String() != "128Mi" || resources.Limits.Memory().String() != "1Gi" {
+			t.Fatalf("Run did not apply resource overrides and defaults alongside affinity: %+v", resources)
+		}
+		job.UID = "job-uid"
+		jobName = job.Name
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{
+			Name: "runner-pod", Labels: map[string]string{batchv1.JobNameLabel: jobName},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}},
+		}}}}, nil
+	})
+	c, err := New(config, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := DefaultOptions()
+	options.NodeAffinity = input
+	options.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
+	result, err := c.Run(context.Background(), validConnection(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.JobName != jobName || result.Output != "fake logs" {
+		t.Fatalf("unexpected run result: %+v", result)
+	}
+	if !reflect.DeepEqual(input, want) {
+		t.Fatal("Run modified submitted affinity")
+	}
+	jobDeleted, secretDeleted := false, false
+	for _, action := range client.Actions() {
+		jobDeleted = jobDeleted || action.Matches("delete", "jobs")
+		secretDeleted = secretDeleted || action.Matches("delete", "secrets")
+	}
+	if !jobDeleted || !secretDeleted {
+		t.Fatal("completed run did not clean up its Job and Secret")
+	}
+}
+
 func TestRunRejectsInvalidResourceOverridesBeforeKubernetesWrites(t *testing.T) {
 	config := validConfig()
 	config.Resources = Resources{CPURequest: "100m", CPULimit: "1"}
@@ -69,6 +146,8 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			config := validConfig()
+			// Exercise monitoring alongside the final diagnostic lookup.
+			config.SchedulingGracePeriod = time.Minute
 			if scenario == "execution timeout" || scenario == "caller deadline" {
 				config.ExecutionTimeout = time.Second
 			}
@@ -127,14 +206,17 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 				return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{batchv1.JobNameLabel: jobName},
 					Name:   "runner-pod", OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}},
-				}}}}, nil
+				}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+					Name: runnerContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
+				}}}}}}, nil
 			})
-			checked := false
-			c, err := New(config, diagnosticClient{Clientset: client, check: func(logCtx context.Context) {
-				checked = true
-				deadline, ok := logCtx.Deadline()
-				if logCtx.Err() != nil || !ok || time.Until(deadline) <= 0 || time.Until(deadline) > failureLogTimeout {
-					t.Fatal("diagnostics need an active, bounded context")
+			diagnosticLookups := 0
+			c, err := New(config, diagnosticClient{Clientset: client, check: func(lookupCtx context.Context) {
+				// Monitoring also lists Pods; only the diagnostic lookup gets a fresh failureLogTimeout budget.
+				deadline, ok := lookupCtx.Deadline()
+				remaining := time.Until(deadline)
+				if lookupCtx.Err() == nil && ok && remaining > failureLogTimeout-time.Second && remaining <= failureLogTimeout {
+					diagnosticLookups++
 				}
 			}})
 			if err != nil {
@@ -147,8 +229,8 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 			if scenario == "caller deadline" && time.Since(callerDeadline) > 500*time.Millisecond {
 				t.Fatal("Run did not honor the earlier caller deadline")
 			}
-			if err == nil || !checked {
-				t.Fatalf("error = %v, diagnostics attempted = %v", err, checked)
+			if err == nil || diagnosticLookups != 1 {
+				t.Fatalf("error = %v, diagnostic lookups = %d, want 1", err, diagnosticLookups)
 			}
 			if originalErr != nil && !errors.Is(err, originalErr) {
 				t.Fatalf("lost original error: %v", err)

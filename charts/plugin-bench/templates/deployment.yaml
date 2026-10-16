@@ -41,6 +41,12 @@ spec:
               value: {{ .Values.runner.image.pullPolicy | quote }}
             - name: BENCHMARK_EXECUTION_TIMEOUT
               value: {{ .Values.runner.executionTimeout | quote }}
+            - name: BENCHMARK_SCHEDULING_GRACE_PERIOD
+              value: {{ .Values.runner.schedulingGracePeriod | quote }}
+            - name: RUNNER_NODE_SELECTOR
+              value: {{ .Values.runner.nodeSelector | default dict | toJson | quote }}
+            - name: RUNNER_TOLERATIONS
+              value: {{ .Values.runner.tolerations | default list | toJson | quote }}
             - name: RUNNER_CPU_REQUEST
               value: {{ .Values.runner.resources.requests.cpu | quote }}
             - name: RUNNER_MEMORY_REQUEST

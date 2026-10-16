@@ -18,6 +18,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/api"
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // The frontend bundle is copied here by the Docker build. CI creates a
@@ -30,6 +31,10 @@ var distFS embed.FS
 var iconData []byte
 
 const shutdownTimeout = 30 * time.Second
+
+// Long enough for a cluster autoscaler to add a node, short enough that an
+// impossible placement rule doesn't hold a run slot for the whole timeout.
+const defaultSchedulingGracePeriod = "2m"
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -75,12 +80,27 @@ func coordinatorConfigFromEnv() (coordinator.Config, error) {
 	if err != nil {
 		return coordinator.Config{}, fmt.Errorf("parse BENCHMARK_EXECUTION_TIMEOUT: %w", err)
 	}
+	schedulingGracePeriod, err := time.ParseDuration(envOrDefault("BENCHMARK_SCHEDULING_GRACE_PERIOD", defaultSchedulingGracePeriod))
+	if err != nil {
+		return coordinator.Config{}, fmt.Errorf("parse BENCHMARK_SCHEDULING_GRACE_PERIOD: %w", err)
+	}
+	var nodeSelector map[string]string
+	if err := decodeJSONEnv("RUNNER_NODE_SELECTOR", &nodeSelector); err != nil {
+		return coordinator.Config{}, err
+	}
+	var tolerations []corev1.Toleration
+	if err := decodeJSONEnv("RUNNER_TOLERATIONS", &tolerations); err != nil {
+		return coordinator.Config{}, err
+	}
 	return coordinator.Config{
-		WorkloadNamespace:    os.Getenv("WORKLOAD_NAMESPACE"),
-		RunnerImage:          os.Getenv("RUNNER_IMAGE"),
-		ImagePullPolicy:      envOrDefault("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
-		RunnerServiceAccount: os.Getenv("RUNNER_SERVICE_ACCOUNT_NAME"),
-		ExecutionTimeout:     executionTimeout,
+		WorkloadNamespace:     os.Getenv("WORKLOAD_NAMESPACE"),
+		RunnerImage:           os.Getenv("RUNNER_IMAGE"),
+		ImagePullPolicy:       envOrDefault("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
+		RunnerServiceAccount:  os.Getenv("RUNNER_SERVICE_ACCOUNT_NAME"),
+		ExecutionTimeout:      executionTimeout,
+		SchedulingGracePeriod: schedulingGracePeriod,
+		NodeSelector:          nodeSelector,
+		Tolerations:           tolerations,
 		Resources: coordinator.Resources{
 			CPURequest:    os.Getenv("RUNNER_CPU_REQUEST"),
 			MemoryRequest: os.Getenv("RUNNER_MEMORY_REQUEST"),
@@ -95,6 +115,24 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// decodeJSONEnv leaves target unchanged when the variable is unset. Unknown
+// fields are rejected so misspelled Helm values fail at startup.
+func decodeJSONEnv(key string, target any) error {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("parse %s: %w", key, err)
+	}
+	if decoder.More() {
+		return fmt.Errorf("parse %s: unexpected data after JSON value", key)
+	}
+	return nil
 }
 
 func run() error {

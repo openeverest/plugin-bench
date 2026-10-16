@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -20,6 +21,12 @@ type Config struct {
 	RunnerServiceAccount string
 	Resources            Resources
 	ExecutionTimeout     time.Duration
+	// SchedulingGracePeriod limits continuously observed scheduler rejection; zero disables it.
+	SchedulingGracePeriod time.Duration
+	// NodeSelector and Tolerations are admin-defined placement applied to every
+	// runner Job, e.g. to target a tainted, dedicated benchmark node pool.
+	NodeSelector map[string]string
+	Tolerations  []corev1.Toleration
 }
 
 func (c Config) Validate() error {
@@ -40,8 +47,14 @@ func (c Config) Validate() error {
 	if c.ExecutionTimeout < time.Second || c.ExecutionTimeout%time.Second != 0 {
 		return errors.New("execution timeout must be a positive whole number of seconds")
 	}
+	if c.SchedulingGracePeriod < 0 || c.SchedulingGracePeriod%time.Second != 0 {
+		return errors.New("scheduling grace period must be a nonnegative whole number of seconds")
+	}
 	if _, err := resourceRequirements(c.Resources); err != nil {
 		return fmt.Errorf("invalid runner resources: %w", err)
+	}
+	if err := validateRunnerPlacement(c.NodeSelector, c.Tolerations); err != nil {
+		return fmt.Errorf("invalid runner placement: %w", err)
 	}
 	return nil
 }

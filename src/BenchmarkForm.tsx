@@ -20,6 +20,8 @@ import { BenchmarkTargetSummary } from './BenchmarkTargetSummary';
 import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation';
 import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormValidation';
 import type { BenchmarkTarget } from './benchmarkTarget';
+import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity';
+import { BenchmarkNodeAffinityForm } from './BenchmarkNodeAffinityForm';
 
 type NumericField = 'durationSeconds' | 'clients' | 'threads' | 'scale';
 type ResourceField = 'cpuRequest' | 'cpuLimit' | 'memoryRequest' | 'memoryLimit';
@@ -45,11 +47,14 @@ interface BenchmarkFormProps {
 }
 
 export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormProps) {
-  const [values, setValues] = useState<BenchmarkFormValues>({ ...initialBenchmarkFormValues });
+  const [values, setValues] = useState<BenchmarkFormValues>(() => ({
+    ...initialBenchmarkFormValues, nodeAffinity: createNodeAffinityDraft(),
+  }));
   const [touched, setTouched] = useState<Partial<Record<BenchmarkFormField, boolean>>>({});
   const [resourcesExpanded, setResourcesExpanded] = useState(false);
   const errors = validateBenchmarkForm(values);
-  const canSubmit = Object.keys(errors).length === 0 && !isSubmitting;
+  const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
+  const canSubmit = Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
   const resourceError = RESOURCE_FIELDS.some(({ field }) => Boolean(errors[field]));
 
   const updateValue = <K extends keyof BenchmarkFormValues>(key: K, value: BenchmarkFormValues[K]) => {
@@ -175,6 +180,9 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
               </Stack>
             </AccordionDetails>
           </Accordion>
+          <BenchmarkNodeAffinityForm draft={values.nodeAffinity}
+            errors={'errors' in affinity ? affinity.errors : {}} disabled={isSubmitting}
+            onChange={draft => updateValue('nodeAffinity', draft)} />
         </Stack>
       </CardContent>
       <CardActions sx={{ px: 2, pb: 2 }}>

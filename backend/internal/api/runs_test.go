@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +137,11 @@ func TestCreateRunDecodesRequest(t *testing.T) {
 
 func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 	defaults := coordinator.Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
+	affinity := testNodeAffinity()
+	affinityJSON, err := json.Marshal(affinity)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name, resourceJSON string
 		overrides          coordinator.Resources
@@ -160,7 +166,7 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				return testCredentials(), nil
 			}, func(context.Context, string, string, string, string) error { return nil }, runner, store, context.Background(), defaults)
-			body := strings.TrimSuffix(validCreateRunBody, "}") + test.resourceJSON + "}"
+			body := strings.TrimSuffix(validCreateRunBody, "}") + test.resourceJSON + `,"nodeAffinity":` + string(affinityJSON) + "}"
 			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
 			r.Header.Set("Authorization", "Bearer test-token")
 			r.Header.Set("Content-Type", "application/json")
@@ -179,6 +185,9 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 			case options := <-started:
 				if options.Resources != test.overrides {
 					t.Fatalf("runner overrides=%+v; want %+v", options.Resources, test.overrides)
+				}
+				if !reflect.DeepEqual(options.NodeAffinity, affinity) {
+					t.Fatal("resource overrides discarded the submitted node affinity")
 				}
 			case <-time.After(time.Second):
 				t.Fatal("runner was not started")
@@ -217,6 +226,9 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 			}
 			if response.Status != wantStatus || response.Resources != test.resolved {
 				t.Fatalf("status response=%+v; want status %s and resources %+v", response, wantStatus, test.resolved)
+			}
+			if !reflect.DeepEqual(&response.NodeAffinity, affinity) {
+				t.Fatal("resource snapshot discarded the stored node affinity")
 			}
 		})
 	}
@@ -538,10 +550,12 @@ func TestGetRun(t *testing.T) {
 			store := NewRunStore()
 			snapshot := coordinator.Resources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 			if test.exists {
+				affinity := testNodeAffinity()
 				run, err := store.Create("run-123", CreateRunRequest{
-					Target:   Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
-					Database: "app",
-				}, snapshot)
+					Target:       Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
+					Database:     "app",
+					NodeAffinity: affinity,
+				}, snapshot, affinity)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -600,6 +614,9 @@ func TestGetRun(t *testing.T) {
 				t.Fatalf("missing access-check dependency was not logged: %q", logOutput.String())
 			}
 			if test.wantHTTP != http.StatusOK {
+				if strings.Contains(w.Body.String(), "nodeAffinity") {
+					t.Fatal("unauthorized or unavailable status response exposed scheduling configuration")
+				}
 				if strings.Contains(w.Body.String(), "test-token") || strings.Contains(w.Body.String(), "bench-password") {
 					t.Fatal("error response exposed sensitive data")
 				}

@@ -44,6 +44,28 @@ func TestNewRequiresKubernetesClient(t *testing.T) {
 	}
 }
 
+func TestConfigSchedulingGracePeriod(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		period    time.Duration
+		wantError bool
+	}{
+		{"disabled", 0, false},
+		{"custom", 90 * time.Second, false},
+		{"negative", -time.Second, true},
+		{"fractional", 1500 * time.Millisecond, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := validConfig()
+			config.SchedulingGracePeriod = test.period
+			err := config.Validate()
+			if (err != nil) != test.wantError {
+				t.Fatalf("Validate() = %v, want error %t", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestNewValidatesConfigBeforeClient(t *testing.T) {
 	invalid := validConfig()
 	invalid.WorkloadNamespace = ""

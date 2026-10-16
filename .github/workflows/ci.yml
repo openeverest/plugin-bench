@@ -21,6 +21,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:form
+      - run: npm run test:components
       - run: npm run test:submission
       - run: npm run test:status
       - run: npm run test:polling

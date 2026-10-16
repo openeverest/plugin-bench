@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test:form": "tsc src/benchmarkFormValidation.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/form-test && node tests/benchmarkForm.test.mjs",
+    "test:form": "tsc src/benchmarkFormValidation.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/form-test && node tests/benchmarkForm.test.mjs && node tests/benchmarkNodeAffinity.test.mjs",
+    "test:components": "vitest run",
     "test:submission": "tsc src/benchmarkApi.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/submission-test && node tests/benchmarkApi.test.mjs",
     "test:status": "tsc src/benchmarkApi.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/status-test && node tests/benchmarkStatus.test.mjs",
     "test:polling": "tsc src/benchmarkRunPolling.ts --target ES2020 --module ESNext --moduleResolution Bundler --outDir dist/polling-test && node tests/benchmarkRunPolling.test.mjs",
@@ -22,12 +23,16 @@
   },
   "devDependencies": {
     "@openeverest/plugin-sdk": "^0.4.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^4.3.3",
+    "jsdom": "^24.1.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.2.2",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "vitest": "^4.1.11"
   }
 }

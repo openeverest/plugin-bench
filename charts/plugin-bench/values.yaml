@@ -55,6 +55,20 @@ runner:
     tag: ""
     pullPolicy: IfNotPresent
   executionTimeout: 5m
+  # Fail a run whose Pod stays unschedulable this long. Allow enough time for
+  # node autoscaling. "0" disables early failure (executionTimeout still applies).
+  schedulingGracePeriod: 2m
+  # Applied to every runner Job, e.g. to target a dedicated benchmark node pool:
+  #   nodeSelector:
+  #     node-role/benchmark: "true"
+  #   tolerations:
+  #     - key: dedicated
+  #       operator: Equal
+  #       value: benchmark
+  #       effect: NoSchedule
+  # Per-run node affinity from the UI is applied in addition to these.
+  nodeSelector: {}
+  tolerations: []
   resources:
     requests:
       cpu: 100m

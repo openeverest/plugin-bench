@@ -1,5 +1,7 @@
 import type { CreateBenchmarkRunRequest } from './benchmarkApi';
 import type { BenchmarkTarget } from './benchmarkTarget';
+import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity.js';
+import type { NodeAffinityDraft } from './benchmarkNodeAffinity';
 
 export type BenchmarkFormValues = {
   database: string;
@@ -12,6 +14,7 @@ export type BenchmarkFormValues = {
   memoryRequest: string;
   memoryLimit: string;
   initialize: boolean;
+  nodeAffinity: NodeAffinityDraft;
 };
 
 export const initialBenchmarkFormValues: BenchmarkFormValues = {
@@ -25,9 +28,10 @@ export const initialBenchmarkFormValues: BenchmarkFormValues = {
   memoryRequest: '',
   memoryLimit: '',
   initialize: true,
+  nodeAffinity: createNodeAffinityDraft(),
 };
 
-export type BenchmarkFormField = Exclude<keyof BenchmarkFormValues, 'initialize'>;
+export type BenchmarkFormField = Exclude<keyof BenchmarkFormValues, 'initialize' | 'nodeAffinity'>;
 export type BenchmarkFormErrors = Partial<Record<BenchmarkFormField, string>>;
 
 const maxInt32 = 2_147_483_647;
@@ -109,6 +113,8 @@ export function toCreateBenchmarkRunRequest(
   if (Object.keys(validateBenchmarkForm(values)).length > 0) {
     return undefined;
   }
+  const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
+  if (!affinity.ok) return undefined;
 
   const database = values.database.trim();
   const resources = {
@@ -126,5 +132,6 @@ export function toCreateBenchmarkRunRequest(
     scale: values.initialize ? Number(values.scale) : 1,
     initialize: values.initialize,
     ...(Object.keys(resources).length > 0 ? { resources } : {}),
+    ...(affinity.nodeAffinity ? { nodeAffinity: affinity.nodeAffinity } : {}),
   };
 }
