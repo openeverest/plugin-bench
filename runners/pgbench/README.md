@@ -1,6 +1,6 @@
 # pgbench Runner
 
-The runner connects to PostgreSQL, optionally initializes pgbench tables, and prints native pgbench results. Results are not stored yet; the coordinator will later run this image as a Kubernetes Job.
+The runner connects to PostgreSQL, optionally initializes pgbench tables, and streams native pgbench results. It also writes structured summary metrics to the Kubernetes termination message file.
 
 ## Build
 
@@ -84,6 +84,18 @@ docker run --rm \
 The output includes `tps`, average latency, and failed transactions. Run again without `BENCH_INITIALIZE` to reuse the tables.
 
 The runner passes connection settings through PostgreSQL environment variables and does not put credentials in command-line arguments. It returns a non-zero exit code for invalid configuration, connection failures, initialization failures, or benchmark failures.
+
+## Structured metrics
+
+After a successful benchmark, the runner extracts TPS (without initial connection time) and average latency from pgbench's final summary. It writes a versioned JSON record of at most 4 KiB to `/dev/termination-log`:
+
+```json
+{"version":1,"metrics":[{"name":"tps","unit":"tx/s","value":1234.5},{"name":"latency_avg","unit":"ms","value":3.2}]}
+```
+
+Kubernetes supplies this file; use `terminationMessagePolicy: File` on the runner container. Raw stdout and stderr continue to appear in the container logs. Initialization output is excluded from metrics, and subprocesses use `LC_ALL=C` for stable summary formatting.
+
+When metrics are missing, malformed, or cannot be written, the runner emits a generic warning and preserves the benchmark exit status. A plain Docker invocation without a writable termination file therefore still works, but reports metrics as unavailable. Failed or cancelled benchmarks do not write a success record.
 
 ## Cleanup
 

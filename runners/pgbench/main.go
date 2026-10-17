@@ -84,13 +84,14 @@ func loadConfig(getenv func(string) string) (config, error) {
 // commandEnvironment preserves connection and TLS settings, replacing defaulted
 // values without putting credentials into command arguments.
 func commandEnvironment(env []string, c config) []string {
-	result := make([]string, 0, len(env)+2)
+	result := make([]string, 0, len(env)+3)
 	for _, entry := range env {
-		if !strings.HasPrefix(entry, "PGPORT=") && !strings.HasPrefix(entry, "PGCONNECT_TIMEOUT=") {
+		if !strings.HasPrefix(entry, "PGPORT=") && !strings.HasPrefix(entry, "PGCONNECT_TIMEOUT=") && !strings.HasPrefix(entry, "LC_ALL=") {
 			result = append(result, entry)
 		}
 	}
-	return append(result, "PGPORT="+strconv.Itoa(c.port), "PGCONNECT_TIMEOUT="+strconv.Itoa(c.timeout))
+	// Stable labels and decimal separators are required by the summary parser.
+	return append(result, "PGPORT="+strconv.Itoa(c.port), "PGCONNECT_TIMEOUT="+strconv.Itoa(c.timeout), "LC_ALL=C")
 }
 
 // execute streams pgbench output and terminates the child when the runner is
@@ -105,6 +106,9 @@ func execute(ctx context.Context, executable string, args, env []string, stdout,
 }
 
 func run(ctx context.Context, c config, invoke func(context.Context, []string) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.initialize {
 		if err := invoke(ctx, []string{"-i", "-s", strconv.Itoa(c.scale)}); err != nil {
 			return fmt.Errorf("initialization failed: %w", err)
@@ -114,6 +118,33 @@ func run(ctx context.Context, c config, invoke func(context.Context, []string) e
 		return err
 	}
 	return invoke(ctx, []string{"-c", strconv.Itoa(c.clients), "-j", strconv.Itoa(c.threads), "-T", strconv.Itoa(c.duration)})
+}
+
+// runWithMetrics observes only benchmark stdout, leaving initialization output
+// and all stderr on their normal log streams. Metrics failures are nonfatal.
+func runWithMetrics(ctx context.Context, c config, invoke func(context.Context, []string, io.Writer) error, stdout, stderr io.Writer, terminationPath string) error {
+	var collector summaryCollector
+	err := run(ctx, c, func(ctx context.Context, args []string) error {
+		output := stdout
+		if len(args) > 0 && args[0] != "-i" {
+			output = io.MultiWriter(stdout, &collector)
+		}
+		return invoke(ctx, args, output)
+	})
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	record, err := collector.result()
+	if err == nil {
+		err = writeTerminationResult(terminationPath, record)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "runner warning: structured metrics unavailable")
+	}
+	return nil
 }
 
 func runnerMain() int {
@@ -130,9 +161,9 @@ func runnerMain() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	env := commandEnvironment(os.Environ(), c)
-	err = run(ctx, c, func(ctx context.Context, args []string) error {
-		return execute(ctx, executable, args, env, os.Stdout, os.Stderr)
-	})
+	err = runWithMetrics(ctx, c, func(ctx context.Context, args []string, stdout io.Writer) error {
+		return execute(ctx, executable, args, env, stdout, os.Stderr)
+	}, os.Stdout, os.Stderr, terminationLogPath)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "runner cancelled")
 		return 1

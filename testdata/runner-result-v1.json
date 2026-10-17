@@ -1,0 +1,1 @@
+{"version":1,"metrics":[{"name":"tps","unit":"tx/s","value":1234.5},{"name":"latency_avg","unit":"ms","value":3.2}]}
