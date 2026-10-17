@@ -66,6 +66,7 @@ func (s *RunStore) Get(id string) (Run, error) {
 
 func copyRun(run Run) Run {
 	run.Snapshot.Options = slices.Clone(run.Snapshot.Options)
+	run.Metrics = slices.Clone(run.Metrics)
 	run.NodeAffinity = *run.NodeAffinity.DeepCopy()
 	if run.CompletedAt != nil {
 		completedAt := *run.CompletedAt
@@ -100,6 +101,7 @@ func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Resu
 	run.JobName = result.JobName
 	run.Output = result.Output
 	run.OutputTruncated = result.OutputTruncated
+	run.Metrics = slices.Clone(result.Metrics)
 	run.Error = message
 	s.runs[id] = run
 	return nil

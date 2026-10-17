@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -66,12 +67,13 @@ func (input RunInput) clone() RunInput {
 	return input
 }
 
-// Result contains execution output, not parsed metrics or persisted history.
+// Result contains execution logs and optional structured runner metrics.
 // A run will return this alongside an error when execution or cleanup fails.
 type Result struct {
 	JobName         string
 	Output          string
 	OutputTruncated bool
+	Metrics         []runnerresult.Metric
 }
 
 // Run creates and executes one benchmark Job, returns the runner output, and
@@ -130,6 +132,9 @@ func (c *Coordinator) Run(ctx context.Context, input RunInput) (result Result, r
 	if err != nil {
 		return result, errors.Join(runErr, fmt.Errorf("find runner Pod for Job %q: %w", resources.job.Name, err))
 	}
+	// Extract metrics before log reads and deferred cleanup, preserving them
+	// even if those operations fail. Invalid records do not affect runErr.
+	result.Metrics = runnerMetrics(pod)
 	if runErr != nil {
 		if condition := unschedulableCondition(pod); condition != nil {
 			runErr = errors.Join(runErr, &SchedulingError{PodName: pod.Name, Message: condition.Message})

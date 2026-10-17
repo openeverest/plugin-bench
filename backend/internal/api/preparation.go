@@ -10,6 +10,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 )
 
 // preparedRun is transient: only Snapshot is safe to persist or return.
@@ -116,6 +117,26 @@ func redactionValues(spec driver.RunnerSpec) []string {
 		return values[i] < values[j]
 	})
 	return values
+}
+
+// sanitizeRunnerMetrics drops secret-bearing names/units rather than masking
+// them into different metric identities. Accepted values retain their order
+// and numbers, and the returned slice is independent of the runner's result.
+func sanitizeRunnerMetrics(metrics []runnerresult.Metric, sensitiveValues ...string) []runnerresult.Metric {
+	var safe []runnerresult.Metric
+	for _, metric := range metrics {
+		sensitive := false
+		for _, value := range sensitiveValues {
+			if value != "" && (strings.Contains(metric.Name, value) || strings.Contains(metric.Unit, value)) {
+				sensitive = true
+				break
+			}
+		}
+		if !sensitive {
+			safe = append(safe, metric)
+		}
+	}
+	return safe
 }
 
 func sanitizeRunnerOutput(output string, sensitiveValues ...string) string {

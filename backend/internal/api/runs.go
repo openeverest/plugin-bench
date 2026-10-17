@@ -12,6 +12,7 @@ import (
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -71,6 +72,7 @@ type Run struct {
 	JobName         string                `json:"jobName,omitempty"`
 	Output          string                `json:"output,omitempty"`
 	OutputTruncated bool                  `json:"outputTruncated"`
+	Metrics         []runnerresult.Metric `json:"metrics,omitempty"`
 	Error           string                `json:"error,omitempty"`
 }
 
@@ -88,6 +90,7 @@ type RunStatusResponse struct {
 	JobName         string                `json:"jobName,omitempty"`
 	Output          string                `json:"output,omitempty"`
 	OutputTruncated bool                  `json:"outputTruncated"`
+	Metrics         []runnerresult.Metric `json:"metrics,omitempty"`
 	Error           string                `json:"error,omitempty"`
 }
 
@@ -201,6 +204,7 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 	defer cancel()
 	result, err := a.runner.Run(ctx, prepared.Input)
 	result.Output = sanitizeRunnerOutput(result.Output, prepared.SensitiveValues...)
+	result.Metrics = sanitizeRunnerMetrics(result.Metrics, prepared.SensitiveValues...)
 	status, message := RunStatusSucceeded, ""
 	if err != nil {
 		status, message = RunStatusFailed, "benchmark execution failed"
@@ -314,6 +318,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		JobName:         run.JobName,
 		Output:          run.Output,
 		OutputTruncated: run.OutputTruncated,
+		Metrics:         run.Metrics,
 		Error:           run.Error,
 	}
 	w.Header().Set("Content-Type", "application/json")

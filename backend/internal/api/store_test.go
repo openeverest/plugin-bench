@@ -8,7 +8,38 @@ import (
 	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 )
+
+func TestRunStoreOwnsCompletedMetrics(t *testing.T) {
+	for _, status := range []RunStatus{RunStatusSucceeded, RunStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			store := NewRunStore()
+			if _, err := store.Create("run", Target{}, RunSnapshot{}, coordinator.Resources{}, nil); err != nil {
+				t.Fatal(err)
+			}
+			metrics := []runnerresult.Metric{{Name: "tps", Unit: "tx/s", Value: 5432.10}}
+			message := ""
+			if status == RunStatusFailed {
+				message = "benchmark failed"
+			}
+			if err := store.Complete("run", status, coordinator.Result{Metrics: metrics}, message); err != nil {
+				t.Fatal(err)
+			}
+			metrics[0] = runnerresult.Metric{Name: "changed", Unit: "changed", Value: -1}
+			got, err := store.Get("run")
+			want := []runnerresult.Metric{{Name: "tps", Unit: "tx/s", Value: 5432.10}}
+			if err != nil || !reflect.DeepEqual(got.Metrics, want) {
+				t.Fatal("completion retained the caller's metrics slice")
+			}
+			got.Metrics[0] = metrics[0]
+			again, err := store.Get("run")
+			if err != nil || !reflect.DeepEqual(again.Metrics, want) {
+				t.Fatal("retrieval exposed the stored metrics slice")
+			}
+		})
+	}
+}
 
 func TestRunStoreLifecycle(t *testing.T) {
 	for _, status := range []RunStatus{RunStatusSucceeded, RunStatusFailed} {

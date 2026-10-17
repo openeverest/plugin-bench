@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -17,6 +19,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -289,6 +292,33 @@ func TestInvalidDriverPreparationCannotAdmitRun(t *testing.T) {
 }
 
 func TestPreparedDriverWorkloadExecutesThroughSharedCoordinator(t *testing.T) {
+	testPreparedDriverExecution(t, "", nil)
+}
+
+func TestPreparedDriverTerminationMetricsReachAuthorizedResponse(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "runner-result-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, message string
+		want          []runnerresult.Metric
+	}{
+		{"shared version-1 record", string(fixture), []runnerresult.Metric{
+			{Name: "tps", Unit: "tx/s", Value: 1234.5}, {Name: "latency_avg", Unit: "ms", Value: 3.2},
+		}},
+		{"invalid record remains successful", "private-token malformed record", nil},
+		{"secret metadata is filtered", `{"version":1,"metrics":[{"name":"private-token","unit":"count","value":1},{"name":"tps","unit":"tx/s","value":5432.1}]}`,
+			[]runnerresult.Metric{{Name: "tps", Unit: "tx/s", Value: 5432.1}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testPreparedDriverExecution(t, test.message, test.want)
+		})
+	}
+}
+
+func testPreparedDriverExecution(t *testing.T, message string, wantMetrics []runnerresult.Metric) {
+	t.Helper()
 	spec := driver.RunnerSpec{Command: []string{"arbitrary-tool"}, Args: []string{"--measure"},
 		Env: map[string]string{"TOOL_MODE": "measure"}, SecretData: map[string][]byte{"token": []byte("private-token")},
 		SecretEnv: map[string]string{"TOOL_AUTH": "token"}, Snapshot: driver.OptionSnapshot{Database: "app", Options: []byte(`{"mode":"measure"}`)}}
@@ -297,7 +327,7 @@ func TestPreparedDriverWorkloadExecutesThroughSharedCoordinator(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := fake.NewSimpleClientset()
-	var jobName, image string
+	var jobName, image, containerName string
 	client.PrependReactor("create", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
 		secret := action.(ktesting.CreateAction).GetObject().(*corev1.Secret)
 		if len(secret.Data) != 1 || string(secret.Data["token"]) != "private-token" {
@@ -311,6 +341,7 @@ func TestPreparedDriverWorkloadExecutesThroughSharedCoordinator(t *testing.T) {
 		job.UID = "job-uid"
 		jobName = job.Name
 		container := job.Spec.Template.Spec.Containers[0]
+		containerName = container.Name
 		image = container.Image
 		if container.Resources.Requests.Cpu().String() != "0" || container.Resources.Limits.Memory().String() != "0" {
 			t.Error("inherited zero defaults changed")
@@ -323,16 +354,32 @@ func TestPreparedDriverWorkloadExecutesThroughSharedCoordinator(t *testing.T) {
 	})
 	controller := true
 	client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
-		return true, &corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "runner", Labels: map[string]string{batchv1.JobNameLabel: jobName}, OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: &controller}}}}}}, nil
+		return true, &corev1.PodList{Items: []corev1.Pod{{
+			ObjectMeta: metav1.ObjectMeta{Name: "runner", Labels: map[string]string{batchv1.JobNameLabel: jobName},
+				OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: &controller}}},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "sidecar", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					Message: `{"version":1,"metrics":[{"name":"sidecar_metric","unit":"count","value":999}]}`,
+				}}},
+				{Name: containerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: message}}},
+			}},
+		}}}, nil
 	})
 	defaults := coordinator.Resources{CPURequest: "0", MemoryLimit: "0"}
 	runner, err := coordinator.New(coordinator.Config{WorkloadNamespace: "workloads", RunnerServiceAccount: "runner", ExecutionTimeout: time.Minute, Resources: defaults}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
+	accessChecked := false
 	a := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return &everest.Credentials{Type: "arbitrary-engine"}, nil
-	}, nil, runner, NewRunStore(), context.Background(), defaults, registry)
+	}, func(_ context.Context, token, cluster, namespace, instance string) error {
+		accessChecked = true
+		if token != "test-token" || cluster != "local" || namespace != "dbs" || instance != "postgres-1" {
+			t.Error("metrics lookup did not authorize the stored target")
+		}
+		return nil
+	}, runner, NewRunStore(), context.Background(), defaults, registry)
 	body := strings.Replace(modernRunBody, `"pgbench"`, `"fake-tool"`, 1)
 	run := awaitAcceptedRun(t, a, submitRun(a, body))
 	if run.Status != RunStatusSucceeded || run.Snapshot.Driver != "fake-tool" || run.Snapshot.RunnerImage != image || image != "example.com/arbitrary-tool:v2" || run.Output != "fake logs" {
@@ -340,6 +387,25 @@ func TestPreparedDriverWorkloadExecutesThroughSharedCoordinator(t *testing.T) {
 	}
 	if run.Resources != defaults {
 		t.Fatal("resource snapshot did not preserve inherited zero defaults")
+	}
+	if !reflect.DeepEqual(run.Metrics, wantMetrics) {
+		t.Fatalf("stored metrics = %+v; want %+v", run.Metrics, wantMetrics)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/runs/"+run.ID, nil)
+	r.SetPathValue("id", run.ID)
+	r.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	a.getRun(w, r)
+	var response RunStatusResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || !accessChecked || response.Status != RunStatusSucceeded ||
+		response.Output != "fake logs" || !reflect.DeepEqual(response.Metrics, wantMetrics) {
+		t.Fatalf("authorized result response is incorrect: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "private-token") || strings.Contains(w.Body.String(), `"metrics":`) != (len(wantMetrics) > 0) {
+		t.Fatal("GET exposed a secret or returned unavailable metrics")
 	}
 	jobDeleted, secretDeleted := false, false
 	for _, action := range client.Actions() {
