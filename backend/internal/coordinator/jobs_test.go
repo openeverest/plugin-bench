@@ -88,7 +88,7 @@ func TestResourceCleanupSurvivesCancellationWithDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.createBenchmarkResources(ctx, validConnection(), DefaultOptions(), nil)
+	_, err = c.createBenchmarkResources(ctx, validRunInput(), nil)
 	if !errors.Is(err, context.Canceled) || !called {
 		t.Fatalf("error = %v, cleanup called = %v", err, called)
 	}
@@ -118,7 +118,7 @@ func TestResourceCreationRejectsInvalidResourcesBeforeAPIWrite(t *testing.T) {
 		// Verify resource creation also rejects invalid configuration if it
 		// changes after construction.
 		c.config.Resources = resources
-		_, err = c.createBenchmarkResources(context.Background(), validConnection(), DefaultOptions(), nil)
+		_, err = c.createBenchmarkResources(context.Background(), validRunInput(), nil)
 		if err == nil || len(client.Actions()) != 0 {
 			t.Fatalf("invalid resources must fail before API calls: error=%v actions=%v", err, client.Actions())
 		}
@@ -144,9 +144,9 @@ func TestResourceCreationRejectsInvalidOverridesBeforeAPIWrite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			options := DefaultOptions()
+			options := validRunInput()
 			options.Resources = test.overrides
-			_, err = c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			_, err = c.createBenchmarkResources(context.Background(), options, nil)
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("resource error = %v; want %q", err, test.wantError)
 			}
@@ -174,7 +174,7 @@ func TestResourceCreationPreservesJobAndCleanupErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.createBenchmarkResources(context.Background(), validConnection(), DefaultOptions(), nil)
+	_, err = c.createBenchmarkResources(context.Background(), validRunInput(), nil)
 	if !errors.Is(err, jobErr) || !errors.Is(err, cleanupErr) {
 		t.Fatalf("error = %v, want both causes", err)
 	}
@@ -190,7 +190,7 @@ func TestSecretCreationFailurePreventsJobCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.createBenchmarkResources(context.Background(), validConnection(), DefaultOptions(), nil)
+	_, err = c.createBenchmarkResources(context.Background(), validRunInput(), nil)
 	if !errors.Is(err, cause) {
 		t.Fatalf("error = %v, want Secret failure", err)
 	}
@@ -643,7 +643,7 @@ func TestCreateBenchmarkJob(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	jobRef, err := coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "plugin-bench-credentials-run-1"}, DefaultOptions(), coordinator.config.Resources, nil)
+	jobRef, err := coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "plugin-bench-credentials-run-1"}, validRunInput(), coordinator.config.Resources, nil)
 	if err != nil {
 		t.Fatalf("createBenchmarkJob() error = %v", err)
 	}
@@ -655,7 +655,7 @@ func TestCreateBenchmarkJob(t *testing.T) {
 		t.Fatalf("Get() error = %v", err)
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	for _, variable := range container.Env[:5] {
+	for _, variable := range container.Env[:1] {
 		if variable.ValueFrom == nil || variable.ValueFrom.SecretKeyRef == nil || variable.ValueFrom.SecretKeyRef.Name != "plugin-bench-credentials-run-1" {
 			t.Fatalf("%s does not reference the created Secret", variable.Name)
 		}
@@ -684,9 +684,9 @@ func TestCreateBenchmarkResourcesCreatesSecretBeforeJob(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	options := DefaultOptions()
+	options := validRunInput()
 	options.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
-	resources, err := coordinator.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+	resources, err := coordinator.createBenchmarkResources(context.Background(), options, nil)
 	if err != nil {
 		t.Fatalf("createBenchmarkResources() error = %v", err)
 	}
@@ -740,9 +740,9 @@ func TestCreateBenchmarkResourcesAppliesNodeAffinity(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := input.DeepCopy()
-			options := DefaultOptions()
+			options := validRunInput()
 			options.NodeAffinity = input
-			resources, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			resources, err := c.createBenchmarkResources(context.Background(), options, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -775,9 +775,9 @@ func TestCreateBenchmarkResourcesRejectsNodeAffinityBeforeAPIWrites(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		options := DefaultOptions()
+		options := validRunInput()
 		options.NodeAffinity = input
-		_, err = c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+		_, err = c.createBenchmarkResources(context.Background(), options, nil)
 		if err == nil || !strings.Contains(err.Error(), "nodeAffinity.") {
 			t.Fatalf("want affinity validation error with a field path, got %v", err)
 		}
@@ -801,9 +801,9 @@ func TestCreateBenchmarkResourcesCopiesAffinityBeforeSecretCreation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = input
-	resources, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+	resources, err := c.createBenchmarkResources(context.Background(), options, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,12 +829,12 @@ func TestConcurrentResourceCreationKeepsNodeAffinityIndependent(t *testing.T) {
 	}
 	input := validNodeAffinity()
 	want := input.DeepCopy()
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = input
 	outcomes := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			_, err := c.createBenchmarkResources(context.Background(), validConnection(), options, nil)
+			_, err := c.createBenchmarkResources(context.Background(), options, nil)
 			outcomes <- err
 		}()
 	}
@@ -861,7 +861,7 @@ func TestNewBenchmarkJobCopiesPreparedNodeAffinity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = prepared
 	first, err := newBenchmarkJob(validConfig(), "job-1", "secret-1", options, validConfig().Resources, nil)
 	if err != nil {
@@ -901,7 +901,7 @@ func TestCreateBenchmarkResourcesDeletesSecretWhenJobCreationFails(t *testing.T)
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = coordinator.createBenchmarkResources(context.Background(), validConnection(), DefaultOptions(), nil)
+	_, err = coordinator.createBenchmarkResources(context.Background(), validRunInput(), nil)
 	creationErr := err
 	if creationErr == nil || !strings.Contains(creationErr.Error(), "Job API unavailable") {
 		t.Fatalf("error = %v, want Job API error", creationErr)
@@ -913,7 +913,7 @@ func TestCreateBenchmarkResourcesDeletesSecretWhenJobCreationFails(t *testing.T)
 	if len(secrets.Items) != 0 {
 		t.Fatalf("created %d Secret(s), want cleanup after Job failure", len(secrets.Items))
 	}
-	if strings.Contains(creationErr.Error(), validConnection().Password) {
+	if strings.Contains(creationErr.Error(), "sensitive-test-password") {
 		t.Fatal("resource creation error exposed database credentials")
 	}
 }
@@ -924,11 +924,11 @@ func TestCreateBenchmarkResourcesRejectsInvalidInputBeforeCreatingResources(t *t
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	connection := validConnection()
-	connection.Database = ""
+	input := validRunInput()
+	input.Runner.Image = ""
 
-	_, err = coordinator.createBenchmarkResources(context.Background(), connection, DefaultOptions(), nil)
-	if err == nil || !strings.Contains(err.Error(), "database name is required") {
+	_, err = coordinator.createBenchmarkResources(context.Background(), input, nil)
+	if err == nil || !strings.Contains(err.Error(), "runner image is required") {
 		t.Fatalf("error = %v, want validation error", err)
 	}
 	secrets, err := client.CoreV1().Secrets(validConfig().WorkloadNamespace).List(context.Background(), metav1.ListOptions{})
@@ -953,7 +953,7 @@ func TestCreateBenchmarkJobRejectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = coordinator.createBenchmarkJob(ctx, SecretRef{Name: "credentials-run-1"}, DefaultOptions(), coordinator.config.Resources, nil)
+	_, err = coordinator.createBenchmarkJob(ctx, SecretRef{Name: "credentials-run-1"}, validRunInput(), coordinator.config.Resources, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
@@ -969,7 +969,7 @@ func TestCreateBenchmarkJobDoesNotExposeCredentialsOnAPIError(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "credentials-run-1"}, DefaultOptions(), coordinator.config.Resources, nil)
+	_, err = coordinator.createBenchmarkJob(context.Background(), SecretRef{Name: "credentials-run-1"}, validRunInput(), coordinator.config.Resources, nil)
 	if err == nil || !strings.Contains(err.Error(), "Kubernetes API unavailable") {
 		t.Fatalf("error = %v, want API error", err)
 	}
@@ -980,9 +980,10 @@ func TestCreateBenchmarkJobDoesNotExposeCredentialsOnAPIError(t *testing.T) {
 
 func TestNewBenchmarkJobBuildsRunnerManifest(t *testing.T) {
 	labels := map[string]string{"plugin-bench/run": "run-1"}
-	options := DefaultOptions()
-	options.Clients = 2
-	options.Threads = 2
+	options := validRunInput()
+	options.Spec.Command = []string{"benchmark-tool"}
+	options.Spec.Args = []string{"--workers", "2"}
+	options.Spec.Env["WORKLOAD_WORKERS"] = "2"
 
 	config := validConfig()
 	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "64Mi", MemoryLimit: "128Mi"}
@@ -1012,36 +1013,25 @@ func TestNewBenchmarkJobBuildsRunnerManifest(t *testing.T) {
 		t.Fatal("Job must contain exactly one runner container")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != validConfig().RunnerImage {
+	if container.Image != options.Runner.Image {
 		t.Fatalf("runner image = %q", container.Image)
 	}
-	if len(container.Env) != 10 {
-		t.Fatalf("environment variable count = %d, want 10", len(container.Env))
+	if !reflect.DeepEqual(container.Command, options.Spec.Command) || !reflect.DeepEqual(container.Args, options.Spec.Args) ||
+		container.ImagePullPolicy != corev1.PullPolicy(options.Runner.ImagePullPolicy) {
+		t.Fatal("prepared image policy, command or args were not used")
 	}
-	env := make(map[string]corev1.EnvVar)
-	for _, variable := range container.Env {
-		if _, exists := env[variable.Name]; exists {
-			t.Fatalf("duplicate environment variable %s", variable.Name)
-		}
-		env[variable.Name] = variable
+	if container.TerminationMessagePath != "/dev/termination-log" || container.TerminationMessagePolicy != corev1.TerminationMessageReadFile {
+		t.Fatal("runner must use the explicit file termination-message contract")
 	}
-	for _, name := range []string{"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"} {
-		variable := env[name]
-		if variable.Value != "" || variable.ValueFrom == nil || variable.ValueFrom.SecretKeyRef == nil {
-			t.Fatalf("%s must use a Secret reference without a literal value", name)
-		}
-		ref := variable.ValueFrom.SecretKeyRef
-		if ref.Name != "pgbench-secret-1" || ref.Key != name || (ref.Optional != nil && *ref.Optional) {
-			t.Fatalf("%s has an incorrect or optional Secret reference", name)
-		}
+	wantEnv := []corev1.EnvVar{
+		{Name: "AUTH_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "pgbench-secret-1"}, Key: "token",
+		}}},
+		{Name: "WORKLOAD_DURATION", Value: "60"},
+		{Name: "WORKLOAD_WORKERS", Value: "2"},
 	}
-	for name, want := range map[string]string{
-		"BENCH_DURATION": "60", "BENCH_CLIENTS": "2", "BENCH_THREADS": "2",
-		"BENCH_SCALE": "1", "BENCH_INITIALIZE": "false",
-	} {
-		if variable, ok := env[name]; !ok || variable.Value != want || variable.ValueFrom != nil {
-			t.Fatalf("incorrect benchmark environment variable %s", name)
-		}
+	if !reflect.DeepEqual(container.Env, wantEnv) {
+		t.Fatalf("unexpected generic environment: %+v", container.Env)
 	}
 	for _, check := range []struct {
 		values corev1.ResourceList
@@ -1097,7 +1087,7 @@ func TestNewBenchmarkJobRejectsInvalidResourceQuantity(t *testing.T) {
 	config := validConfig()
 	config.Resources.CPURequest = "not-a-quantity"
 
-	if _, err := newBenchmarkJob(config, "pgbench-run-1", "pgbench-secret-1", DefaultOptions(), config.Resources, nil); err == nil {
+	if _, err := newBenchmarkJob(config, "pgbench-run-1", "pgbench-secret-1", validRunInput(), config.Resources, nil); err == nil {
 		t.Fatal("newBenchmarkJob() error = nil, want invalid resource quantity error")
 	}
 }
@@ -1105,19 +1095,19 @@ func TestNewBenchmarkJobRejectsInvalidResourceQuantity(t *testing.T) {
 func TestNewBenchmarkJobUsesIndependentRunResources(t *testing.T) {
 	config := validConfig()
 	config.Resources = Resources{CPURequest: "100m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
-	firstOptions := DefaultOptions()
+	firstOptions := validRunInput()
 	firstOptions.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
-	secondOptions := DefaultOptions()
+	secondOptions := validRunInput()
 	secondOptions.Resources = Resources{CPULimit: "2", MemoryRequest: "256Mi"}
 
 	for _, test := range []struct {
 		name    string
-		options Options
+		options RunInput
 		want    Resources
 	}{
 		{"first run", firstOptions, Resources{CPURequest: "500m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "1Gi"}},
 		{"second run", secondOptions, Resources{CPURequest: "100m", CPULimit: "2", MemoryRequest: "256Mi", MemoryLimit: "512Mi"}},
-		{"legacy caller", DefaultOptions(), config.Resources},
+		{"legacy caller", validRunInput(), config.Resources},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			resolved, err := ResolveResources(config.Resources, test.options.Resources)
@@ -1151,10 +1141,33 @@ func TestNewBenchmarkJobUsesIndependentRunResources(t *testing.T) {
 	}
 }
 
+func TestNewBenchmarkJobPreservesLiteralConnectionValues(t *testing.T) {
+	input := validRunInput()
+	input.Spec.Env["PGDATABASE"] = "$(AUTH_TOKEN)-$cash-$$"
+	job, err := newBenchmarkJob(validConfig(), "runner", "credentials", input, Resources{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, variable := range job.Spec.Template.Spec.Containers[0].Env {
+		if variable.Name == "PGDATABASE" {
+			// Kubernetes unescapes $$ once. It must never expand AUTH_TOKEN
+			// into a database name containing the runner's secret.
+			if variable.Value != "$$(AUTH_TOKEN)-$$cash-$$$$" || variable.ValueFrom != nil {
+				t.Fatalf("database value is not escaped for Kubernetes: %q", variable.Value)
+			}
+			if input.Spec.Env["PGDATABASE"] != "$(AUTH_TOKEN)-$cash-$$" {
+				t.Fatal("Job construction modified the original connection setting")
+			}
+			return
+		}
+	}
+	t.Fatal("database environment variable is missing")
+}
+
 func TestNewBenchmarkJobPreservesInheritedZero(t *testing.T) {
 	config := validConfig()
 	config.Resources = Resources{CPURequest: "0", MemoryLimit: "0"}
-	job, err := newBenchmarkJob(config, "pgbench-run", "pgbench-secret", DefaultOptions(), config.Resources, nil)
+	job, err := newBenchmarkJob(config, "pgbench-run", "pgbench-secret", validRunInput(), config.Resources, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

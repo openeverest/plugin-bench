@@ -7,75 +7,63 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const failureLogTimeout = 10 * time.Second
 
-// Connection contains resolved database credentials. Do not log this value.
-// Database must explicitly identify the database used for benchmarking.
-type Connection struct {
-	Host     string
-	Port     int
-	Database string
-	Username string
-	Password string
-}
-
-func (c Connection) Validate() error {
-	if strings.TrimSpace(c.Host) == "" {
-		return errors.New("database host is required")
-	}
-	if c.Port < 1 || c.Port > 65535 {
-		return errors.New("database port must be between 1 and 65535")
-	}
-	if strings.TrimSpace(c.Database) == "" {
-		return errors.New("database name is required")
-	}
-	if strings.TrimSpace(c.Username) == "" {
-		return errors.New("database username is required")
-	}
-	if c.Password == "" {
-		return errors.New("database password is required")
-	}
-	return nil
-}
-
-// Options contains per-run settings. Duration is measured in seconds.
-// Initialize must be explicitly enabled: it drops and recreates pgbench tables.
-type Options struct {
-	Duration   int
-	Clients    int
-	Threads    int
-	Scale      int
-	Initialize bool
-	// NodeAffinity is optional and is prepared before Kubernetes resource creation.
+// RunInput describes a prepared workload. It contains credentials and must not
+// be logged or persisted. Tool-specific preparation belongs to the caller.
+type RunInput struct {
+	Runner       driver.RunnerConfig
+	Spec         driver.RunnerSpec
 	NodeAffinity *corev1.NodeAffinity
-	// Resources contains optional per-run overrides of the deployment defaults.
-	Resources Resources
+	Resources    Resources
 }
 
-// Validate checks scalar runner settings. Node affinity is validated and copied
-// separately by PrepareNodeAffinity at the resource creation boundary.
-func (o Options) Validate() error {
-	// Match the runner's supported positive 31-bit integer range.
-	const maximum = 1<<31 - 1
-	if o.Duration < 1 || o.Duration > maximum {
-		return errors.New("benchmark duration must be between 1 and 2147483647 seconds")
+// Validate checks the generic execution contract. Resource inheritance and
+// affinity are checked before the first Kubernetes write.
+func (input RunInput) Validate() error {
+	if err := input.Runner.Validate(); err != nil {
+		return err
 	}
-	if o.Clients < 1 || o.Clients > maximum {
-		return errors.New("benchmark clients must be between 1 and 2147483647")
+	if err := input.Spec.Validate(); err != nil {
+		return err
 	}
-	if o.Threads < 1 || o.Threads > maximum {
-		return errors.New("benchmark threads must be between 1 and 2147483647")
+	for name, value := range input.Spec.Env {
+		if len(validation.IsEnvVarName(name)) != 0 || strings.ContainsRune(value, '\x00') {
+			return errors.New("invalid runner environment variable")
+		}
 	}
-	if o.Threads > o.Clients {
-		return errors.New("benchmark threads cannot exceed clients")
+	for name, key := range input.Spec.SecretEnv {
+		if len(validation.IsEnvVarName(name)) != 0 {
+			return errors.New("invalid runner secret environment name")
+		}
+		if strings.ContainsRune(string(input.Spec.SecretData[key]), '\x00') {
+			return errors.New("invalid runner secret environment value")
+		}
 	}
-	if o.Scale < 1 || o.Scale > maximum {
-		return errors.New("benchmark scale must be between 1 and 2147483647")
+	for key := range input.Spec.SecretData {
+		if len(validation.IsConfigMapKey(key)) != 0 {
+			return errors.New("invalid runner Secret key")
+		}
+	}
+	for _, values := range [][]string{input.Spec.Command, input.Spec.Args} {
+		for _, value := range values {
+			if strings.ContainsRune(value, '\x00') {
+				return errors.New("invalid runner command or argument")
+			}
+		}
 	}
 	return nil
+}
+
+func (input RunInput) clone() RunInput {
+	input.Spec = input.Spec.Clone()
+	input.NodeAffinity = input.NodeAffinity.DeepCopy()
+	return input
 }
 
 // Result contains execution output, not parsed metrics or persisted history.
@@ -88,7 +76,7 @@ type Result struct {
 
 // Run creates and executes one benchmark Job, returns the runner output, and
 // removes the Job and temporary credential Secret before returning.
-func (c *Coordinator) Run(ctx context.Context, connection Connection, options Options) (result Result, runErr error) {
+func (c *Coordinator) Run(ctx context.Context, input RunInput) (result Result, runErr error) {
 	if c == nil {
 		return result, errors.New("coordinator is nil")
 	}
@@ -98,11 +86,8 @@ func (c *Coordinator) Run(ctx context.Context, connection Connection, options Op
 	if err := c.config.Validate(); err != nil {
 		return result, fmt.Errorf("invalid coordinator configuration: %w", err)
 	}
-	if err := connection.Validate(); err != nil {
-		return result, fmt.Errorf("invalid database connection: %w", err)
-	}
-	if err := options.Validate(); err != nil {
-		return result, fmt.Errorf("invalid benchmark options: %w", err)
+	if err := input.Validate(); err != nil {
+		return result, fmt.Errorf("invalid runner input: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -113,7 +98,7 @@ func (c *Coordinator) Run(ctx context.Context, connection Connection, options Op
 	ctx, cancelExecution := context.WithTimeout(ctx, c.config.ExecutionTimeout)
 	defer cancelExecution()
 
-	resources, err := c.createBenchmarkResources(ctx, connection, options, nil)
+	resources, err := c.createBenchmarkResources(ctx, input, nil)
 	if err != nil {
 		return result, err
 	}
@@ -159,9 +144,4 @@ func (c *Coordinator) Run(ctx context.Context, connection Connection, options Op
 		return result, errors.Join(runErr, fmt.Errorf("collect runner logs for Job %q: %w", resources.job.Name, err))
 	}
 	return result, runErr
-}
-
-// DefaultOptions matches the existing pgbench runner defaults.
-func DefaultOptions() Options {
-	return Options{Duration: 60, Clients: 1, Threads: 1, Scale: 1}
 }

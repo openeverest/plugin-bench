@@ -30,54 +30,20 @@ func (r failingReadCloser) Close() error {
 	return nil
 }
 
-func TestValidateCredentials(t *testing.T) {
-	valid := Credentials{
-		Host:     "postgres.example.com",
-		Port:     "5432",
-		Username: "postgres",
-		Password: "secret",
-	}
-
-	tests := []struct {
-		name        string
-		credentials Credentials
-		wantError   bool
-	}{
-		{name: "valid", credentials: valid},
-		{name: "uri can replace password", credentials: Credentials{
-			Host:     valid.Host,
-			Port:     valid.Port,
-			Username: valid.Username,
-			URI:      "postgres://postgres@example.com/bench",
-		}},
-		{name: "missing host", credentials: Credentials{
-			Port:     valid.Port,
-			Username: valid.Username,
-			Password: valid.Password,
-		}, wantError: true},
-		{name: "invalid port", credentials: Credentials{
-			Host:     valid.Host,
-			Port:     "70000",
-			Username: valid.Username,
-			Password: valid.Password,
-		}, wantError: true},
-		{name: "missing username", credentials: Credentials{
-			Host:     valid.Host,
-			Port:     valid.Port,
-			Password: valid.Password,
-		}, wantError: true},
-		{name: "missing password and URI", credentials: Credentials{
-			Host:     valid.Host,
-			Port:     valid.Port,
-			Username: valid.Username,
-		}, wantError: true},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateCredentials(test.credentials)
-			if (err != nil) != test.wantError {
-				t.Fatalf("validateCredentials() error = %v, wantError %v", err, test.wantError)
+func TestGetCredentialsDefersUsabilityChecksToDriver(t *testing.T) {
+	for _, body := range []string{
+		`{"type":"postgresql","uri":"postgres://u:p@host/db"}`,
+		`{"type":"mysql","host":"","port":"not-a-port"}`,
+		`{}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			t.Setenv("EVEREST_API_URL", server.URL)
+			if credentials, err := GetCredentials(context.Background(), "token", "cluster", "namespace", "instance"); err != nil || credentials == nil {
+				t.Fatalf("client rejected a credential object before driver preparation: %v", err)
 			}
 		})
 	}
@@ -255,7 +221,8 @@ func TestGetCredentialsInvalidResponses(t *testing.T) {
 		{name: "invalid JSON", body: `{"host":`, wantError: "failed to decode credentials:"},
 		{name: "non-JSON", body: `<html>upstream error</html>`, wantError: "failed to decode credentials:"},
 		{name: "wrong field type", body: `{"port":5432}`, wantError: "failed to decode credentials:"},
-		{name: "missing required fields", body: `{"port":"5432","username":"postgres","password":"secret"}`, wantError: "invalid OpenEverest credentials response: missing host"},
+		{name: "null envelope", body: `null`, wantError: "connection details must be a JSON object"},
+		{name: "array envelope", body: `[]`, wantError: "failed to decode credentials:"},
 	}
 
 	for _, test := range tests {
@@ -365,45 +332,6 @@ func TestGetCredentialsTimeoutAndCancellation(t *testing.T) {
 			}
 			if mode == "client timeout" && ctx.Err() != nil {
 				t.Fatal("caller deadline fired; HTTP client timeout did not stop the request first")
-			}
-		})
-	}
-}
-
-func TestValidateCredentialsEdgeCases(t *testing.T) {
-	for _, test := range []struct {
-		name, field, value, wantError string
-	}{
-		{"empty port", "port", "", "invalid port"},
-		{"non-numeric port", "port", "abc", "invalid port"},
-		{"zero port", "port", "0", "invalid port"},
-		{"negative port", "port", "-1", "invalid port"},
-		{"lower boundary", "port", "1", ""},
-		{"upper boundary", "port", "65535", ""},
-		{"above upper boundary", "port", "65536", "invalid port"},
-		{"blank host", "host", " \t", "missing host"},
-		{"blank username", "username", " \t", "missing username"},
-		{"blank password and URI", "password", " \t", "missing password or URI"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			creds := Credentials{Host: "postgres.example.com", Port: "5432", Username: "postgres", Password: "secret", URI: " "}
-			switch test.field {
-			case "port":
-				creds.Port = test.value
-			case "host":
-				creds.Host = test.value
-			case "username":
-				creds.Username = test.value
-			case "password":
-				creds.Password = test.value
-			}
-			err := validateCredentials(creds)
-			if test.wantError == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-			} else if err == nil || err.Error() != test.wantError {
-				t.Fatalf("error = %v, want %q", err, test.wantError)
 			}
 		})
 	}

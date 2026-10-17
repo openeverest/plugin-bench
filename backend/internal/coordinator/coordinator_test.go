@@ -12,8 +12,6 @@ import (
 func validConfig() Config {
 	return Config{
 		WorkloadNamespace:    "plugin-bench-workloads",
-		RunnerImage:          "ghcr.io/openeverest/plugin-bench-pgbench:dev",
-		ImagePullPolicy:      "IfNotPresent",
 		RunnerServiceAccount: "plugin-bench-runner",
 		ExecutionTimeout:     time.Minute,
 	}

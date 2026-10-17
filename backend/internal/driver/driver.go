@@ -75,8 +75,8 @@ type OptionSnapshot struct {
 type RunnerSpec struct {
 	Command         []string
 	Args            []string
-	Env             map[string]string
-	SecretData      map[string][]byte
+	Env             map[string]string // Literal values; the coordinator escapes Kubernetes environment expansion.
+	SecretData      map[string][]byte // True secrets only; every value is redacted from output. Use Env for ordinary settings.
 	SecretEnv       map[string]string // Environment name -> key in the per-run Secret.
 	SensitiveValues []string          // Additional sensitive representations to redact.
 	Snapshot        OptionSnapshot

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
+	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 )
 
@@ -18,13 +19,14 @@ type CredentialLookup func(ctx context.Context, token, k8sCluster, namespace, in
 type InstanceAccessCheck func(ctx context.Context, token, k8sCluster, namespace, instance string) error
 
 type BenchmarkRunner interface {
-	Run(ctx context.Context, connection coordinator.Connection, options coordinator.Options) (coordinator.Result, error)
+	Run(ctx context.Context, input coordinator.RunInput) (coordinator.Result, error)
 }
 
 type API struct {
 	getCredentials      CredentialLookup
 	checkInstanceAccess InstanceAccessCheck
 	runner              BenchmarkRunner
+	registry            *driver.Registry
 	resourceDefaults    coordinator.Resources
 	store               *RunStore
 	lifecycleCtx        context.Context
@@ -34,7 +36,7 @@ type API struct {
 	closing             bool
 }
 
-func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources) *API {
+func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, registry *driver.Registry) *API {
 	if store == nil {
 		store = NewRunStore()
 	}
@@ -45,6 +47,7 @@ func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessC
 		getCredentials:      getCredentials,
 		checkInstanceAccess: checkInstanceAccess,
 		runner:              runner,
+		registry:            registry,
 		resourceDefaults:    resourceDefaults,
 		store:               store,
 		lifecycleCtx:        lifecycleCtx,

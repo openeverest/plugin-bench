@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -16,11 +18,6 @@ import (
 
 const (
 	credentialSecretNamePrefix = "plugin-bench-credentials-"
-	secretKeyHost              = "PGHOST"
-	secretKeyPort              = "PGPORT"
-	secretKeyDatabase          = "PGDATABASE"
-	secretKeyUser              = "PGUSER"
-	secretKeyPassword          = "PGPASSWORD"
 )
 
 // SecretRef identifies the credential Secret created for one benchmark run.
@@ -32,7 +29,7 @@ type SecretRef struct {
 
 // createCredentialSecret creates the per-run credential Secret in the
 // configured workload namespace. It does not log or return the credentials.
-func (c *Coordinator) createCredentialSecret(ctx context.Context, connection Connection, labels map[string]string) (SecretRef, error) {
+func (c *Coordinator) createCredentialSecret(ctx context.Context, data map[string][]byte, labels map[string]string) (SecretRef, error) {
 	var reference SecretRef
 	if c == nil {
 		return reference, errors.New("coordinator is nil")
@@ -54,7 +51,7 @@ func (c *Coordinator) createCredentialSecret(ctx context.Context, connection Con
 		return reference, err
 	}
 
-	secret, err := newCredentialSecret(c.config.WorkloadNamespace, name, connection, labels)
+	secret, err := newCredentialSecret(c.config.WorkloadNamespace, name, data, labels)
 	if err != nil {
 		return reference, fmt.Errorf("build credential Secret: %w", err)
 	}
@@ -114,15 +111,16 @@ func generateCredentialSecretName() (string, error) {
 // newCredentialSecret builds the per-run credential Secret. It only creates
 // an in-memory Kubernetes object; the caller is responsible for API calls and
 // cleanup.
-func newCredentialSecret(namespace, name string, connection Connection, labels map[string]string) (*corev1.Secret, error) {
+func newCredentialSecret(namespace, name string, data map[string][]byte, labels map[string]string) (*corev1.Secret, error) {
 	if strings.TrimSpace(namespace) == "" {
 		return nil, errors.New("secret namespace is required")
 	}
 	if strings.TrimSpace(name) == "" {
 		return nil, errors.New("secret name is required")
 	}
-	if err := connection.Validate(); err != nil {
-		return nil, err
+	owned := maps.Clone(data)
+	for key, value := range owned {
+		owned[key] = slices.Clone(value)
 	}
 
 	return &corev1.Secret{
@@ -132,12 +130,6 @@ func newCredentialSecret(namespace, name string, connection Connection, labels m
 			Labels:    copyLabels(labels),
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			secretKeyHost:     []byte(connection.Host),
-			secretKeyPort:     []byte(formatPort(connection.Port)),
-			secretKeyDatabase: []byte(connection.Database),
-			secretKeyUser:     []byte(connection.Username),
-			secretKeyPassword: []byte(connection.Password),
-		},
+		Data: owned,
 	}, nil
 }

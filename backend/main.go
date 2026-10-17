@@ -17,6 +17,8 @@ import (
 
 	"github.com/openeverest/plugin-bench/backend/internal/api"
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
+	"github.com/openeverest/plugin-bench/backend/internal/driver"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/pgbench"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -94,8 +96,6 @@ func coordinatorConfigFromEnv() (coordinator.Config, error) {
 	}
 	return coordinator.Config{
 		WorkloadNamespace:     os.Getenv("WORKLOAD_NAMESPACE"),
-		RunnerImage:           os.Getenv("RUNNER_IMAGE"),
-		ImagePullPolicy:       envOrDefault("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
 		RunnerServiceAccount:  os.Getenv("RUNNER_SERVICE_ACCOUNT_NAME"),
 		ExecutionTimeout:      executionTimeout,
 		SchedulingGracePeriod: schedulingGracePeriod,
@@ -135,6 +135,15 @@ func decodeJSONEnv(key string, target any) error {
 	return nil
 }
 
+// benchmarkRegistryFromEnv preserves existing image configuration while the
+// driver deployment payload is introduced in the next configuration task.
+func benchmarkRegistryFromEnv() (*driver.Registry, error) {
+	return driver.NewRegistry(driver.Registration{Driver: pgbench.New(), Runner: driver.RunnerConfig{
+		Image:           os.Getenv("RUNNER_IMAGE"),
+		ImagePullPolicy: envOrDefault("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
+	}})
+}
+
 func run() error {
 	config, err := coordinatorConfigFromEnv()
 	if err != nil {
@@ -143,6 +152,10 @@ func run() error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid benchmark coordinator configuration: %w", err)
 	}
+	registry, err := benchmarkRegistryFromEnv()
+	if err != nil {
+		return fmt.Errorf("initialize benchmark drivers: %w", err)
+	}
 	benchmarkCoordinator, err := coordinator.NewInCluster(config)
 	if err != nil {
 		return fmt.Errorf("initialize benchmark coordinator: %w", err)
@@ -150,7 +163,7 @@ func run() error {
 
 	lifecycleCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, api.NewRunStore(), lifecycleCtx, config.Resources)
+	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, api.NewRunStore(), lifecycleCtx, config.Resources, registry)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /main.js", handleBundle)

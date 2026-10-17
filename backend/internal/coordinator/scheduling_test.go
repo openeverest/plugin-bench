@@ -323,7 +323,7 @@ func TestRunSchedulingFailureCleansUpWithoutLogs(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				result, err := c.Run(context.Background(), validConnection(), DefaultOptions())
+				result, err := c.Run(context.Background(), validRunInput())
 				var schedulingErr *SchedulingError
 				if scenario == "diagnostic lookup failure" {
 					if !strings.Contains(err.Error(), "diagnostic API unavailable") {

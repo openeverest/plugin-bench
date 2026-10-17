@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,8 +23,8 @@ import (
 )
 
 const (
-	runnerContainerName    = "pgbench-runner"
-	benchmarkJobNamePrefix = "plugin-bench-pgbench-"
+	runnerContainerName    = "benchmark-runner"
+	benchmarkJobNamePrefix = "plugin-bench-runner-"
 	resourceCleanupTimeout = 10 * time.Second
 	jobPollInterval        = time.Second
 	maxRunnerLogBytes      = 1 << 20
@@ -252,7 +254,7 @@ func collectRunnerLogsWithReader(ctx context.Context, pod *corev1.Pod, readLogs 
 // createBenchmarkResources creates the Secret before the Job that consumes
 // it. If Job creation fails, the Secret is removed before the error returns.
 // Monitoring and normal run cleanup are handled by the execution lifecycle.
-func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection Connection, options Options, labels map[string]string) (benchmarkResources, error) {
+func (c *Coordinator) createBenchmarkResources(ctx context.Context, input RunInput, labels map[string]string) (benchmarkResources, error) {
 	var resources benchmarkResources
 	if c == nil {
 		return resources, errors.New("coordinator is nil")
@@ -263,14 +265,11 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 	if err := c.config.Validate(); err != nil {
 		return resources, fmt.Errorf("invalid coordinator configuration: %w", err)
 	}
-	if err := connection.Validate(); err != nil {
-		return resources, fmt.Errorf("invalid database connection: %w", err)
-	}
-	if err := options.Validate(); err != nil {
-		return resources, fmt.Errorf("invalid benchmark options: %w", err)
+	if err := input.Validate(); err != nil {
+		return resources, fmt.Errorf("invalid runner input: %w", err)
 	}
 	// Validate the combined configuration before writing the credential Secret.
-	resolvedResources, err := ResolveResources(c.config.Resources, options.Resources)
+	resolvedResources, err := ResolveResources(c.config.Resources, input.Resources)
 	if err != nil {
 		return resources, fmt.Errorf("invalid runner resources: %w", err)
 	}
@@ -278,21 +277,20 @@ func (c *Coordinator) createBenchmarkResources(ctx context.Context, connection C
 		return resources, err
 	}
 
-	// Prepare the caller's rules once, before the first Kubernetes write. Options
-	// is a value copy, so replacing its affinity does not modify the caller.
-	preparedOptions := options
-	affinity, err := PrepareNodeAffinity(options.NodeAffinity)
+	// Prepare caller-owned rules before the first Kubernetes write.
+	input = input.clone()
+	affinity, err := PrepareNodeAffinity(input.NodeAffinity)
 	if err != nil {
 		return resources, fmt.Errorf("invalid benchmark node affinity: %w", err)
 	}
-	preparedOptions.NodeAffinity = affinity
+	input.NodeAffinity = affinity
 
-	secret, err := c.createCredentialSecret(ctx, connection, labels)
+	secret, err := c.createCredentialSecret(ctx, input.Spec.SecretData, labels)
 	if err != nil {
 		return resources, err
 	}
 
-	job, err := c.createBenchmarkJob(ctx, secret, preparedOptions, resolvedResources, labels)
+	job, err := c.createBenchmarkJob(ctx, secret, input, resolvedResources, labels)
 	if err == nil {
 		return benchmarkResources{secret: secret, job: job}, nil
 	}
@@ -402,7 +400,7 @@ func (c *Coordinator) cleanupBenchmarkResourcesWithContext(ctx context.Context, 
 // createBenchmarkJob builds and creates one runner Job in the configured
 // workload namespace. Resources and node affinity must already be prepared by
 // createBenchmarkResources. It does not wait for completion or read logs.
-func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, options Options, resolvedResources Resources, labels map[string]string) (JobRef, error) {
+func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRef, input RunInput, resolvedResources Resources, labels map[string]string) (JobRef, error) {
 	var reference JobRef
 	if c == nil {
 		return reference, errors.New("coordinator is nil")
@@ -419,8 +417,8 @@ func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRe
 	if strings.TrimSpace(secretRef.Name) == "" {
 		return reference, errors.New("credential Secret name is required")
 	}
-	if err := options.Validate(); err != nil {
-		return reference, fmt.Errorf("invalid benchmark options: %w", err)
+	if err := input.Validate(); err != nil {
+		return reference, fmt.Errorf("invalid runner input: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return reference, err
@@ -430,7 +428,7 @@ func (c *Coordinator) createBenchmarkJob(ctx context.Context, secretRef SecretRe
 	if err != nil {
 		return reference, err
 	}
-	job, err := newBenchmarkJob(c.config, name, secretRef.Name, options, resolvedResources, labels)
+	job, err := newBenchmarkJob(c.config, name, secretRef.Name, input, resolvedResources, labels)
 	if err != nil {
 		return reference, fmt.Errorf("build benchmark Job: %w", err)
 	}
@@ -454,7 +452,7 @@ func generateBenchmarkJobName() (string, error) {
 // Kubernetes object; the caller is responsible for API calls and cleanup.
 // Resources and node affinity must be prepared before creating the credential
 // Secret. The manifest owns its own copy of the affinity rules.
-func newBenchmarkJob(config Config, name, secretName string, options Options, resolvedResources Resources, labels map[string]string) (*batchv1.Job, error) {
+func newBenchmarkJob(config Config, name, secretName string, input RunInput, resolvedResources Resources, labels map[string]string) (*batchv1.Job, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid coordinator configuration: %w", err)
 	}
@@ -464,8 +462,8 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, re
 	if strings.TrimSpace(secretName) == "" {
 		return nil, errors.New("credential secret name is required")
 	}
-	if err := options.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid benchmark options: %w", err)
+	if err := input.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid runner input: %w", err)
 	}
 	resources, err := resourceRequirements(resolvedResources)
 	if err != nil {
@@ -473,8 +471,8 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, re
 	}
 
 	var affinity *corev1.Affinity
-	if options.NodeAffinity != nil {
-		affinity = &corev1.Affinity{NodeAffinity: options.NodeAffinity.DeepCopy()}
+	if input.NodeAffinity != nil {
+		affinity = &corev1.Affinity{NodeAffinity: input.NodeAffinity.DeepCopy()}
 	}
 
 	backoffLimit := int32(0)
@@ -498,11 +496,15 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, re
 					ServiceAccountName:           config.RunnerServiceAccount,
 					AutomountServiceAccountToken: boolPtr(false),
 					Containers: []corev1.Container{{
-						Name:            runnerContainerName,
-						Image:           config.RunnerImage,
-						ImagePullPolicy: corev1.PullPolicy(config.ImagePullPolicy),
-						Resources:       resources,
-						Env:             benchmarkEnvironment(secretName, options),
+						Name:                     runnerContainerName,
+						Image:                    input.Runner.Image,
+						ImagePullPolicy:          corev1.PullPolicy(input.Runner.ImagePullPolicy),
+						Command:                  slices.Clone(input.Spec.Command),
+						Args:                     slices.Clone(input.Spec.Args),
+						TerminationMessagePath:   "/dev/termination-log",
+						TerminationMessagePolicy: corev1.TerminationMessageReadFile,
+						Resources:                resources,
+						Env:                      benchmarkEnvironment(secretName, input.Spec),
 					}},
 				},
 			},
@@ -510,35 +512,27 @@ func newBenchmarkJob(config Config, name, secretName string, options Options, re
 	}, nil
 }
 
-func benchmarkEnvironment(secretName string, options Options) []corev1.EnvVar {
-	// Kubernetes copies each matching field from the temporary Secret into an
-	// environment variable in the runner container. The names are identical
-	// because the runner reads these exact variables: PGHOST, PGPORT,
-	// PGDATABASE, PGUSER, and PGPASSWORD.
-	secretKeys := []string{
-		secretKeyHost,
-		secretKeyPort,
-		secretKeyDatabase,
-		secretKeyUser,
-		secretKeyPassword,
+func benchmarkEnvironment(secretName string, spec driver.RunnerSpec) []corev1.EnvVar {
+	names := make([]string, 0, len(spec.Env)+len(spec.SecretEnv))
+	for name := range spec.Env {
+		names = append(names, name)
 	}
-	env := make([]corev1.EnvVar, 0, len(secretKeys)+5)
-	for _, key := range secretKeys {
-		env = append(env, corev1.EnvVar{
-			Name: key,
-			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-				Key:                  key,
-			}},
-		})
+	for name := range spec.SecretEnv {
+		names = append(names, name)
 	}
-	env = append(env,
-		corev1.EnvVar{Name: "BENCH_DURATION", Value: strconv.Itoa(options.Duration)},
-		corev1.EnvVar{Name: "BENCH_CLIENTS", Value: strconv.Itoa(options.Clients)},
-		corev1.EnvVar{Name: "BENCH_THREADS", Value: strconv.Itoa(options.Threads)},
-		corev1.EnvVar{Name: "BENCH_SCALE", Value: strconv.Itoa(options.Scale)},
-		corev1.EnvVar{Name: "BENCH_INITIALIZE", Value: strconv.FormatBool(options.Initialize)},
-	)
+	sort.Strings(names)
+	env := make([]corev1.EnvVar, 0, len(names))
+	for _, name := range names {
+		// Workload values are literal. Kubernetes otherwise expands $(NAME)
+		// references and collapses $$, which can alter connection settings.
+		variable := corev1.EnvVar{Name: name, Value: strings.ReplaceAll(spec.Env[name], "$", "$$")}
+		if key, ok := spec.SecretEnv[name]; ok {
+			variable.ValueFrom = &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName}, Key: key,
+			}}
+		}
+		env = append(env, variable)
+	}
 	return env
 }
 
@@ -555,8 +549,4 @@ func copyLabels(labels map[string]string) map[string]string {
 
 func boolPtr(value bool) *bool {
 	return &value
-}
-
-func formatPort(port int) string {
-	return strconv.Itoa(port)
 }

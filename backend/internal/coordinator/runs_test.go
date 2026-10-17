@@ -47,9 +47,9 @@ func TestRunRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{}}
-	result, err := c.Run(context.Background(), validConnection(), options)
+	result, err := c.Run(context.Background(), options)
 	if err == nil || !strings.Contains(err.Error(), "nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms") {
 		t.Fatalf("want required term validation error, got %v", err)
 	}
@@ -94,10 +94,10 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = input
 	options.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
-	result, err := c.Run(context.Background(), validConnection(), options)
+	result, err := c.Run(context.Background(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,9 +125,9 @@ func TestRunRejectsInvalidResourceOverridesBeforeKubernetesWrites(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.Resources = Resources{CPURequest: "2"}
-	_, err = c.Run(context.Background(), validConnection(), options)
+	_, err = c.Run(context.Background(), options)
 	if err == nil || !strings.Contains(err.Error(), "cpu request cannot exceed limit") {
 		t.Fatalf("Run() error = %v; want resource validation error", err)
 	}
@@ -222,7 +222,7 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := c.Run(ctx, validConnection(), DefaultOptions())
+			result, err := c.Run(ctx, validRunInput())
 			if scenario == "execution timeout" && ctx.Err() != nil {
 				t.Fatal("execution timeout cancelled the caller context")
 			}

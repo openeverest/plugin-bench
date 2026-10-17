@@ -49,11 +49,11 @@ func TestPrepareMapsRunnerContractAndEffectiveSnapshot(t *testing.T) {
 	if len(spec.Command) != 0 || len(spec.Args) != 0 {
 		t.Fatal("Prepare replaced the runner image entrypoint")
 	}
-	wantEnv := map[string]string{"BENCH_DURATION": "60", "BENCH_CLIENTS": "4", "BENCH_THREADS": "2", "BENCH_SCALE": "1", "BENCH_INITIALIZE": "true"}
+	wantEnv := map[string]string{"PGHOST": "postgres.example.com", "PGPORT": "5432", "PGDATABASE": "custom", "PGUSER": "bench-user", "BENCH_DURATION": "60", "BENCH_CLIENTS": "4", "BENCH_THREADS": "2", "BENCH_SCALE": "1", "BENCH_INITIALIZE": "true"}
 	if !reflect.DeepEqual(spec.Env, wantEnv) {
 		t.Fatalf("Env = %v; want %v", spec.Env, wantEnv)
 	}
-	wantSecrets := map[string]string{"PGHOST": "postgres.example.com", "PGPORT": "5432", "PGDATABASE": "custom", "PGUSER": "bench-user", "PGPASSWORD": "credential-sentinel"}
+	wantSecrets := map[string]string{"PGPASSWORD": "credential-sentinel"}
 	if len(spec.SecretData) != len(wantSecrets) || len(spec.SecretEnv) != len(wantSecrets) {
 		t.Fatal("unexpected credential mapping")
 	}
