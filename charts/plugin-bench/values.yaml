@@ -48,12 +48,26 @@ workload:
   # configured workload namespace.
   createNamespace: false
 
-# Configuration for the per-run pgbench Kubernetes Job.
+# Compiled-in benchmark drivers and their runner images. Adding an entry does
+# not install a driver implementation. At least one driver must remain enabled.
+drivers:
+  pgbench:
+    enabled: true
+    image:
+      # Empty fields use legacy runner.image overrides for pgbench, then default
+      # to ghcr.io/openeverest/plugin-bench-<driverID>, appVersion, IfNotPresent.
+      repository: ""
+      tag: ""
+      pullPolicy: ""
+
+# Shared configuration for benchmark Kubernetes Jobs.
 runner:
+  # Deprecated pgbench image overrides; prefer drivers.pgbench.image.
+  # Explicit driver image fields take precedence over these legacy fields.
   image:
-    repository: ghcr.io/openeverest/plugin-bench-pgbench
+    repository: ""
     tag: ""
-    pullPolicy: IfNotPresent
+    pullPolicy: ""
   executionTimeout: 5m
   # Fail a run whose Pod stays unschedulable this long. Allow enough time for
   # node autoscaling. "0" disables early failure (executionTimeout still applies).

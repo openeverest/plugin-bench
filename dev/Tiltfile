@@ -184,9 +184,10 @@ docker_build(
 # ===========================
 # Deployed with a real `helm upgrade --install` (via the helm_resource
 # extension). Tilt injects the locally built image into the chart's
-# image.repository/image.tag and runner.image.repository/runner.image.tag
-# values. helm_resource also guarantees the Plugin CR is applied only after
-# the core CRDs exist.
+# image.repository/image.tag and drivers.pgbench.image.repository/tag values.
+# Helm passes the runner image to the backend through BENCHMARK_DRIVERS.
+# helm_resource also guarantees the Plugin CR is applied only after the core
+# CRDs exist.
 plugin_flags = [
     '--create-namespace',
     '--set', 'image.pullPolicy=IfNotPresent',
@@ -206,7 +207,7 @@ helm_resource(
     image_deps=[plugin_bench_image, pgbench_runner_image],
     image_keys=[
         ('image.repository', 'image.tag'),
-        ('runner.image.repository', 'runner.image.tag'),
+        ('drivers.pgbench.image.repository', 'drivers.pgbench.image.tag'),
     ],
     resource_deps=plugin_resource_deps,
     labels=['plugin-bench'],

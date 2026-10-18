@@ -62,3 +62,33 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/name: {{ include "plugin-bench.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/* Resolve driver images before passing one JSON configuration to startup.
+     Legacy image fields apply only to pgbench; explicit driver fields win.
+     Do not use default on enabled: false must remain an explicit disablement. */}}
+{{- define "plugin-bench.driverConfig" -}}
+{{- $drivers := dict -}}
+{{- range $id, $config := .Values.drivers -}}
+  {{- if not (kindIs "map" $config) -}}
+    {{- fail (printf "drivers.%s must be an object" $id) -}}
+  {{- end -}}
+  {{- if not (kindIs "bool" $config.enabled) -}}
+    {{- fail (printf "drivers.%s.enabled must be a boolean" $id) -}}
+  {{- end -}}
+  {{- $entry := dict "enabled" $config.enabled -}}
+  {{- if $config.enabled -}}
+    {{- $image := $config.image | default dict -}}
+    {{- $legacy := dict -}}
+    {{- if eq $id "pgbench" -}}
+      {{- $legacy = $.Values.runner.image | default dict -}}
+    {{- end -}}
+    {{- $repository := $image.repository | default $legacy.repository | default (printf "ghcr.io/openeverest/plugin-bench-%s" $id) -}}
+    {{- $tag := $image.tag | default $legacy.tag | default $.Chart.AppVersion -}}
+    {{- $policy := $image.pullPolicy | default $legacy.pullPolicy | default "IfNotPresent" -}}
+    {{- $_ := set $entry "image" (printf "%s:%s" $repository $tag) -}}
+    {{- $_ := set $entry "imagePullPolicy" $policy -}}
+  {{- end -}}
+  {{- $_ := set $drivers $id $entry -}}
+{{- end -}}
+{{- $drivers | toJson -}}
+{{- end -}}

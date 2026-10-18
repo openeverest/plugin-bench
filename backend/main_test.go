@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +12,10 @@ import (
 )
 
 func TestBenchmarkRegistryUsesExistingImageConfiguration(t *testing.T) {
+	t.Setenv("BENCHMARK_DRIVERS", "")
+	if err := os.Unsetenv("BENCHMARK_DRIVERS"); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("RUNNER_IMAGE", "example.com/custom-pgbench:version")
 	t.Setenv("RUNNER_IMAGE_PULL_POLICY", "")
 	registry, err := benchmarkRegistryFromEnv()
