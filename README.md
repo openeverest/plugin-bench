@@ -20,12 +20,30 @@ The plugin backend coordinates a benchmark run:
    in its connection URI).
 3. Create a temporary Secret containing the database credentials.
 4. Create a Kubernetes Job using the pgbench runner image.
-5. Wait for the Job and collect the runner logs.
+5. Wait for the Job and collect the runner logs and optional structured metrics.
 6. Delete the Job and temporary Secret.
 
 The frontend is currently available as a PostgreSQL cluster detail tab. It is
 built with MUI and themed from the host through `@openeverest/plugin-theme`.
-Other database technologies can be added later through a driver-based design.
+The backend uses a shared driver interface; pgbench is the current implementation.
+Additional benchmark tools can supply their own option validation and workload
+preparation while sharing the Kubernetes execution lifecycle.
+
+### Backend API and results
+
+New clients submit `driver` and a driver-specific `options` object to
+`POST /api/runs`. Target, database, resources, and node affinity remain shared
+request fields. The driver applies defaults, validates options, and records the
+effective configuration and configured runner image for later inspection.
+
+`GET /api/runs/{id}` returns status, effective settings, bounded log output, and
+optional numeric metrics. Access requires authorization for the stored target.
+Missing or invalid metrics do not turn a successful benchmark into a failed run.
+The existing frontend's submission flow remains compatible through the legacy
+pgbench request adapter; frontend integration of the new contracts is separate.
+
+See [the request and runner result contracts](docs/runner-result-contract.md)
+for payloads, defaults, compatibility, and metrics transport details.
 
 ### Runner placement
 
@@ -224,7 +242,9 @@ safe.
 src/                         React frontend
 backend/                     Go backend
 backend/internal/everest/    OpenEverest API client
+backend/internal/driver/     Driver contracts, registry, and pgbench preparation
 backend/internal/coordinator Kubernetes Job and Secret orchestration
+backend/internal/runnerresult Generic runner metrics decoder
 runners/pgbench/             pgbench runner image
 charts/plugin-bench/         Helm chart and Plugin resource
 dev/                         Tilt and k3d configuration
@@ -233,10 +253,13 @@ spec.md                      MVP requirements
 
 ## Current limitations
 
-The MVP targets PostgreSQL instances managed by OpenEverest. Benchmark output
-is collected from the runner and is not yet persisted in an external database.
-Run history, richer result parsing, and support for additional database
-technologies are planned for later iterations.
+The MVP targets PostgreSQL instances managed by OpenEverest. Run records,
+including output and metrics, are held in backend memory and are lost on restart.
+Completed records become unavailable one hour after completion; running records
+do not expire. Expired records are removed from memory when a new run is created.
+Keep one backend replica until shared storage and cross-pod coordination exist.
+Persistent history, comparisons, and additional database technologies remain
+future work.
 
 ## License
 
