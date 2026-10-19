@@ -1,5 +1,5 @@
 import {
-  initialPgbenchOptionsDraft, preparePgbenchOptions, validatePgbenchDatabase,
+  describePgbenchRunOptions, initialPgbenchOptionsDraft, preparePgbenchOptions, validatePgbenchDatabase,
 } from './pgbench.js';
 import type { PgbenchOptions, PgbenchOptionsDraft } from './pgbench';
 
@@ -26,6 +26,8 @@ type DriverDefinition<K extends BenchmarkDriverId> = {
   createDraft: () => DriverDraft<K>;
   prepare: (draft: DriverDraft<K>) => DriverPreparation<K>;
   validateDatabase: (database: string) => string | undefined;
+  /** Adapts a recorded options snapshot for display without changing the run record. */
+  describeRunOptions: (options: Readonly<Record<string, unknown>>) => Record<string, unknown>;
 };
 
 export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> } = {
@@ -38,6 +40,7 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
       return { ok: true, request: { driver: 'pgbench', options: prepared.options } };
     },
     validateDatabase: validatePgbenchDatabase,
+    describeRunOptions: describePgbenchRunOptions,
   },
 };
 
@@ -54,4 +57,14 @@ export function createDriverDraft<K extends BenchmarkDriverId>(driver: K): Drive
 
 export function prepareDriver<K extends BenchmarkDriverId>(draft: DriverDraft<K>): DriverPreparation<K> {
   return benchmarkDrivers[draft.driver].prepare(draft);
+}
+
+// Snapshots from drivers this UI does not know are displayed as recorded.
+export function describeRunOptions(
+  driver: string | undefined,
+  options: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  return driver !== undefined && isBenchmarkDriverId(driver)
+    ? benchmarkDrivers[driver].describeRunOptions(options)
+    : { ...options };
 }

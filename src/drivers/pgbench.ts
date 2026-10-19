@@ -36,6 +36,13 @@ export function validatePgbenchDatabase(database: string): string | undefined {
   return undefined;
 }
 
+// Without initialization pgbench uses the existing tables' scale; the recorded
+// value is only the backend default and would misstate the dataset size.
+export function describePgbenchRunOptions(options: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  if (options.initialize !== false || !('scale' in options)) return { ...options };
+  return { ...options, scale: 'From existing tables' };
+}
+
 export function preparePgbenchOptions(draft: PgbenchOptionsDraft):
   | { ok: true; options: PgbenchOptions }
   | { ok: false; errors: PgbenchOptionsErrors } {

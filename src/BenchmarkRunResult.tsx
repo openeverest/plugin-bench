@@ -19,6 +19,7 @@ import type { PollingFeedback } from './benchmarkRunPolling';
 import { BenchmarkNodeAffinitySummary } from './BenchmarkNodeAffinitySummary.js';
 import { BenchmarkRunMetrics } from './BenchmarkRunMetrics.js';
 import { BenchmarkRunOptions } from './BenchmarkRunOptions.js';
+import { describeRunOptions } from './drivers/index.js';
 
 const STATUS_LABELS: Record<BenchmarkRunStatus, string> = {
   running: 'Running',
@@ -95,7 +96,7 @@ export function BenchmarkRunResult({ id, run, feedback, onRetry, onDismiss }: Be
             )}
           </Box>
 
-          {run?.options !== undefined && <BenchmarkRunOptions options={run.options} />}
+          {run?.options !== undefined && <BenchmarkRunOptions options={describeRunOptions(run.driver, run.options)} />}
 
           {run?.resources !== undefined && (
             <Box component="section" aria-label="Configured runner resources">

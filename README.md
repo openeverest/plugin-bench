@@ -56,7 +56,9 @@ The pgbench form starts with 30 seconds, one client/thread, scale 1, and
 initialization enabled. These are explicit UI choices, distinct from the API's
 defaults for omitted options. Initialization drops and recreates pgbench tables,
 so use a disposable benchmark database. When reusing existing tables, scale is
-disabled and the frontend sends a valid fallback of 1.
+disabled and the frontend sends a valid fallback of 1; the run's effective
+options show scale as **From existing tables**, since pgbench uses the scale of
+the tables it finds.
 
 Each accepted run has its own card and polls for status every two seconds until
 completion. Completed cards show the driver, configured runner image, effective

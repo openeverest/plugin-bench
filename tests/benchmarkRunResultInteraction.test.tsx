@@ -105,6 +105,23 @@ describe('benchmark result metrics and logs', () => {
     expect(table.getByRole('cell', { name: digits('000432') })).toBeTruthy();
   });
 
+  it('describes pgbench scale as coming from existing tables when initialization is off', () => {
+    const pgbenchOptions = { durationSeconds: 30, clients: 4, threads: 2, scale: 1, initialize: false };
+    render(<>
+      {card({ ...completed, driver: 'pgbench', options: pgbenchOptions })}
+      {card({ ...completed, id: 'run-2', driver: 'pgbench', options: { ...pgbenchOptions, scale: 50, initialize: true } })}
+      {card({ ...completed, id: 'run-3', driver: 'custom-driver', options: { scale: 7, initialize: false } })}
+    </>);
+    const [reused, initialized, custom] = screen.getAllByRole('region', { name: 'Effective benchmark options' })
+      .map(element => within(element));
+    expect(reused.getByText('From existing tables')).toBeTruthy();
+    expect(reused.queryByText('1')).toBeNull();
+    expect(initialized.getByText('50')).toBeTruthy();
+    expect(initialized.queryByText('From existing tables')).toBeNull();
+    expect(custom.getByText('7')).toBeTruthy();
+    expect(custom.queryByText('From existing tables')).toBeNull();
+  });
+
   it('keeps log expansion independent for cards displayed side by side', () => {
     render(<>{card({ ...completed, output: 'first logs', metrics })}
       {card({ ...completed, id: 'run-2', output: 'second logs',
