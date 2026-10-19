@@ -78,9 +78,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   {{- $entry := dict "enabled" $config.enabled -}}
   {{- if $config.enabled -}}
     {{- $image := $config.image | default dict -}}
+    {{- if not (kindIs "map" $image) -}}
+      {{- fail (printf "drivers.%s.image must be an object with repository, tag, and pullPolicy" $id) -}}
+    {{- end -}}
     {{- $legacy := dict -}}
     {{- if eq $id "pgbench" -}}
       {{- $legacy = $.Values.runner.image | default dict -}}
+      {{- if not (kindIs "map" $legacy) -}}
+        {{- fail "runner.image must be an object with repository, tag, and pullPolicy" -}}
+      {{- end -}}
     {{- end -}}
     {{- $repository := $image.repository | default $legacy.repository | default (printf "ghcr.io/openeverest/plugin-bench-%s" $id) -}}
     {{- $tag := $image.tag | default $legacy.tag | default $.Chart.AppVersion -}}

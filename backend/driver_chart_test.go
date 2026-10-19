@@ -122,6 +122,26 @@ func TestChartDriverDisablementAndMultipleEntries(t *testing.T) {
 	}
 }
 
+func TestChartRejectsScalarImageSettings(t *testing.T) {
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("Helm is required for chart rendering checks")
+	}
+	chart := filepath.Join("..", "charts", "plugin-bench")
+	for _, test := range []struct{ name, setting, message string }{
+		{"driver image", "drivers.pgbench.image=ghcr.io/example/pgbench:1.0", "drivers.pgbench.image must be an object"},
+		{"legacy image", "runner.image=ghcr.io/example/pgbench:1.0", "runner.image must be an object"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := exec.Command(helm, "template", "driver-config-test", chart,
+				"--show-only", "templates/deployment.yaml", "--set-string", test.setting).CombinedOutput()
+			if err == nil || !strings.Contains(string(output), test.message) {
+				t.Fatalf("expected %q rendering error, got %v\n%s", test.message, err, output)
+			}
+		})
+	}
+}
+
 func TestPackagedChartUsesReleaseAppVersionForImages(t *testing.T) {
 	helm, err := exec.LookPath("helm")
 	if err != nil {
