@@ -6,8 +6,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	corev1 "k8s.io/api/core/v1"
 )
+
+func TestBenchmarkRegistryUsesExistingImageConfiguration(t *testing.T) {
+	t.Setenv("RUNNER_IMAGE", "example.com/custom-pgbench:version")
+	t.Setenv("RUNNER_IMAGE_PULL_POLICY", "")
+	registry, err := benchmarkRegistryFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration, err := registry.Resolve("pgbench", driver.TargetInfo{DatabaseType: "postgresql", Provider: "new-provider"})
+	if err != nil || registration.Runner.Image != "example.com/custom-pgbench:version" || registration.Runner.ImagePullPolicy != "IfNotPresent" {
+		t.Fatal("registration did not use existing image configuration")
+	}
+	for _, test := range []struct{ image, policy string }{{"", "IfNotPresent"}, {"runner:test", "invalid"}} {
+		t.Setenv("RUNNER_IMAGE", test.image)
+		t.Setenv("RUNNER_IMAGE_PULL_POLICY", test.policy)
+		if _, err := benchmarkRegistryFromEnv(); err == nil {
+			t.Fatal("accepted invalid runner registration")
+		}
+	}
+}
 
 func TestCoordinatorConfigRunnerPlacementFromEnv(t *testing.T) {
 	t.Setenv("RUNNER_NODE_SELECTOR", `{"pool":"benchmark"}`)

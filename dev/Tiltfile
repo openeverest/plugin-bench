@@ -175,6 +175,7 @@ docker_build(
         'Dockerfile',
         'go.mod',
         'main.go',
+        'metrics.go',
     ],
 )
 

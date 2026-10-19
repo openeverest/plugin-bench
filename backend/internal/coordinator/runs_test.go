@@ -3,17 +3,23 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
+	restfake "k8s.io/client-go/rest/fake"
 	ktesting "k8s.io/client-go/testing"
 )
 
@@ -41,15 +47,141 @@ type diagnosticClient struct {
 	check func(context.Context)
 }
 
+// Override only the log transport; resource operations still use the fake
+// Kubernetes object tracker. This exercises Run with real log-reading errors
+// and limits without requiring a cluster or changing production code for tests.
+type metricsLogClient struct {
+	*fake.Clientset
+	logs *restfake.RESTClient
+}
+
+func (c metricsLogClient) CoreV1() typedcorev1.CoreV1Interface {
+	return metricsLogCore{CoreV1Interface: c.Clientset.CoreV1(), logs: c.logs}
+}
+
+type metricsLogCore struct {
+	typedcorev1.CoreV1Interface
+	logs *restfake.RESTClient
+}
+
+func (c metricsLogCore) Pods(namespace string) typedcorev1.PodInterface {
+	return metricsLogPods{PodInterface: c.CoreV1Interface.Pods(namespace), logs: c.logs}
+}
+
+type metricsLogPods struct {
+	typedcorev1.PodInterface
+	logs *restfake.RESTClient
+}
+
+func (p metricsLogPods) GetLogs(string, *corev1.PodLogOptions) *rest.Request {
+	return p.logs.Get()
+}
+
+func TestRunRetainsTerminationMetricsThroughLogsAndCleanup(t *testing.T) {
+	message := runnerMetricsFixture(t)
+	wantMetrics, err := runnerresult.Decode(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logFailure, cleanupFailure := errors.New("log read failed"), errors.New("Job deletion failed")
+	for _, test := range []struct {
+		name, message, output string
+		failed                bool
+		logErr, cleanupErr    error
+	}{
+		{name: "successful metrics", message: message, output: "normal logs"},
+		{name: "older runner without metrics", output: "normal logs"},
+		{name: "invalid metrics", message: "credential-sentinel", output: "normal logs"},
+		{name: "stdout record is not metrics", output: message},
+		{name: "failed Job with metrics", message: message, output: "failure logs", failed: true},
+		{name: "log failure", message: message, logErr: logFailure},
+		{name: "cleanup failure", message: message, output: "normal logs", cleanupErr: cleanupFailure},
+		{name: "truncated logs", message: message, output: strings.Repeat("x", int(maxRunnerLogBytes)+17)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			var jobName string
+			client.PrependReactor("create", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
+				action.(ktesting.CreateAction).GetObject().(*corev1.Secret).UID = "secret-uid"
+				return false, nil, nil
+			})
+			client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+				job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job)
+				jobName, job.UID = job.Name, "job-uid"
+				condition := batchv1.JobComplete
+				if test.failed {
+					condition = batchv1.JobFailed
+				}
+				job.Status.Conditions = []batchv1.JobCondition{{Type: condition, Status: corev1.ConditionTrue}}
+				return false, nil, nil
+			})
+			client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+				return true, &corev1.PodList{Items: []corev1.Pod{{
+					ObjectMeta: metav1.ObjectMeta{Name: "runner-pod", Labels: map[string]string{batchv1.JobNameLabel: jobName},
+						OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: jobName, UID: "job-uid", Controller: boolPtr(true)}}},
+					Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: runnerContainerName,
+						State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: test.message}},
+					}}},
+				}}}, nil
+			})
+			logged, deletedJob, deletedSecret := false, false, false
+			client.PrependReactor("delete", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+				if !logged {
+					t.Error("Job cleanup ran before log collection")
+				}
+				deletedJob = true
+				return test.cleanupErr != nil, nil, test.cleanupErr
+			})
+			client.PrependReactor("delete", "secrets", func(ktesting.Action) (bool, runtime.Object, error) {
+				deletedSecret = true
+				return false, nil, nil
+			})
+			logs := &restfake.RESTClient{NegotiatedSerializer: scheme.Codecs.WithoutConversion(), GroupVersion: corev1.SchemeGroupVersion,
+				Client: restfake.CreateHTTPClient(func(*http.Request) (*http.Response, error) {
+					logged = true
+					var body io.ReadCloser = io.NopCloser(strings.NewReader(test.output))
+					if test.logErr != nil {
+						body = &failingLogStream{err: test.logErr}
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+				})}
+			c, err := New(validConfig(), metricsLogClient{Clientset: client, logs: logs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := c.Run(context.Background(), validRunInput())
+			wantErr := test.failed || test.logErr != nil || test.cleanupErr != nil
+			if (err != nil) != wantErr || (test.failed && !strings.Contains(err.Error(), "failed")) ||
+				(test.logErr != nil && !errors.Is(err, test.logErr)) || (test.cleanupErr != nil && !errors.Is(err, test.cleanupErr)) {
+				t.Fatalf("Run error = %v; want failed=%t, logErr=%v, cleanupErr=%v", err, test.failed, test.logErr, test.cleanupErr)
+			}
+			expected := wantMetrics
+			if test.message != message {
+				expected = nil
+			}
+			if !reflect.DeepEqual(result.Metrics, expected) {
+				t.Fatalf("metrics = %+v; want %+v", result.Metrics, expected)
+			}
+			output, truncated := test.output, len(test.output) > int(maxRunnerLogBytes)
+			if truncated {
+				output = output[:maxRunnerLogBytes]
+			}
+			if result.Output != output || result.OutputTruncated != truncated || !logged || !deletedJob || !deletedSecret {
+				t.Fatal("metrics handling changed logs, truncation, or resource cleanup")
+			}
+		})
+	}
+}
+
 func TestRunRejectsNodeAffinityBeforeAPIWrites(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	c, err := New(validConfig(), client)
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{}}
-	result, err := c.Run(context.Background(), validConnection(), options)
+	result, err := c.Run(context.Background(), options)
 	if err == nil || !strings.Contains(err.Error(), "nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms") {
 		t.Fatalf("want required term validation error, got %v", err)
 	}
@@ -94,10 +226,10 @@ func TestRunAppliesNodeAffinityAndCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = input
 	options.Resources = Resources{CPURequest: "500m", MemoryLimit: "1Gi"}
-	result, err := c.Run(context.Background(), validConnection(), options)
+	result, err := c.Run(context.Background(), options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,9 +257,9 @@ func TestRunRejectsInvalidResourceOverridesBeforeKubernetesWrites(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.Resources = Resources{CPURequest: "2"}
-	_, err = c.Run(context.Background(), validConnection(), options)
+	_, err = c.Run(context.Background(), options)
 	if err == nil || !strings.Contains(err.Error(), "cpu request cannot exceed limit") {
 		t.Fatalf("Run() error = %v; want resource validation error", err)
 	}
@@ -222,7 +354,7 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := c.Run(ctx, validConnection(), DefaultOptions())
+			result, err := c.Run(ctx, validRunInput())
 			if scenario == "execution timeout" && ctx.Err() != nil {
 				t.Fatal("execution timeout cancelled the caller context")
 			}

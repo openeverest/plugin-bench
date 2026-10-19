@@ -29,18 +29,18 @@ func testCredentials() *everest.Credentials {
 
 type testRunner struct{}
 
-func (testRunner) Run(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
+func (testRunner) Run(context.Context, coordinator.RunInput) (coordinator.Result, error) {
 	return coordinator.Result{Output: "benchmark complete"}, nil
 }
 
-type testRunnerFunc func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error)
+type testRunnerFunc func(context.Context, coordinator.RunInput) (coordinator.Result, error)
 
-func (f testRunnerFunc) Run(ctx context.Context, connection coordinator.Connection, options coordinator.Options) (coordinator.Result, error) {
-	return f(ctx, connection, options)
+func (f testRunnerFunc) Run(ctx context.Context, input coordinator.RunInput) (coordinator.Result, error) {
+	return f(ctx, input)
 }
 
 func testAPI() *API {
-	return NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+	return newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
 	}, nil, testRunner{}, NewRunStore(), context.Background(), coordinator.Resources{})
 }
@@ -110,7 +110,7 @@ func TestCreateRunDecodesRequest(t *testing.T) {
 		{"valid", validCreateRunBody, "application/json", http.StatusAccepted},
 		{"charset", validCreateRunBody, "application/json; charset=utf-8", http.StatusAccepted},
 		{"missing instance", `{"target":{"k8sCluster":"local","namespace":"dbs"},"database":"bench","durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusBadRequest},
-		{"missing database without instance default", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusUnprocessableEntity},
+		{"missing database without instance default", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusBadRequest},
 		{"invalid options", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":"bench","durationSeconds":30,"clients":1,"threads":2,"scale":1}`, "application/json", http.StatusBadRequest},
 		{"connection string as database", `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":"postgres://host/db","durationSeconds":30,"clients":1,"threads":1,"scale":1}`, "application/json", http.StatusBadRequest},
 		{"malformed", `{`, "application/json", http.StatusBadRequest},
@@ -155,15 +155,15 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := NewRunStore()
-			started := make(chan coordinator.Options, 1)
-			runner := testRunnerFunc(func(_ context.Context, _ coordinator.Connection, options coordinator.Options) (coordinator.Result, error) {
+			started := make(chan coordinator.RunInput, 1)
+			runner := testRunnerFunc(func(_ context.Context, options coordinator.RunInput) (coordinator.Result, error) {
 				started <- options
 				if test.fail {
 					return coordinator.Result{}, errors.New("runner failed")
 				}
 				return coordinator.Result{}, nil
 			})
-			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+			api := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				return testCredentials(), nil
 			}, func(context.Context, string, string, string, string) error { return nil }, runner, store, context.Background(), defaults)
 			body := strings.TrimSuffix(validCreateRunBody, "}") + test.resourceJSON + `,"nodeAffinity":` + string(affinityJSON) + "}"
@@ -200,8 +200,8 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 			for {
 				run, err := store.Get(accepted.ID)
 				if err == nil && run.Status == wantStatus {
-					if run.Resources != test.resolved || run.Request.Resources != test.overrides {
-						t.Fatalf("stored resources=%+v request=%+v; want %+v and %+v", run.Resources, run.Request.Resources, test.resolved, test.overrides)
+					if run.Resources != test.resolved {
+						t.Fatalf("stored resources=%+v; want %+v", run.Resources, test.resolved)
 					}
 					break
 				}
@@ -246,7 +246,7 @@ func TestCreateRunRejectsInvalidResourcesBeforeCredentialLookup(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			lookupCalls := 0
 			store := NewRunStore()
-			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+			api := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				lookupCalls++
 				return testCredentials(), nil
 			}, nil, testRunner{}, store, context.Background(), defaults)
@@ -265,7 +265,7 @@ func TestCreateRunRejectsInvalidResourcesBeforeCredentialLookup(t *testing.T) {
 
 func TestCreateRunResolvesTargetCredentials(t *testing.T) {
 	called := false
-	api := NewAPI(func(ctx context.Context, token, cluster, namespace, instance string) (*everest.Credentials, error) {
+	api := newTestAPI(func(ctx context.Context, token, cluster, namespace, instance string) (*everest.Credentials, error) {
 		called = true
 		if ctx == nil || token != "test-token" || cluster != "local" || namespace != "dbs" || instance != "postgres-1" {
 			t.Fatalf("unexpected credential lookup arguments: token=%q target=%q/%q/%q", token, cluster, namespace, instance)
@@ -289,15 +289,15 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	store := NewRunStore()
-	runner := testRunnerFunc(func(_ context.Context, connection coordinator.Connection, options coordinator.Options) (coordinator.Result, error) {
-		if connection.Database != "bench" || options.Duration != 30 {
-			t.Errorf("unexpected runner inputs: database=%q duration=%d", connection.Database, options.Duration)
+	runner := testRunnerFunc(func(_ context.Context, options coordinator.RunInput) (coordinator.Result, error) {
+		if options.Spec.Env["PGDATABASE"] != "bench" || options.Spec.Env["BENCH_DURATION"] != "30" {
+			t.Errorf("unexpected runner inputs: database=%q duration=%s", options.Spec.Env["PGDATABASE"], options.Spec.Env["BENCH_DURATION"])
 		}
 		close(started)
 		<-release
 		return coordinator.Result{JobName: "bench-run-job", Output: "pgbench password=bench-password done"}, nil
 	})
-	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+	api := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
 	}, nil, runner, store, context.Background(), coordinator.Resources{})
 	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
@@ -344,12 +344,12 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 func TestCreateRunDefaultsToInstanceDatabase(t *testing.T) {
 	store := NewRunStore()
 	databases := make(chan string, 1)
-	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+	api := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		credentials := testCredentials()
 		credentials.Database = "app"
 		return credentials, nil
-	}, nil, testRunnerFunc(func(_ context.Context, connection coordinator.Connection, _ coordinator.Options) (coordinator.Result, error) {
-		databases <- connection.Database
+	}, nil, testRunnerFunc(func(_ context.Context, input coordinator.RunInput) (coordinator.Result, error) {
+		databases <- input.Spec.Env["PGDATABASE"]
 		return coordinator.Result{}, nil
 	}), store, context.Background(), coordinator.Resources{})
 	body := `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":" ","durationSeconds":30,"clients":1,"threads":1,"scale":1}`
@@ -376,7 +376,7 @@ func TestCreateRunDefaultsToInstanceDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, err := store.Get(accepted.ID)
-	if err != nil || run.Request.Database != "app" {
+	if err != nil || run.Snapshot.Database != "app" {
 		t.Fatalf("resolved database was not stored: run=%+v err=%v", run, err)
 	}
 }
@@ -384,9 +384,9 @@ func TestCreateRunDefaultsToInstanceDatabase(t *testing.T) {
 func TestShutdownWaitsForActiveRuns(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+	api := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 		return testCredentials(), nil
-	}, nil, testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
+	}, nil, testRunnerFunc(func(context.Context, coordinator.RunInput) (coordinator.Result, error) {
 		close(started)
 		<-release
 		return coordinator.Result{}, nil
@@ -456,7 +456,7 @@ func TestCreateRunMapsCredentialLookupErrors(t *testing.T) {
 		{"upstream failure", everest.ErrUpstream, http.StatusBadGateway},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+			api := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				return nil, test.err
 			}, nil, testRunner{}, NewRunStore(), context.Background(), coordinator.Resources{})
 			r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(validCreateRunBody))
@@ -469,55 +469,6 @@ func TestCreateRunMapsCredentialLookupErrors(t *testing.T) {
 			}
 			if strings.Contains(w.Body.String(), "test-token") {
 				t.Fatal("response exposed the authorization token")
-			}
-		})
-	}
-}
-
-func TestConnectionFromCredentials(t *testing.T) {
-	connection, err := connectionFromCredentials("bench", testCredentials())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if connection.Database != "bench" || connection.Port != 5432 || connection.Password != "bench-password" {
-		t.Fatalf("unexpected connection mapping: %+v", connection)
-	}
-
-	for _, credentials := range []*everest.Credentials{
-		{Host: "postgres.example.com", Port: "5432", Username: "user", Password: "secret", Provider: "provider-mongodb", Type: "mongodb"},
-		{Host: "postgres.example.com", Port: "5432", Username: "user", URI: "postgres://user:secret@host/db", Provider: "provider-cloudnative-pg", Type: "postgresql"},
-	} {
-		if _, err := connectionFromCredentials("bench", credentials); err == nil {
-			t.Fatal("expected unsupported credentials to be rejected")
-		}
-	}
-}
-
-func TestConnectionFromCredentialsResolvesDefaultDatabase(t *testing.T) {
-	for _, test := range []struct {
-		name, requested, database, uri, want string
-	}{
-		{name: "explicit database wins", requested: " custom ", database: "app", uri: "postgresql://u:p@host:5432/other", want: "custom"},
-		{name: "database key", database: "app", uri: "postgresql://u:p@host:5432/other", want: "app"},
-		{name: "uri path", uri: "postgresql://u:p@host:5432/pg-cluster?sslmode=require", want: "pg-cluster"},
-		{name: "escaped uri path", uri: "postgresql://u:p@host:5432/my%20db", want: "my db"},
-		{name: "uri without path", uri: "postgresql://u:p@host:5432"},
-		{name: "nested uri path", uri: "postgresql://u:p@host:5432/a/b"},
-		{name: "no hints"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			credentials := testCredentials()
-			credentials.Database = test.database
-			credentials.URI = test.uri
-			connection, err := connectionFromCredentials(test.requested, credentials)
-			if test.want == "" {
-				if err == nil || !strings.Contains(err.Error(), "default database") {
-					t.Fatalf("expected default database error, got connection=%+v err=%v", connection, err)
-				}
-				return
-			}
-			if err != nil || connection.Database != test.want {
-				t.Fatalf("database=%q err=%v, want %q", connection.Database, err, test.want)
 			}
 		})
 	}
@@ -551,11 +502,7 @@ func TestGetRun(t *testing.T) {
 			snapshot := coordinator.Resources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 			if test.exists {
 				affinity := testNodeAffinity()
-				run, err := store.Create("run-123", CreateRunRequest{
-					Target:       Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"},
-					Database:     "app",
-					NodeAffinity: affinity,
-				}, snapshot, affinity)
+				run, err := store.Create("run-123", Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"}, RunSnapshot{Database: "app"}, snapshot, affinity)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -568,7 +515,7 @@ func TestGetRun(t *testing.T) {
 
 			credentialLookupCalled := false
 			accessCheckCalled := false
-			api := NewAPI(func(_ context.Context, token, cluster, namespace, instance string) (*everest.Credentials, error) {
+			api := newTestAPI(func(_ context.Context, token, cluster, namespace, instance string) (*everest.Credentials, error) {
 				credentialLookupCalled = true
 				return testCredentials(), nil
 			}, func(_ context.Context, token, cluster, namespace, instance string) error {

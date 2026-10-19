@@ -3,7 +3,7 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /src
 
 COPY go.mod ./
-COPY main.go ./
+COPY main.go metrics.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
 	-trimpath \

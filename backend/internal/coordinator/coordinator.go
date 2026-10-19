@@ -16,8 +16,6 @@ var ErrKubernetesClientRequired = errors.New("kubernetes client is required")
 // Config contains deployment-level settings shared by benchmark runs.
 type Config struct {
 	WorkloadNamespace    string
-	RunnerImage          string
-	ImagePullPolicy      string
 	RunnerServiceAccount string
 	Resources            Resources
 	ExecutionTimeout     time.Duration
@@ -32,14 +30,6 @@ type Config struct {
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.WorkloadNamespace) == "" {
 		return errors.New("workload namespace is required")
-	}
-	if strings.TrimSpace(c.RunnerImage) == "" {
-		return errors.New("runner image is required")
-	}
-	switch c.ImagePullPolicy {
-	case "Always", "IfNotPresent", "Never":
-	default:
-		return errors.New("image pull policy must be Always, IfNotPresent, or Never")
 	}
 	if strings.TrimSpace(c.RunnerServiceAccount) == "" {
 		return errors.New("runner service account is required")

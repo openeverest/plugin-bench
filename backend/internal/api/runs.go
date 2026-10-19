@@ -6,17 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
-	"mime"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -43,25 +39,31 @@ type Target struct {
 
 // CreateRunRequest contains the target and per-run benchmark settings.
 type CreateRunRequest struct {
-	Target          Target                `json:"target"`
-	Database        string                `json:"database"`
-	DurationSeconds int                   `json:"durationSeconds"`
-	Clients         int                   `json:"clients"`
-	Threads         int                   `json:"threads"`
-	Scale           int                   `json:"scale"`
-	Initialize      bool                  `json:"initialize"`
-	Resources       coordinator.Resources `json:"resources"`
-	NodeAffinity    *corev1.NodeAffinity  `json:"nodeAffinity,omitempty"`
+	Target       Target                `json:"target"`
+	Database     string                `json:"database"`
+	Driver       string                `json:"driver"`
+	Options      json.RawMessage       `json:"options"`
+	Resources    coordinator.Resources `json:"resources"`
+	NodeAffinity *corev1.NodeAffinity  `json:"nodeAffinity,omitempty"`
 }
 
 // RunStatus describes the execution workflow. Running does not imply that
 // the Kubernetes runner Pod has already started.
 type RunStatus string
 
+// RunSnapshot records effective, safe configuration after driver preparation.
+type RunSnapshot struct {
+	Driver      string          `json:"driver"`
+	RunnerImage string          `json:"runnerImage"`
+	Database    string          `json:"database"`
+	Options     json.RawMessage `json:"options"`
+}
+
 // Run is the record retained for status and result retrieval.
 type Run struct {
 	ID              string                `json:"id"`
-	Request         CreateRunRequest      `json:"request"`
+	Target          Target                `json:"target"`
+	Snapshot        RunSnapshot           `json:"snapshot"`
 	Resources       coordinator.Resources `json:"resources"`
 	NodeAffinity    corev1.NodeAffinity   `json:"nodeAffinity"`
 	Status          RunStatus             `json:"status"`
@@ -70,10 +72,14 @@ type Run struct {
 	JobName         string                `json:"jobName,omitempty"`
 	Output          string                `json:"output,omitempty"`
 	OutputTruncated bool                  `json:"outputTruncated"`
+	Metrics         []runnerresult.Metric `json:"metrics,omitempty"`
 	Error           string                `json:"error,omitempty"`
 }
 
 type RunStatusResponse struct {
+	Driver          string                `json:"driver"`
+	RunnerImage     string                `json:"runnerImage"`
+	Options         json.RawMessage       `json:"options"`
 	ID              string                `json:"id"`
 	Status          RunStatus             `json:"status"`
 	Database        string                `json:"database,omitempty"`
@@ -84,6 +90,7 @@ type RunStatusResponse struct {
 	JobName         string                `json:"jobName,omitempty"`
 	Output          string                `json:"output,omitempty"`
 	OutputTruncated bool                  `json:"outputTruncated"`
+	Metrics         []runnerresult.Metric `json:"metrics,omitempty"`
 	Error           string                `json:"error,omitempty"`
 }
 
@@ -108,14 +115,13 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	options, err := prepareRunOptions(request)
+	request, resolvedResources, err := a.prepareSharedRequest(request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	resolved, err := coordinator.ResolveResources(a.resourceDefaults, options.Resources)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if a.registry == nil {
+		writeError(w, http.StatusServiceUnavailable, "benchmark drivers are unavailable")
 		return
 	}
 	if a.getCredentials == nil {
@@ -136,12 +142,12 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, message)
 		return
 	}
-	connection, err := connectionFromCredentials(request.Database, credentials)
+	prepared, err := a.prepareRun(request, credentials)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		status, message := preparationError(err)
+		writeError(w, status, message)
 		return
 	}
-	request.Database = connection.Database
 	if a.lifecycleCtx.Err() != nil {
 		writeError(w, http.StatusServiceUnavailable, "benchmark service is shutting down")
 		return
@@ -169,7 +175,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
-	run, err := a.store.Create(runID, request, resolved, options.NodeAffinity)
+	run, err := a.store.Create(runID, request.Target, prepared.Snapshot, resolvedResources, prepared.Input.NodeAffinity)
 	if err != nil {
 		<-a.runSlots
 		a.runs.Done()
@@ -177,7 +183,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runCtx, cancel := context.WithCancel(a.lifecycleCtx)
-	go a.executeRun(runCtx, cancel, run.ID, connection, options)
+	go a.executeRun(runCtx, cancel, run.ID, prepared)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -192,12 +198,13 @@ func newRunID() (string, error) {
 	return hex.EncodeToString(id[:]), nil
 }
 
-func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id string, connection coordinator.Connection, options coordinator.Options) {
-	defer cancel()
-	defer func() { <-a.runSlots }()
+func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id string, prepared preparedRun) {
 	defer a.runs.Done()
-	result, err := a.runner.Run(ctx, connection, options)
-	result.Output = sanitizeRunnerOutput(result.Output, connection.Password)
+	defer func() { <-a.runSlots }()
+	defer cancel()
+	result, err := a.runner.Run(ctx, prepared.Input)
+	result.Output = sanitizeRunnerOutput(result.Output, prepared.SensitiveValues...)
+	result.Metrics = sanitizeRunnerMetrics(result.Metrics, prepared.SensitiveValues...)
 	status, message := RunStatusSucceeded, ""
 	if err != nil {
 		status, message = RunStatusFailed, "benchmark execution failed"
@@ -212,21 +219,13 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 		}
 		log.Printf(
 			"benchmark run %q failed: %v (job=%q, output_bytes=%d, output_truncated=%t)",
-			id, err, result.JobName, len(result.Output), result.OutputTruncated,
+			id, sanitizeRunnerOutput(err.Error(), prepared.SensitiveValues...), result.JobName, len(result.Output), result.OutputTruncated,
 		)
 	}
 	if err := a.store.Complete(id, status, result, message); err != nil {
-
 		log.Printf("benchmark run %q result could not be stored: %v", id, err)
 		return
 	}
-}
-
-func sanitizeRunnerOutput(output, password string) string {
-	if password == "" {
-		return output
-	}
-	return strings.ReplaceAll(output, password, "[REDACTED]")
 }
 
 func credentialLookupError(err error) (int, string) {
@@ -260,134 +259,6 @@ func mapOpenEverestError(err error, timeoutMessage, upstreamMessage string) (int
 	}
 }
 
-func connectionFromCredentials(database string, credentials *everest.Credentials) (coordinator.Connection, error) {
-	if credentials == nil {
-		return coordinator.Connection{}, errors.New("OpenEverest returned no connection details")
-	}
-	if !strings.EqualFold(strings.TrimSpace(credentials.Type), "postgresql") {
-		return coordinator.Connection{}, errors.New("benchmarking is currently supported only for PostgreSQL targets")
-	}
-	switch credentials.Provider {
-	case "provider-cloudnative-pg", "provider-percona-postgresql":
-	default:
-		return coordinator.Connection{}, errors.New("benchmarking is not supported for this PostgreSQL provider")
-	}
-	if strings.TrimSpace(credentials.Password) == "" && strings.TrimSpace(credentials.URI) != "" {
-		return coordinator.Connection{}, errors.New("URI-only connection details are not supported by the pgbench runner")
-	}
-	port, err := strconv.Atoi(credentials.Port)
-	if err != nil {
-		return coordinator.Connection{}, errors.New("OpenEverest returned an invalid database port")
-	}
-	database = strings.TrimSpace(database)
-	if database == "" {
-		database = defaultDatabase(credentials)
-	}
-	if database == "" {
-		return coordinator.Connection{}, errors.New("could not determine the instance's default database; enter a database name")
-	}
-	connection := coordinator.Connection{
-		Host:     credentials.Host,
-		Port:     port,
-		Database: database,
-		Username: credentials.Username,
-		Password: credentials.Password,
-	}
-	if err := connection.Validate(); err != nil {
-		return coordinator.Connection{}, errors.New("OpenEverest returned incomplete connection details")
-	}
-	return connection, nil
-}
-
-// defaultDatabase prefers the explicit "database" key and falls back to the
-// database path of the connection URI.
-func defaultDatabase(credentials *everest.Credentials) string {
-	if database := strings.TrimSpace(credentials.Database); database != "" {
-		return database
-	}
-	uri, err := url.Parse(strings.TrimSpace(credentials.URI))
-	if err != nil {
-		return ""
-	}
-	database := strings.TrimPrefix(uri.Path, "/")
-	if strings.Contains(database, "/") {
-		return ""
-	}
-	return strings.TrimSpace(database)
-}
-
-// prepareRunOptions validates HTTP input before credential lookup or admission.
-// The coordinator reuses the same affinity validator to protect direct callers.
-func prepareRunOptions(request CreateRunRequest) (coordinator.Options, error) {
-	if strings.TrimSpace(request.Target.K8sCluster) == "" {
-		return coordinator.Options{}, errors.New("target.k8sCluster is required")
-	}
-	if strings.TrimSpace(request.Target.Namespace) == "" {
-		return coordinator.Options{}, errors.New("target.namespace is required")
-	}
-	if strings.TrimSpace(request.Target.Instance) == "" {
-		return coordinator.Options{}, errors.New("target.instance is required")
-	}
-	if strings.Contains(request.Database, "=") || strings.HasPrefix(strings.ToLower(request.Database), "postgres://") || strings.HasPrefix(strings.ToLower(request.Database), "postgresql://") {
-		return coordinator.Options{}, errors.New("database must be a database name, not a connection string")
-	}
-
-	options := optionsFromRequest(request)
-	if err := options.Validate(); err != nil {
-		return coordinator.Options{}, err
-	}
-	affinity, err := coordinator.PrepareNodeAffinity(request.NodeAffinity)
-	if err != nil {
-		return coordinator.Options{}, err
-	}
-	options.NodeAffinity = affinity
-	return options, nil
-}
-
-func optionsFromRequest(request CreateRunRequest) coordinator.Options {
-	return coordinator.Options{
-		Duration:   request.DurationSeconds,
-		Clients:    request.Clients,
-		Threads:    request.Threads,
-		Scale:      request.Scale,
-		Initialize: request.Initialize,
-		Resources:  request.Resources,
-	}
-}
-
-var errUnsupportedContentType = errors.New("Content-Type must be application/json")
-
-func decodeCreateRunRequest(w http.ResponseWriter, r *http.Request) (CreateRunRequest, error) {
-	var request CreateRunRequest
-	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		return request, errUnsupportedContentType
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxCreateRunRequestBytes)
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	var decoded *CreateRunRequest
-	if err := decoder.Decode(&decoded); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return request, err
-		}
-		return request, errors.New("request body must contain a valid JSON object")
-	}
-	if decoded == nil {
-		return request, errors.New("request body must contain a JSON object")
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return request, err
-		}
-		return request, errors.New("request body must contain exactly one JSON object")
-	}
-	return *decoded, nil
-}
-
 func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 	token, err := extractBearerToken(r)
 	if err != nil {
@@ -412,18 +283,18 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	err = a.checkInstanceAccess(
 		r.Context(), token,
-		run.Request.Target.K8sCluster,
-		run.Request.Target.Namespace,
-		run.Request.Target.Instance,
+		run.Target.K8sCluster,
+		run.Target.Namespace,
+		run.Target.Instance,
 	)
 	if err != nil {
 		status, message := instanceAccessError(err)
 		log.Printf(
 			"benchmark run %q access check failed (cluster=%q namespace=%q instance=%q): %v",
 			run.ID,
-			run.Request.Target.K8sCluster,
-			run.Request.Target.Namespace,
-			run.Request.Target.Instance,
+			run.Target.K8sCluster,
+			run.Target.Namespace,
+			run.Target.Instance,
 			err,
 		)
 		if status == http.StatusUnauthorized {
@@ -434,9 +305,12 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := RunStatusResponse{
+		Driver:          run.Snapshot.Driver,
+		RunnerImage:     run.Snapshot.RunnerImage,
+		Options:         run.Snapshot.Options,
 		ID:              run.ID,
 		Status:          run.Status,
-		Database:        run.Request.Database,
+		Database:        run.Snapshot.Database,
 		Resources:       run.Resources,
 		NodeAffinity:    run.NodeAffinity,
 		CreatedAt:       run.CreatedAt,
@@ -444,6 +318,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		JobName:         run.JobName,
 		Output:          run.Output,
 		OutputTruncated: run.OutputTruncated,
+		Metrics:         run.Metrics,
 		Error:           run.Error,
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -15,101 +15,52 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestNewCredentialSecretRejectsInvalidInput(t *testing.T) {
-	for _, field := range []string{"namespace", "name", "host", "port", "database", "username", "password"} {
-		t.Run(field, func(t *testing.T) {
-			namespace, name := "workloads", "credentials"
-			connection := Connection{Host: "postgres", Port: 5432, Database: "bench", Username: "postgres", Password: "sensitive-test-password"}
-			switch field {
-			case "namespace":
-				namespace = " "
-			case "name":
-				name = " "
-			case "host":
-				connection.Host = ""
-			case "port":
-				connection.Port = 65536
-			case "database":
-				connection.Database = ""
-			case "username":
-				connection.Username = ""
-			case "password":
-				connection.Password = ""
-			}
-			secret, err := newCredentialSecret(namespace, name, connection, nil)
-			if err == nil || secret != nil {
-				t.Fatal("invalid input must return an error and no Secret")
-			}
-			if strings.Contains(err.Error(), "sensitive-test-password") {
-				t.Fatal("validation error exposed credentials")
-			}
-		})
+func TestNewCredentialSecretRejectsInvalidIdentity(t *testing.T) {
+	for _, identity := range [][2]string{{" ", "credentials"}, {"workloads", " "}} {
+		secret, err := newCredentialSecret(identity[0], identity[1], validRunInput().Spec.SecretData, nil)
+		if err == nil || secret != nil || strings.Contains(err.Error(), "sensitive-test-password") {
+			t.Fatalf("invalid identity must return a safe error: %v", err)
+		}
 	}
 }
 
-func TestNewCredentialSecretBuildsConnectionData(t *testing.T) {
-	connection := Connection{
-		Host:     "postgres.example.com",
-		Port:     5432,
-		Database: "pgbench",
-		Username: "postgres",
-		Password: "secret",
-	}
-
-	secret, err := newCredentialSecret("plugin-bench-workloads", "pgbench-secret-1", connection, nil)
+func TestNewCredentialSecretOwnsGenericData(t *testing.T) {
+	data := map[string][]byte{"token": []byte("secret"), "config.json": []byte("{}")}
+	secret, err := newCredentialSecret("plugin-bench-workloads", "credentials", data, nil)
 	if err != nil {
-		t.Fatalf("newCredentialSecret() error = %v", err)
+		t.Fatal(err)
 	}
-	if secret.Namespace != "plugin-bench-workloads" || secret.Name != "pgbench-secret-1" {
-		t.Fatalf("secret identity = %s/%s", secret.Namespace, secret.Name)
-	}
-	if secret.Type != "Opaque" {
-		t.Fatalf("secret type = %q", secret.Type)
-	}
-	if string(secret.Data[secretKeyHost]) != connection.Host ||
-		string(secret.Data[secretKeyPort]) != "5432" ||
-		string(secret.Data[secretKeyDatabase]) != connection.Database ||
-		string(secret.Data[secretKeyUser]) != connection.Username ||
-		string(secret.Data[secretKeyPassword]) != connection.Password {
-		t.Fatal("secret does not contain the expected connection data")
+	data["token"][0] = 'X'
+	delete(data, "config.json")
+	if secret.Namespace != "plugin-bench-workloads" || secret.Name != "credentials" || secret.Type != corev1.SecretTypeOpaque ||
+		string(secret.Data["token"]) != "secret" || string(secret.Data["config.json"]) != "{}" {
+		t.Fatal("Secret did not retain an independent copy of arbitrary driver data")
 	}
 }
 
 func TestCreateCredentialSecret(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	client.PrependReactor("create", "secrets", func(action ktesting.Action) (bool, runtime.Object, error) {
-		secret := action.(ktesting.CreateAction).GetObject().(*corev1.Secret)
-		secret.UID = types.UID("uid-run-1")
+		action.(ktesting.CreateAction).GetObject().(*corev1.Secret).UID = types.UID("uid-run-1")
 		return false, nil, nil
 	})
 	coordinator, err := New(validConfig(), client)
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatal(err)
 	}
-	connection := Connection{
-		Host:     "postgres.example.com",
-		Port:     5432,
-		Database: "pgbench",
-		Username: "postgres",
-		Password: "sensitive-test-password",
-	}
-
-	reference, err := coordinator.createCredentialSecret(context.Background(), connection, map[string]string{"plugin-bench/run-id": "run-1"})
+	reference, err := coordinator.createCredentialSecret(context.Background(), validRunInput().Spec.SecretData, map[string]string{"plugin-bench/run-id": "run-1"})
 	if err != nil {
-		t.Fatalf("createCredentialSecret() error = %v", err)
+		t.Fatal(err)
 	}
 	if !strings.HasPrefix(reference.Name, credentialSecretNamePrefix) || reference.UID == "" {
 		t.Fatalf("SecretRef = %+v, want generated name and UID", reference)
 	}
 	created, err := client.CoreV1().Secrets("plugin-bench-workloads").Get(context.Background(), reference.Name, metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("Get() error = %v", err)
+		t.Fatal(err)
 	}
-	if string(created.Data[secretKeyPassword]) != connection.Password {
-		t.Fatal("created Secret does not contain the password")
-	}
-	if created.Labels["plugin-bench/run-id"] != "run-1" {
-		t.Fatal("created Secret did not retain run labels")
+	if string(created.Data["token"]) != "sensitive-test-password" || created.Labels["plugin-bench/run-id"] != "run-1" {
+		t.Fatal("Secret did not retain generic data and labels")
 	}
 }
 
@@ -122,7 +73,7 @@ func TestCreateCredentialSecretRejectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = coordinator.createCredentialSecret(ctx, validConnection(), nil)
+	_, err = coordinator.createCredentialSecret(ctx, validRunInput().Spec.SecretData, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
@@ -145,7 +96,7 @@ func TestCreateCredentialSecretDoesNotExposeCredentialsOnAPIError(t *testing.T) 
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = coordinator.createCredentialSecret(context.Background(), validConnection(), nil)
+	_, err = coordinator.createCredentialSecret(context.Background(), validRunInput().Spec.SecretData, nil)
 	if err == nil || !strings.Contains(err.Error(), "Kubernetes API unavailable") {
 		t.Fatalf("error = %v, want API error", err)
 	}
@@ -176,16 +127,6 @@ func TestDeleteCredentialSecret(t *testing.T) {
 	_, err = client.CoreV1().Secrets(validConfig().WorkloadNamespace).Get(context.Background(), "credentials-run-1", metav1.GetOptions{})
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("Get() error = %v, want NotFound", err)
-	}
-}
-
-func validConnection() Connection {
-	return Connection{
-		Host:     "postgres.example.com",
-		Port:     5432,
-		Database: "pgbench",
-		Username: "postgres",
-		Password: "sensitive-test-password",
 	}
 }
 

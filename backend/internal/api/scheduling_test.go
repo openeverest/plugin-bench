@@ -27,7 +27,7 @@ func TestExecuteRunHidesSchedulingDiagnostics(t *testing.T) {
 	for _, scenario := range []string{"generic", "scheduling", "timeout with scheduling"} {
 		t.Run(scenario, func(t *testing.T) {
 			store := NewRunStore()
-			if _, err := store.Create("run", CreateRunRequest{Target: Target{Instance: "postgres"}}, coordinator.Resources{}, nil); err != nil {
+			if _, err := store.Create("run", Target{Instance: "postgres"}, RunSnapshot{}, coordinator.Resources{}, nil); err != nil {
 				t.Fatal(err)
 			}
 			var runErr error = errors.New("private backend failure: secret-password")
@@ -39,15 +39,15 @@ func TestExecuteRunHidesSchedulingDiagnostics(t *testing.T) {
 			if scenario == "timeout with scheduling" {
 				runErr = errors.Join(runErr, context.DeadlineExceeded)
 			}
-			api := NewAPI(nil, func(context.Context, string, string, string, string) error { return nil },
-				testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
+			api := newTestAPI(nil, func(context.Context, string, string, string, string) error { return nil },
+				testRunnerFunc(func(context.Context, coordinator.RunInput) (coordinator.Result, error) {
 					return coordinator.Result{JobName: "job", Output: "secret-password"}, runErr
 				}), store, context.Background(), coordinator.Resources{})
 			api.runSlots <- struct{}{}
 			api.runs.Add(1)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			api.executeRun(ctx, cancel, "run", coordinator.Connection{Password: "secret-password"}, coordinator.DefaultOptions())
+			api.executeRun(ctx, cancel, "run", preparedRun{SensitiveValues: []string{"secret-password"}})
 			r := httptest.NewRequest(http.MethodGet, "/api/runs/run", nil)
 			r.SetPathValue("id", "run")
 			r.Header.Set("Authorization", "Bearer test-token")
@@ -107,15 +107,15 @@ func TestUnschedulableRunsReleaseCapacity(t *testing.T) {
 					Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, Message: "no nodes match required affinity"}}},
 			}}}, nil
 		})
-		runner, err := coordinator.New(coordinator.Config{WorkloadNamespace: "workloads", RunnerImage: "runner:test",
-			ImagePullPolicy: "IfNotPresent", RunnerServiceAccount: "runner", ExecutionTimeout: 5 * time.Minute,
+		runner, err := coordinator.New(coordinator.Config{WorkloadNamespace: "workloads",
+			RunnerServiceAccount: "runner", ExecutionTimeout: 5 * time.Minute,
 			SchedulingGracePeriod: time.Minute}, client)
 		if err != nil {
 			t.Fatal(err)
 		}
 		store := NewRunStore()
 		lifecycleCtx, stop := context.WithCancel(context.Background())
-		api := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+		api := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 			return testCredentials(), nil
 		}, nil, runner, store, lifecycleCtx, coordinator.Resources{})
 		defer func() { stop(); api.runs.Wait() }()

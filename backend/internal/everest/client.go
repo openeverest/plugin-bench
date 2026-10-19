@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -114,28 +113,6 @@ type Credentials struct {
 	Database string `json:"database"`
 }
 
-func validateCredentials(creds Credentials) error {
-	if strings.TrimSpace(creds.Host) == "" {
-		return fmt.Errorf("missing host")
-	}
-
-	port := strings.TrimSpace(creds.Port)
-	portNumber, err := strconv.Atoi(port)
-	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return fmt.Errorf("invalid port")
-	}
-
-	if strings.TrimSpace(creds.Username) == "" {
-		return fmt.Errorf("missing username")
-	}
-
-	if strings.TrimSpace(creds.Password) == "" && strings.TrimSpace(creds.URI) == "" {
-		return fmt.Errorf("missing password or URI")
-	}
-
-	return nil
-}
-
 func everestAPIURL() string {
 	// Explicit override wins (useful for local dev or air-gapped setups).
 	if v := os.Getenv("EVEREST_API_URL"); v != "" {
@@ -171,7 +148,8 @@ func errorKindForStatus(statusCode int) error {
 }
 
 // GetCredentials retrieves connection details for an OpenEverest-managed
-// PostgreSQL instance using the caller's authorization token.
+// instance using the caller's authorization token. The driver checks whether
+// the returned connection details are usable for its tool.
 func GetCredentials(ctx context.Context, jwt, k8sCluster, namespace, instance string) (*Credentials, error) {
 	apiURL := fmt.Sprintf("%s/v1/clusters/%s/namespaces/%s/instances/%s/connection",
 		everestAPIURL(),
@@ -203,14 +181,14 @@ func GetCredentials(ctx context.Context, jwt, k8sCluster, namespace, instance st
 		}
 	}
 
-	var creds Credentials
+	var creds *Credentials
 	if err := json.Unmarshal(body, &creds); err != nil {
 		return nil, &InvalidResponseError{Err: fmt.Errorf("failed to decode credentials: %w", err)}
 	}
-	if err := validateCredentials(creds); err != nil {
-		return nil, &InvalidResponseError{Err: err}
+	if creds == nil {
+		return nil, &InvalidResponseError{Err: errors.New("connection details must be a JSON object")}
 	}
-	return &creds, nil
+	return creds, nil
 }
 
 // CheckInstanceAccess verifies that the caller can read an instance without

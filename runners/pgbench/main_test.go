@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,11 +139,21 @@ func TestChildProcess(t *testing.T) {
 	case "wait":
 		time.Sleep(time.Minute)
 		os.Exit(0)
+	case "summary":
+		data, err := os.ReadFile(filepath.Join("testdata", "summary-pg16.txt"))
+		if err != nil {
+			os.Exit(1)
+		}
+		os.Stdout.Write(data)
+		os.Exit(0)
 	}
 }
 
 func TestExecute(t *testing.T) {
-	env := commandEnvironment([]string{"RUNNER_TEST_CHILD=exit", "PGPORT=", "PGCONNECT_TIMEOUT=", "PGSSLMODE=require"}, config{port: 5432, timeout: 10})
+	// A coverage-instrumented child needs a directory to avoid adding a runtime
+	// warning to stdout, where this test checks the exact subprocess output.
+	coverageDir := t.TempDir()
+	env := commandEnvironment([]string{"RUNNER_TEST_CHILD=exit", "PGPORT=", "PGCONNECT_TIMEOUT=", "PGSSLMODE=require", "GOCOVERDIR=" + coverageDir}, config{port: 5432, timeout: 10})
 	var output bytes.Buffer
 	err := execute(context.Background(), os.Args[0], []string{"-test.run=^TestChildProcess$"}, env, &output, &output)
 	var exitErr *exec.ExitError
@@ -155,8 +166,154 @@ func TestExecute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	err = execute(ctx, os.Args[0], []string{"-test.run=^TestChildProcess$"}, []string{"RUNNER_TEST_CHILD=wait"}, &output, &output)
+	err = execute(ctx, os.Args[0], []string{"-test.run=^TestChildProcess$"}, []string{"RUNNER_TEST_CHILD=wait", "GOCOVERDIR=" + coverageDir}, &output, &output)
 	if err == nil || ctx.Err() == nil || time.Since(start) > 10*time.Second {
 		t.Fatalf("child did not stop promptly: %v", err)
+	}
+}
+
+func TestCommandEnvironmentForcesStableLocale(t *testing.T) {
+	env := []string{"LC_ALL=fr_FR.UTF-8", "LC_ALL=de_DE.UTF-8", "PGSSLMODE=require", "PATH=/bin"}
+	before := append([]string(nil), env...)
+	got := commandEnvironment(env, config{port: 5432, timeout: 10})
+	var locales []string
+	for _, entry := range got {
+		if strings.HasPrefix(entry, "LC_ALL=") {
+			locales = append(locales, entry)
+		}
+	}
+	if !reflect.DeepEqual(locales, []string{"LC_ALL=C"}) || !reflect.DeepEqual(env, before) {
+		t.Fatal("locale override is ambiguous or modified caller environment")
+	}
+}
+
+func TestRunWithMetricsStreamsOutputAndExcludesInitialization(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "termination-log")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	var calls int
+	initialization := "initializing\nlatency average = 999 ms\ntps = 999 (without initial connection time)\n"
+	summary := summaryFixture(t)
+	err := runWithMetrics(context.Background(), config{initialize: true}, func(_ context.Context, args []string, output io.Writer) error {
+		calls++
+		if args[0] == "-i" {
+			_, err := io.WriteString(output, initialization)
+			return err
+		}
+		_, err := io.WriteString(output, summary)
+		return err
+	}, &stdout, &stderr, path)
+	if err != nil || calls != 2 || stderr.Len() != 0 {
+		t.Fatalf("calls=%d, error=%v, diagnostics=%q", calls, err, stderr.String())
+	}
+	if stdout.String() != initialization+summary {
+		t.Fatal("runner logs changed")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "testdata", "runner-result-v1.json"))
+	if err != nil || !bytes.Equal(bytes.TrimSpace(got), bytes.TrimSpace(fixture)) {
+		t.Fatal("termination metrics include initialization output or differ from contract")
+	}
+}
+
+func TestRunWithMetricsPreservesFailuresAndCancellation(t *testing.T) {
+	childFailure := errors.New("child failure")
+	for _, scenario := range []string{"initialization failure", "benchmark failure", "cancelled before run", "cancelled after output"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if scenario == "cancelled before run" {
+				cancel()
+			}
+			path := filepath.Join(t.TempDir(), "termination-log")
+			if err := os.WriteFile(path, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			calls := 0
+			err := runWithMetrics(ctx, config{initialize: scenario == "initialization failure"}, func(_ context.Context, _ []string, output io.Writer) error {
+				calls++
+				if _, err := io.WriteString(output, summaryFixture(t)); err != nil {
+					return err
+				}
+				if scenario == "cancelled after output" {
+					cancel()
+					return nil
+				}
+				return childFailure
+			}, &stdout, &stderr, path)
+			if strings.HasPrefix(scenario, "cancelled") {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation lost: %v", err)
+				}
+			} else if !errors.Is(err, childFailure) {
+				t.Fatalf("child failure lost: %v", err)
+			}
+			if scenario == "cancelled before run" && calls != 0 {
+				t.Fatal("cancelled runner started a subprocess")
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil || len(data) != 0 {
+				t.Fatal("failed or cancelled run wrote success metrics")
+			}
+		})
+	}
+}
+
+func TestRunWithMetricsUnavailableDoesNotFailBenchmark(t *testing.T) {
+	for _, scenario := range []string{"no summary", "malformed summary", "unwritable termination file", "missing termination file"} {
+		t.Run(scenario, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "termination-log")
+			if scenario != "missing termination file" {
+				if err := os.WriteFile(path, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "unwritable termination file" {
+				path = t.TempDir()
+			}
+			var stdout, stderr bytes.Buffer
+			err := runWithMetrics(context.Background(), config{}, func(_ context.Context, _ []string, output io.Writer) error {
+				text := summaryFixture(t)
+				if scenario == "no summary" {
+					text = "no transactions processed\n"
+				}
+				if scenario == "malformed summary" {
+					text = "latency average = credential-sentinel ms\n"
+				}
+				_, err := io.WriteString(output, text)
+				return err
+			}, &stdout, &stderr, path)
+			if err != nil {
+				t.Fatalf("successful benchmark failed due to unavailable metrics: %v", err)
+			}
+			if stderr.String() != "runner warning: structured metrics unavailable\n" {
+				t.Fatalf("unexpected diagnostic: %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunWithMetricsCollectsSubprocessStdout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "termination-log")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"RUNNER_TEST_CHILD=summary", "GOCOVERDIR=" + t.TempDir()}
+	var stdout, stderr bytes.Buffer
+	err := runWithMetrics(context.Background(), config{}, func(ctx context.Context, _ []string, output io.Writer) error {
+		return execute(ctx, os.Args[0], []string{"-test.run=^TestChildProcess$"}, env, output, &stderr)
+	}, &stdout, &stderr, path)
+	if err != nil || stderr.Len() != 0 || stdout.String() != summaryFixture(t) {
+		t.Fatalf("subprocess output changed or execution failed: %v, stderr=%q", err, stderr.String())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Contains(data, []byte(`"value":1234.5`)) {
+		t.Fatalf("subprocess metrics were not written: %v", err)
 	}
 }

@@ -54,7 +54,7 @@ func TestNewBenchmarkJobAppliesAdminPlacementAlongsideRunAffinity(t *testing.T) 
 	wantTolerations := []corev1.Toleration{
 		{Key: "dedicated", Operator: corev1.TolerationOpEqual, Value: "benchmark", Effect: corev1.TaintEffectNoSchedule},
 	}
-	options := DefaultOptions()
+	options := validRunInput()
 	options.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 		NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{
 			{Key: "disktype", Operator: corev1.NodeSelectorOpIn, Values: []string{"ssd"}},
@@ -81,7 +81,7 @@ func TestNewBenchmarkJobAppliesAdminPlacementAlongsideRunAffinity(t *testing.T) 
 }
 
 func TestNewBenchmarkJobOmitsEmptyAdminPlacement(t *testing.T) {
-	job, err := newBenchmarkJob(validConfig(), "job", "secret", DefaultOptions(), validConfig().Resources, nil)
+	job, err := newBenchmarkJob(validConfig(), "job", "secret", validRunInput(), validConfig().Resources, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

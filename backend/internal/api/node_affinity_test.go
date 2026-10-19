@@ -70,12 +70,12 @@ func TestCreateRunPreparesNodeAffinityAndKeepsStoredSnapshot(t *testing.T) {
 			} else if input != nil {
 				wantSnapshot = *input.DeepCopy()
 			}
-			calls := make(chan coordinator.Options, 1)
+			calls := make(chan coordinator.RunInput, 1)
 			release := make(chan struct{})
 			store := NewRunStore()
-			a := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+			a := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				return testCredentials(), nil
-			}, nil, testRunnerFunc(func(_ context.Context, _ coordinator.Connection, options coordinator.Options) (coordinator.Result, error) {
+			}, nil, testRunnerFunc(func(_ context.Context, options coordinator.RunInput) (coordinator.Result, error) {
 				calls <- options
 				<-release
 				return coordinator.Result{}, nil
@@ -103,13 +103,13 @@ func TestCreateRunPreparesNodeAffinityAndKeepsStoredSnapshot(t *testing.T) {
 			if len(accepted) != 2 || accepted["id"] == "" || accepted["status"] != "running" {
 				t.Fatalf("acceptance contract changed: %v", accepted)
 			}
-			var options coordinator.Options
+			var options coordinator.RunInput
 			select {
 			case options = <-calls:
 			case <-time.After(time.Second):
 				t.Fatal("runner was not called")
 			}
-			if !reflect.DeepEqual(options.NodeAffinity, wantOptions) || options.Duration != 30 || options.Clients != 1 || options.Threads != 1 || options.Scale != 1 || options.Initialize {
+			if !reflect.DeepEqual(options.NodeAffinity, wantOptions) || options.Spec.Env["BENCH_DURATION"] != "30" || options.Spec.Env["BENCH_CLIENTS"] != "1" || options.Spec.Env["BENCH_THREADS"] != "1" || options.Spec.Env["BENCH_SCALE"] != "1" || options.Spec.Env["BENCH_INITIALIZE"] != "false" {
 				t.Fatalf("unexpected prepared runner options: %+v", options)
 			}
 			if name == "combined" {
@@ -117,7 +117,7 @@ func TestCreateRunPreparesNodeAffinityAndKeepsStoredSnapshot(t *testing.T) {
 				mutateTestNodeAffinity(options.NodeAffinity)
 			}
 			run, err := store.Get(accepted["id"])
-			if err != nil || run.Status != RunStatusRunning || !reflect.DeepEqual(run.NodeAffinity, wantSnapshot) || run.Request.NodeAffinity != nil {
+			if err != nil || run.Status != RunStatusRunning || !reflect.DeepEqual(run.NodeAffinity, wantSnapshot) {
 				t.Fatalf("stored snapshots changed: run=%+v err=%v", run, err)
 			}
 		})
@@ -158,10 +158,10 @@ func TestCreateRunRejectsInvalidNodeAffinityBeforeAdmission(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var credentialsCalled, runnerCalled atomic.Bool
 			store := NewRunStore()
-			a := NewAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+			a := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
 				credentialsCalled.Store(true)
 				return testCredentials(), nil
-			}, nil, testRunnerFunc(func(context.Context, coordinator.Connection, coordinator.Options) (coordinator.Result, error) {
+			}, nil, testRunnerFunc(func(context.Context, coordinator.RunInput) (coordinator.Result, error) {
 				runnerCalled.Store(true)
 				return coordinator.Result{}, nil
 			}), store, context.Background(), coordinator.Resources{})
@@ -194,7 +194,7 @@ func TestGetRunReturnsStoredNodeAffinityForEveryStatus(t *testing.T) {
 					// affinity differs from it.
 					request.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 5
 				}
-				_, err := store.Create("run-1", request, coordinator.Resources{}, input)
+				_, err := store.Create("run-1", request.Target, RunSnapshot{}, coordinator.Resources{}, input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -207,7 +207,7 @@ func TestGetRunReturnsStoredNodeAffinityForEveryStatus(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				a := NewAPI(nil, func(context.Context, string, string, string, string) error { return nil }, nil, store, context.Background(), coordinator.Resources{})
+				a := newTestAPI(nil, func(context.Context, string, string, string, string) error { return nil }, nil, store, context.Background(), coordinator.Resources{})
 				mux := http.NewServeMux()
 				a.RegisterRoutes(mux)
 				r := httptest.NewRequest(http.MethodGet, "/api/runs/run-1", nil)

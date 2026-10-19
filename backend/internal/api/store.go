@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,10 +25,9 @@ type RunStore struct {
 	now  func() time.Time
 }
 
-// Create stores the request settings and an independent prepared affinity snapshot.
-// Affinity is retained only in Run.NodeAffinity, not in the stored request.
+// Create stores only safe effective settings and an independent affinity snapshot.
 // A nil prepared affinity is retained as an empty object in status responses.
-func (s *RunStore) Create(id string, request CreateRunRequest, resources coordinator.Resources, nodeAffinity *corev1.NodeAffinity) (Run, error) {
+func (s *RunStore) Create(id string, target Target, snapshot RunSnapshot, resources coordinator.Resources, nodeAffinity *corev1.NodeAffinity) (Run, error) {
 	if strings.TrimSpace(id) == "" {
 		return Run{}, errors.New("run ID is required")
 	}
@@ -38,8 +38,8 @@ func (s *RunStore) Create(id string, request CreateRunRequest, resources coordin
 	if _, exists := s.runs[id]; exists {
 		return Run{}, ErrRunExists
 	}
-	request.NodeAffinity = nil
-	run := Run{ID: id, Request: request, Resources: resources, Status: RunStatusRunning, CreatedAt: now.UTC()}
+	snapshot.Options = slices.Clone(snapshot.Options)
+	run := Run{ID: id, Target: target, Snapshot: snapshot, Resources: resources, Status: RunStatusRunning, CreatedAt: now.UTC()}
 	if nodeAffinity != nil {
 		run.NodeAffinity = *nodeAffinity.DeepCopy()
 	}
@@ -65,6 +65,8 @@ func (s *RunStore) Get(id string) (Run, error) {
 }
 
 func copyRun(run Run) Run {
+	run.Snapshot.Options = slices.Clone(run.Snapshot.Options)
+	run.Metrics = slices.Clone(run.Metrics)
 	run.NodeAffinity = *run.NodeAffinity.DeepCopy()
 	if run.CompletedAt != nil {
 		completedAt := *run.CompletedAt
@@ -99,6 +101,7 @@ func (s *RunStore) Complete(id string, status RunStatus, result coordinator.Resu
 	run.JobName = result.JobName
 	run.Output = result.Output
 	run.OutputTruncated = result.OutputTruncated
+	run.Metrics = slices.Clone(result.Metrics)
 	run.Error = message
 	s.runs[id] = run
 	return nil
