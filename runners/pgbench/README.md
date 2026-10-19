@@ -97,6 +97,45 @@ Kubernetes supplies this file; use `terminationMessagePolicy: File` on the runne
 
 When metrics are missing, malformed, or cannot be written, the runner emits a generic warning and preserves the benchmark exit status. A plain Docker invocation without a writable termination file therefore still works, but reports metrics as unavailable. Failed or cancelled benchmarks do not write a success record.
 
+The backend reads the current runner container's termination message before
+cleanup and returns decoded metrics separately from logs. See the shared
+[request and runner result contracts](../../docs/runner-result-contract.md).
+
+### Inspect metrics with Docker
+
+Docker does not supply Kubernetes' termination file. Against the disposable
+database above, mount a fresh writable file to inspect it. This example enables
+initialization and therefore recreates pgbench tables:
+
+```bash
+metrics_dir=$(mktemp -d)
+trap 'rm -f "$metrics_dir/result.json"; rmdir "$metrics_dir"' EXIT
+touch "$metrics_dir/result.json"
+# The parent directory is private; allow the container's postgres user to write
+# the single mounted file without assuming its numeric UID matches the host.
+chmod 666 "$metrics_dir/result.json"
+
+docker run --rm \
+  --network pgbench-test \
+  --mount "type=bind,src=$metrics_dir/result.json,dst=/dev/termination-log" \
+  -e PGHOST=pgbench-db-test -e PGDATABASE=pgbench -e PGUSER=postgres \
+  -e PGPASSWORD=postgres -e BENCH_INITIALIZE=true -e BENCH_DURATION=5 \
+  plugin-bench-pgbench:dev
+
+cat "$metrics_dir/result.json"
+```
+
+Use a fresh file for each invocation so a failed run cannot expose a previous
+run's success record. From the repository root, the automated image check is:
+
+```bash
+bash .github/scripts/test-runner.sh plugin-bench-pgbench:dev
+```
+
+It requires Docker and Python 3, creates its own disposable PostgreSQL database,
+checks initialization and table reuse, compares metrics with the same run's log
+summary, and verifies authentication failure and cleanup.
+
 ## Cleanup
 
 ```bash

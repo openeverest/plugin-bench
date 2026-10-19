@@ -1,12 +1,13 @@
 # OpenEverest Plugin Bench
 
-OpenEverest Plugin Bench is a plugin being developed as part of the OpenEverest
-PostgreSQL benchmarking MVP. It runs `pgbench` benchmarks from the OpenEverest
+OpenEverest Plugin Bench provides PostgreSQL benchmarking for OpenEverest.
+It runs `pgbench` benchmarks from the OpenEverest
 database cluster view, with each benchmark executing in a temporary Kubernetes
 Job.
 
-> **MVP in progress:** The benchmark MVP is under active development and is
-> not intended for production use yet.
+> **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
+> launching, and inspecting benchmark runs. Additional drivers and features
+> are planned for future releases.
 
 ## How it works
 
@@ -19,12 +20,30 @@ The plugin backend coordinates a benchmark run:
    in its connection URI).
 3. Create a temporary Secret containing the database credentials.
 4. Create a Kubernetes Job using the pgbench runner image.
-5. Wait for the Job and collect the runner logs.
+5. Wait for the Job and collect the runner logs and optional structured metrics.
 6. Delete the Job and temporary Secret.
 
 The frontend is currently available as a PostgreSQL cluster detail tab. It is
 built with MUI and themed from the host through `@openeverest/plugin-theme`.
-Other database technologies can be added later through a driver-based design.
+The backend uses a shared driver interface; pgbench is the current implementation.
+Additional benchmark tools can supply their own option validation and workload
+preparation while sharing the Kubernetes execution lifecycle.
+
+### Backend API and results
+
+New clients submit `driver` and a driver-specific `options` object to
+`POST /api/runs`. Target, database, resources, and node affinity remain shared
+request fields. The driver applies defaults, validates options, and records the
+effective configuration and configured runner image for later inspection.
+
+`GET /api/runs/{id}` returns status, effective settings, bounded log output, and
+optional numeric metrics. Access requires authorization for the stored target.
+Missing or invalid metrics do not turn a successful benchmark into a failed run.
+The existing frontend's submission flow remains compatible through the legacy
+pgbench request adapter; frontend integration of the new contracts is separate.
+
+See [the request and runner result contracts](docs/runner-result-contract.md)
+for payloads, defaults, compatibility, and metrics transport details.
 
 ### Runner placement
 
@@ -99,6 +118,70 @@ tilt up -f dev/Tiltfile
 
 Tilt builds the frontend, coordinator image, and pgbench runner image. The
 runner image is used only when the coordinator starts a benchmark Job.
+Tilt injects that local image through `drivers.pgbench.image.repository` and
+`drivers.pgbench.image.tag`; no published runner image is needed for this flow.
+
+## Driver configuration
+
+Configure enabled benchmark drivers and their runner images through Helm:
+
+```yaml
+drivers:
+  pgbench:
+    enabled: true
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: ""
+```
+
+Empty image fields use the defaults below after any legacy pgbench overrides.
+With no overrides, pgbench uses
+`ghcr.io/openeverest/plugin-bench-pgbench:<appVersion>` and `IfNotPresent`.
+`appVersion` comes from the chart being installed, including metadata set by
+`helm package --app-version` during a release.
+
+| Image field | First choice | Deprecated pgbench fallback | Default |
+| --- | --- | --- | --- |
+| Repository | `drivers.<id>.image.repository` | `runner.image.repository` | `ghcr.io/openeverest/plugin-bench-<id>` |
+| Tag | `drivers.<id>.image.tag` | `runner.image.tag` | Chart `appVersion` |
+| Pull policy | `drivers.<id>.image.pullPolicy` | `runner.image.pullPolicy` | `IfNotPresent` |
+
+Precedence applies independently to each field. For example, this pins just the
+pgbench runner version while inheriting its repository and pull policy:
+
+```yaml
+drivers:
+  pgbench:
+    image:
+      tag: "0.1.0"
+```
+
+Legacy `runner.image` overrides apply only to pgbench. Migrate them to
+`drivers.pgbench.image` when updating your values. Shared resources, timeouts,
+node selectors, and tolerations remain under `runner`; the backend Deployment's
+own image remains under the top-level `image` settings.
+
+Helm serializes the resolved settings into one backend environment variable:
+
+```json
+{"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.1.0","imagePullPolicy":"IfNotPresent"}}
+```
+
+The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
+`enabled` boolean. Enabled entries require a nonempty image reference, and pull
+policy must be `Always`, `IfNotPresent`, or `Never` (omitted/empty defaults to
+`IfNotPresent`). Only drivers compiled into the backend can be enabled; adding
+a Helm entry does not install an implementation. Currently only pgbench is
+available, so disabling it leaves no enabled drivers and stops backend startup.
+
+For deployments setting environment variables directly, `RUNNER_IMAGE` and
+`RUNNER_IMAGE_PULL_POLICY` remain deprecated pgbench fallbacks **only when
+`BENCHMARK_DRIVERS` is absent**. In that legacy mode, `RUNNER_IMAGE` is required
+and pull policy defaults to `IfNotPresent`. A present payload is authoritative:
+empty/malformed JSON, unknown fields, unknown enabled drivers, or no enabled
+drivers stop startup instead of falling back to legacy variables. Explicit
+disablement is never reversed by a legacy image setting.
 
 ## Runner settings
 
@@ -159,7 +242,9 @@ safe.
 src/                         React frontend
 backend/                     Go backend
 backend/internal/everest/    OpenEverest API client
+backend/internal/driver/     Driver contracts, registry, and pgbench preparation
 backend/internal/coordinator Kubernetes Job and Secret orchestration
+backend/internal/runnerresult Generic runner metrics decoder
 runners/pgbench/             pgbench runner image
 charts/plugin-bench/         Helm chart and Plugin resource
 dev/                         Tilt and k3d configuration
@@ -168,10 +253,13 @@ spec.md                      MVP requirements
 
 ## Current limitations
 
-The MVP targets PostgreSQL instances managed by OpenEverest. Benchmark output
-is collected from the runner and is not yet persisted in an external database.
-Run history, richer result parsing, and support for additional database
-technologies are planned for later iterations.
+The MVP targets PostgreSQL instances managed by OpenEverest. Run records,
+including output and metrics, are held in backend memory and are lost on restart.
+Completed records become unavailable one hour after completion; running records
+do not expire. Expired records are removed from memory when a new run is created.
+Keep one backend replica until shared storage and cross-pod coordination exist.
+Persistent history, comparisons, and additional database technologies remain
+future work.
 
 ## License
 

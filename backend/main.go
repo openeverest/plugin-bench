@@ -135,13 +135,16 @@ func decodeJSONEnv(key string, target any) error {
 	return nil
 }
 
-// benchmarkRegistryFromEnv preserves existing image configuration while the
-// driver deployment payload is introduced in the next configuration task.
+// Startup owns the compiled driver constructors; configuration only enables
+// those implementations and selects their runner images.
 func benchmarkRegistryFromEnv() (*driver.Registry, error) {
-	return driver.NewRegistry(driver.Registration{Driver: pgbench.New(), Runner: driver.RunnerConfig{
-		Image:           os.Getenv("RUNNER_IMAGE"),
-		ImagePullPolicy: envOrDefault("RUNNER_IMAGE_PULL_POLICY", "IfNotPresent"),
-	}})
+	registrations, err := driverRegistrationsFromEnv(map[string]func() driver.Driver{
+		"pgbench": pgbench.New,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return driver.NewRegistry(registrations...)
 }
 
 func run() error {

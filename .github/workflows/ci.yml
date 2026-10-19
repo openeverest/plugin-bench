@@ -37,12 +37,15 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: backend/go.mod
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: "3.14.0"
       - name: Download modules
         run: cd backend && go mod download
       - name: Create frontend embed placeholder
         run: mkdir -p backend/dist && touch backend/dist/main.js
       - run: cd backend && go vet ./...
-      - run: cd backend && go test ./...
+      - run: cd backend && go test -race ./...
       - run: cd backend && go build -o /dev/null .
 
   runner:
