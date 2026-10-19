@@ -13,6 +13,8 @@ const metrics = [
   { name: 'tps', unit: 'tx/s', value: 1234.5 },
   { name: 'latency_avg', unit: 'ms', value: 0 },
 ];
+// Separators depend on the runtime locale; compare the rendered digits only.
+const digits = (expected: string) => (text: string) => text.replace(/\D/g, '') === expected;
 const card = (run: BenchmarkRun | null) => (
   <BenchmarkRunResult id={run?.id ?? 'run-1'} run={run} feedback={null} onRetry={() => {}} />
 );
@@ -33,7 +35,7 @@ describe('benchmark result metrics and logs', () => {
     const table = within(screen.getByRole('table', { name: 'Benchmark metrics' }));
     expect(table.getByRole('columnheader', { name: 'Metric' })).toBeTruthy();
     expect(table.getByRole('rowheader', { name: 'tps' })).toBeTruthy();
-    expect(table.getByRole('cell', { name: '1234.5' })).toBeTruthy();
+    expect(table.getByRole('cell', { name: digits('12345') })).toBeTruthy();
     expect(table.getByRole('cell', { name: '0' })).toBeTruthy();
     expect(table.getByRole('cell', { name: 'ms' })).toBeTruthy();
     const logs = screen.getByRole('button', { name: 'Raw logs' });
@@ -91,6 +93,16 @@ describe('benchmark result metrics and logs', () => {
     view.rerender(card(completed));
     expect(screen.getByText('Structured metrics unavailable.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Raw logs' })).toBeTruthy();
+  });
+
+  it('rounds raw runner precision without collapsing small values to zero', () => {
+    render(card({ ...completed, metrics: [
+      { name: 'tps', unit: 'tx/s', value: 1234.567891 },
+      { name: 'latency_avg', unit: 'ms', value: 0.004321 },
+    ] }));
+    const table = within(screen.getByRole('table', { name: 'Benchmark metrics' }));
+    expect(table.getByRole('cell', { name: digits('123457') })).toBeTruthy();
+    expect(table.getByRole('cell', { name: digits('000432') })).toBeTruthy();
   });
 
   it('keeps log expansion independent for cards displayed side by side', () => {
