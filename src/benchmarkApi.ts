@@ -1,5 +1,6 @@
 import type { PluginApi } from '@openeverest/plugin-sdk';
 import type { BenchmarkTarget } from './benchmarkTarget';
+import type { DriverRequest } from './drivers';
 import { isNodeAffinity } from './benchmarkNodeAffinity.js';
 import type { NodeAffinity } from './benchmarkNodeAffinity';
 
@@ -10,15 +11,10 @@ export type BenchmarkRunResources = {
   memoryLimit?: string;
 };
 
-export type CreateBenchmarkRunRequest = {
+export type CreateBenchmarkRunRequest = DriverRequest & {
   target: BenchmarkTarget;
   /** Omit to benchmark the instance's default database. */
   database?: string;
-  durationSeconds: number;
-  clients: number;
-  threads: number;
-  scale: number;
-  initialize: boolean;
   resources?: BenchmarkRunResources;
   nodeAffinity?: NodeAffinity;
 };

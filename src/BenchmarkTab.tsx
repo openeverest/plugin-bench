@@ -82,7 +82,7 @@ function BenchmarkWorkflow({ pluginFetch, target }: BenchmarkWorkflowProps) {
 
   return (
     <Stack spacing={3} sx={{ p: 3, maxWidth: 1100 }}>
-      <PageHeader subtitle="Measure transaction throughput and latency of this PostgreSQL instance with pgbench." />
+      <PageHeader subtitle="Configure and run a benchmark for this database instance." />
       <BenchmarkForm target={target} isSubmitting={submission.status === 'submitting'} onSubmit={submitRun} />
       {submission.status === 'failed' && <Alert severity="error">{submission.message}</Alert>}
       {runIds.length > 0 && (

@@ -1,13 +1,63 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { initialBenchmarkFormValues, toCreateBenchmarkRunRequest, validateBenchmarkForm } from '../dist/form-test/benchmarkFormValidation.js';
+import { createInitialBenchmarkFormValues, initialBenchmarkFormValues, toCreateBenchmarkRunRequest, validateBenchmarkForm } from '../dist/form-test/benchmarkFormValidation.js';
+import { initialPgbenchOptionsDraft, preparePgbenchOptions, validatePgbenchDatabase } from '../dist/form-test/drivers/pgbench.js';
 
 const validValues = { ...initialBenchmarkFormValues, database: 'benchdb' };
 const target = { k8sCluster: 'main', namespace: 'dbs', instance: 'pg-1' };
 
 test('accepts valid form values and initializes the dataset by default', () => {
-  assert.equal(initialBenchmarkFormValues.initialize, true);
+  assert.equal(initialBenchmarkFormValues.options.initialize, true);
   assert.deepEqual(validateBenchmarkForm(validValues), {});
+});
+
+test('fresh forms do not share mutable driver options or placement drafts', () => {
+  const first = createInitialBenchmarkFormValues();
+  const second = createInitialBenchmarkFormValues();
+  first.options.clients = '20';
+  first.nodeAffinity.enabled = true;
+  first.nodeAffinity.rows.push({ id: 1, key: 'pool', value: 'benchmark' });
+  assert.equal(second.options.clients, '1');
+  assert.equal(second.nodeAffinity.enabled, false);
+  assert.equal(second.nodeAffinity.rows.length, 0);
+});
+
+test('pgbench preparation converts drafts without mutating their UI defaults', () => {
+  const draft = { ...initialPgbenchOptionsDraft, clients: ' 4 ', threads: ' 2 ', scale: '10' };
+  const before = structuredClone(draft);
+  assert.deepEqual(preparePgbenchOptions(draft), {
+    ok: true,
+    options: { durationSeconds: 30, clients: 4, threads: 2, scale: 10, initialize: true },
+  });
+  assert.deepEqual(draft, before);
+  assert.deepEqual(initialPgbenchOptionsDraft, {
+    durationSeconds: '30', clients: '1', threads: '1', scale: '1', initialize: true,
+  });
+  const invalid = preparePgbenchOptions({ ...draft, clients: '0' });
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.errors.clients);
+  assert.equal('options' in invalid, false);
+});
+
+test('maps pgbench options into an explicit driver envelope without legacy fields', () => {
+  const values = {
+    ...validValues, database: ' benchdb ',
+    options: { ...validValues.options, durationSeconds: '60', clients: '4', threads: '2', scale: '10' },
+    cpuRequest: '500', memoryLimit: '1024',
+    nodeAffinity: { enabled: true, rows: [{ id: 1, key: 'pool', value: 'benchmark' }] },
+  };
+  const before = structuredClone(values);
+  assert.deepEqual(toCreateBenchmarkRunRequest(values, target), {
+    target,
+    database: 'benchdb',
+    driver: 'pgbench',
+    options: { durationSeconds: 60, clients: 4, threads: 2, scale: 10, initialize: true },
+    resources: { cpuRequest: '500m', memoryLimit: '1024Mi' },
+    nodeAffinity: { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{
+      matchExpressions: [{ key: 'pool', operator: 'In', values: ['benchmark'] }],
+    }] } },
+  });
+  assert.deepEqual(values, before);
 });
 
 test('database is optional and defaults to the instance database', () => {
@@ -24,42 +74,47 @@ test('rejects connection strings as the database name', () => {
     'Enter a database name, not a connection string.');
   assert.equal(validateBenchmarkForm({ ...validValues, database: 'host=db' }).database,
     'Enter a database name, not a connection string.');
+  assert.equal(validatePgbenchDatabase('  PoStGrEsQl://user:pass@host/db  '),
+    'Enter a database name, not a connection string.');
+  assert.equal(validatePgbenchDatabase(' ordinary_database '), undefined);
 });
 
 test('requires positive whole numbers for all numeric fields', () => {
   for (const invalid of ['', '0', '-1', '1.5', 'abc']) {
     for (const field of ['durationSeconds', 'clients', 'threads', 'scale']) {
-      assert.ok(validateBenchmarkForm({ ...validValues, [field]: invalid })[field], `${field} should reject ${invalid}`);
+      assert.ok(validateBenchmarkForm({ ...validValues, options: { ...validValues.options, [field]: invalid } }).options?.[field],
+        `${field} should reject ${invalid}`);
     }
   }
 });
 
 test('rejects numeric values above the backend integer limit', () => {
   for (const field of ['durationSeconds', 'clients', 'threads', 'scale']) {
-    assert.match(validateBenchmarkForm({ ...validValues, [field]: '2147483648' })[field], /2147483647/);
+    assert.match(validateBenchmarkForm({ ...validValues, options: { ...validValues.options, [field]: '2147483648' } }).options?.[field],
+      /2147483647/);
   }
 });
 
 test('requires threads not to exceed clients', () => {
   assert.equal(
-    validateBenchmarkForm({ ...validValues, clients: '2', threads: '3' }).threads,
+    validateBenchmarkForm({ ...validValues, options: { ...validValues.options, clients: '2', threads: '3' } }).options?.threads,
     'Threads cannot exceed clients.'
   );
 });
 
 test('reusing tables ignores scale and sends a valid fallback', () => {
   for (const scale of ['', '0', '-1', 'abc', '2147483648', '10']) {
-    const values = { ...validValues, initialize: false, scale };
+    const values = { ...validValues, options: { ...validValues.options, initialize: false, scale } };
     assert.deepEqual(validateBenchmarkForm(values), {});
-    assert.equal(toCreateBenchmarkRunRequest(values, target).scale, 1);
+    assert.equal(toCreateBenchmarkRunRequest(values, target).options.scale, 1);
   }
 });
 
 test('enabling initialization again requires a valid scale and uses its value', () => {
-  const values = { ...validValues, initialize: false, scale: '' };
+  const values = { ...validValues, options: { ...validValues.options, initialize: false, scale: '' } };
   assert.ok(toCreateBenchmarkRunRequest(values, target));
-  assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true }, target), undefined);
-  assert.equal(toCreateBenchmarkRunRequest({ ...values, initialize: true, scale: '10' }, target).scale, 10);
+  assert.equal(toCreateBenchmarkRunRequest({ ...values, options: { ...values.options, initialize: true } }, target), undefined);
+  assert.equal(toCreateBenchmarkRunRequest({ ...values, options: { ...values.options, initialize: true, scale: '10' } }, target).options.scale, 10);
 });
 
 test('request mapping omits disabled affinity and includes enabled label rows', () => {
@@ -74,7 +129,7 @@ test('request mapping omits disabled affinity and includes enabled label rows', 
       matchExpressions: [{ key: 'pool', operator: 'In', values: ['benchmark'] }],
     }] },
   });
-  assert.equal(toCreateBenchmarkRunRequest({ ...enabled, clients: '0' }, target), undefined);
+  assert.equal(toCreateBenchmarkRunRequest({ ...enabled, options: { ...enabled.options, clients: '0' } }, target), undefined);
 });
 
 test('invalid affinity blocks request mapping without polluting scalar field errors', () => {
