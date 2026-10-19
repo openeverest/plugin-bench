@@ -39,11 +39,35 @@ effective configuration and configured runner image for later inspection.
 `GET /api/runs/{id}` returns status, effective settings, bounded log output, and
 optional numeric metrics. Access requires authorization for the stored target.
 Missing or invalid metrics do not turn a successful benchmark into a failed run.
-The existing frontend's submission flow remains compatible through the legacy
-pgbench request adapter; frontend integration of the new contracts is separate.
+The frontend submits the explicit driver/options envelope and displays these
+effective settings and metrics.
 
 See [the request and runner result contracts](docs/runner-result-contract.md)
 for payloads, defaults, compatibility, and metrics transport details.
+
+### Using the benchmark tab
+
+Open a PostgreSQL instance's **Performance Benchmark** tab. Choose a benchmark
+driver and configure its options; pgbench is currently the only available driver.
+Database, **Job resources**, and **Job placement** are shared settings. Leaving
+the database empty uses the instance's default database.
+
+The pgbench form starts with 30 seconds, one client/thread, scale 1, and
+initialization enabled. These are explicit UI choices, distinct from the API's
+defaults for omitted options. Initialization drops and recreates pgbench tables,
+so use a disposable benchmark database. When reusing existing tables, scale is
+disabled and the frontend sends a valid fallback of 1.
+
+Each accepted run has its own card and polls for status every two seconds until
+completion. Completed cards show the driver, configured runner image, effective
+options, and a metrics table. **Raw logs** expands the captured output; a
+**Truncated** badge identifies output that reached the backend limit. Missing or
+invalid metrics show **Structured metrics unavailable** while preserving the
+run's status and logs. Failed runs show their error alongside any available results.
+
+Use **Look up a benchmark run** to retrieve a stored run by ID. Looking up an
+already displayed ID does not add a duplicate card. Records remain subject to the
+in-memory retention described under [Current limitations](#current-limitations).
 
 ### Runner placement
 
@@ -212,6 +236,12 @@ for detailed runner instructions.
 
 ```bash
 npm ci
+npm run test:form
+npm run test:components
+npm run test:submission
+npm run test:status
+npm run test:polling
+npm run test:result
 npm run build
 
 cd backend && go test ./...
@@ -220,6 +250,20 @@ cd backend && go vet ./...
 helm lint charts/plugin-bench/
 docker build -t plugin-bench-pgbench:dev runners/pgbench
 ```
+
+Both PR CI and release builds run these frontend test suites before building the
+bundle. Component tests include the complete submission/polling/results and run
+lookup workflows with mocked API responses, including concurrent cards and
+cancellation on unmount or target changes.
+
+For a live check after starting Tilt, use a disposable PostgreSQL database:
+
+1. Start a short run and confirm the POST contains `driver` and nested `options`.
+2. Confirm polling reaches a terminal status and stops. Check effective options,
+   metrics, and expandable logs; look up the same ID and confirm no duplicate card.
+3. Start two runs and confirm both cards retain their own status and results.
+4. Leave the tab during a run and confirm status requests stop. A missing run ID
+   should pause status checks with a clear error rather than resubmit a benchmark.
 
 ## Releasing
 
