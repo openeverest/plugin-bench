@@ -1,5 +1,6 @@
 import type { PluginApi } from '@openeverest/plugin-sdk';
 import type { BenchmarkTarget } from './benchmarkTarget';
+import type { DriverRequest } from './drivers';
 import { isNodeAffinity } from './benchmarkNodeAffinity.js';
 import type { NodeAffinity } from './benchmarkNodeAffinity';
 
@@ -10,15 +11,10 @@ export type BenchmarkRunResources = {
   memoryLimit?: string;
 };
 
-export type CreateBenchmarkRunRequest = {
+export type CreateBenchmarkRunRequest = DriverRequest & {
   target: BenchmarkTarget;
   /** Omit to benchmark the instance's default database. */
   database?: string;
-  durationSeconds: number;
-  clients: number;
-  threads: number;
-  scale: number;
-  initialize: boolean;
   resources?: BenchmarkRunResources;
   nodeAffinity?: NodeAffinity;
 };
@@ -30,7 +26,13 @@ export type CreateBenchmarkRunResponse = {
 
 export type BenchmarkRunStatus = 'running' | 'succeeded' | 'failed';
 
-export type BenchmarkRun = {
+export type BenchmarkMetric = {
+  name: string;
+  unit: string;
+  value: number;
+};
+
+type BenchmarkRunCore = {
   id: string;
   status: BenchmarkRunStatus;
   database?: string;
@@ -43,6 +45,16 @@ export type BenchmarkRun = {
   output?: string;
   outputTruncated: boolean;
   error?: string;
+};
+
+export type BenchmarkRun = BenchmarkRunCore & {
+  /** Optional for runs created before driver snapshots were available. */
+  driver?: string;
+  runnerImage?: string;
+  /** Effective driver options; their keys and values belong to the driver. */
+  options?: Record<string, unknown>;
+  /** Absent when structured metrics are unavailable or invalid. */
+  metrics?: BenchmarkMetric[];
 };
 
 export class BenchmarkStatusError extends Error {
@@ -103,16 +115,21 @@ async function sendGetBenchmarkRun(
   }
   try {
     const body: unknown = await response.json();
-    if (isBenchmarkRun(body, id)) return body;
+    const run = parseBenchmarkRun(body, id);
+    if (run) return run;
   } catch {
     // Invalid JSON and invalid shapes share the fallback below.
   }
   throw new BenchmarkStatusError('The status service returned an invalid response.', response.status);
 }
 
-function isBenchmarkRun(value: unknown, id: string): value is BenchmarkRun {
-  if (typeof value !== 'object' || value === null) return false;
-  const run = value as Record<string, unknown>;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isBenchmarkRunCore(value: unknown, id: string): value is BenchmarkRunCore & Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const run = value;
   const timestamp = (value: unknown) => typeof value === 'string' &&
     value.trim() !== '' && Number.isFinite(Date.parse(value));
   return run.id === id &&
@@ -124,6 +141,49 @@ function isBenchmarkRun(value: unknown, id: string): value is BenchmarkRun {
     (run.resources === undefined || isBenchmarkRunResources(run.resources)) &&
     ['database', 'jobName', 'output', 'error'].every(key => run[key] === undefined || typeof run[key] === 'string') &&
     (run.status !== 'failed' || (typeof run.error === 'string' && run.error.trim() !== ''));
+}
+
+function parseBenchmarkRun(value: unknown, id: string): BenchmarkRun | undefined {
+  if (!isBenchmarkRunCore(value, id)) return undefined;
+  // Construct the known fields explicitly: optional metadata must be checked
+  // before reaching result components, even when the core run is valid.
+  const run: BenchmarkRun = {
+    id: value.id,
+    status: value.status,
+    createdAt: value.createdAt,
+    outputTruncated: value.outputTruncated,
+  };
+  for (const key of ['database', 'completedAt', 'jobName', 'output', 'error'] as const) {
+    if (value[key] !== undefined) run[key] = value[key];
+  }
+  if (value.resources !== undefined) run.resources = value.resources;
+  if (value.nodeAffinity !== undefined) run.nodeAffinity = value.nodeAffinity;
+  for (const key of ['driver', 'runnerImage'] as const) {
+    const field = value[key];
+    if (typeof field === 'string' && field.trim() !== '') run[key] = field;
+  }
+  if (isRecord(value.options)) run.options = value.options;
+  const metrics = parseMetrics(value.metrics);
+  if (metrics) run.metrics = metrics;
+  return run;
+}
+
+function parseMetrics(value: unknown): BenchmarkMetric[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const metrics: BenchmarkMetric[] = [];
+  const seen = new Set<string>();
+  // Reject the entire set when any entry is malformed; showing a partial set
+  // could imply that the runner reported fewer measurements than it did.
+  for (const metric of value) {
+    if (!isRecord(metric) || typeof metric.name !== 'string' || metric.name.trim() === '' ||
+        typeof metric.unit !== 'string' || metric.unit.trim() === '' ||
+        typeof metric.value !== 'number' || !Number.isFinite(metric.value)) return undefined;
+    const key = JSON.stringify([metric.name, metric.unit]);
+    if (seen.has(key)) return undefined;
+    seen.add(key);
+    metrics.push({ name: metric.name, unit: metric.unit, value: metric.value });
+  }
+  return metrics;
 }
 
 function isBenchmarkRunResources(value: unknown): value is BenchmarkRunResources {

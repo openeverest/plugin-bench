@@ -2,84 +2,46 @@ import type { CreateBenchmarkRunRequest } from './benchmarkApi';
 import type { BenchmarkTarget } from './benchmarkTarget';
 import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity.js';
 import type { NodeAffinityDraft } from './benchmarkNodeAffinity';
+import { benchmarkDrivers, createDriverDraft, defaultBenchmarkDriver, prepareDriver } from './drivers/index.js';
+import type { DriverDraft, DriverOptionsErrors } from './drivers';
 
-export type BenchmarkFormValues = {
+type SharedFormValues = {
   database: string;
-  durationSeconds: string;
-  clients: string;
-  threads: string;
-  scale: string;
   cpuRequest: string;
   cpuLimit: string;
   memoryRequest: string;
   memoryLimit: string;
-  initialize: boolean;
   nodeAffinity: NodeAffinityDraft;
 };
 
-export const initialBenchmarkFormValues: BenchmarkFormValues = {
-  database: '',
-  durationSeconds: '30',
-  clients: '1',
-  threads: '1',
-  scale: '1',
-  cpuRequest: '',
-  cpuLimit: '',
-  memoryRequest: '',
-  memoryLimit: '',
-  initialize: true,
-  nodeAffinity: createNodeAffinityDraft(),
-};
+export type BenchmarkFormValues = SharedFormValues & DriverDraft;
 
-export type BenchmarkFormField = Exclude<keyof BenchmarkFormValues, 'initialize' | 'nodeAffinity'>;
-export type BenchmarkFormErrors = Partial<Record<BenchmarkFormField, string>>;
+export function createInitialBenchmarkFormValues(): BenchmarkFormValues {
+  return {
+    ...createDriverDraft(defaultBenchmarkDriver),
+    database: '',
+    cpuRequest: '',
+    cpuLimit: '',
+    memoryRequest: '',
+    memoryLimit: '',
+    nodeAffinity: createNodeAffinityDraft(),
+  };
+}
 
-const maxInt32 = 2_147_483_647;
+export const initialBenchmarkFormValues = createInitialBenchmarkFormValues();
+
+export type BenchmarkFormField = Exclude<keyof SharedFormValues, 'nodeAffinity'>;
+export type BenchmarkFormErrors = Partial<Record<BenchmarkFormField, string>> & { options?: DriverOptionsErrors };
 
 export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFormErrors {
+  const options = prepareDriver(values);
+  return { ...validateSharedFields(values), ...(options.ok === false ? { options: options.errors } : {}) };
+}
+
+function validateSharedFields(values: BenchmarkFormValues): BenchmarkFormErrors {
   const errors: BenchmarkFormErrors = {};
-  const database = values.database.trim();
-
-  if (
-    database.includes('=') ||
-    database.toLowerCase().startsWith('postgres://') ||
-    database.toLowerCase().startsWith('postgresql://')
-  ) {
-    errors.database = 'Enter a database name, not a connection string.';
-  }
-
-  const numericFields: Array<[BenchmarkFormField, string]> = [
-    ['durationSeconds', 'Duration'],
-    ['clients', 'Clients'],
-    ['threads', 'Threads'],
-    ['scale', 'Scale'],
-  ];
-  const parsedValues: Partial<Record<BenchmarkFormField, number>> = {};
-
-  for (const [field, label] of numericFields) {
-    if (field === 'scale' && !values.initialize) continue;
-
-    const value = values[field].trim();
-    if (!/^\d+$/.test(value)) {
-      errors[field] = `${label} must be a positive whole number.`;
-      continue;
-    }
-
-    const parsed = Number(value);
-    if (parsed < 1) {
-      errors[field] = `${label} must be greater than zero.`;
-    } else if (parsed > maxInt32) {
-      errors[field] = `${label} must not exceed ${maxInt32}.`;
-    } else {
-      parsedValues[field] = parsed;
-    }
-  }
-
-  const clients = parsedValues.clients;
-  const threads = parsedValues.threads;
-  if (clients !== undefined && threads !== undefined && threads > clients) {
-    errors.threads = 'Threads cannot exceed clients.';
-  }
+  const databaseError = benchmarkDrivers[values.driver].validateDatabase(values.database);
+  if (databaseError) errors.database = databaseError;
 
   for (const [field, label] of [
     ['cpuRequest', 'CPU request'],
@@ -110,7 +72,8 @@ export function toCreateBenchmarkRunRequest(
   values: BenchmarkFormValues,
   target: BenchmarkTarget
 ): CreateBenchmarkRunRequest | undefined {
-  if (Object.keys(validateBenchmarkForm(values)).length > 0) {
+  const prepared = prepareDriver(values);
+  if (prepared.ok === false || Object.keys(validateSharedFields(values)).length > 0) {
     return undefined;
   }
   const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
@@ -126,11 +89,7 @@ export function toCreateBenchmarkRunRequest(
   return {
     target,
     ...(database ? { database } : {}),
-    durationSeconds: Number(values.durationSeconds),
-    clients: Number(values.clients),
-    threads: Number(values.threads),
-    scale: values.initialize ? Number(values.scale) : 1,
-    initialize: values.initialize,
+    ...prepared.request,
     ...(Object.keys(resources).length > 0 ? { resources } : {}),
     ...(affinity.nodeAffinity ? { nodeAffinity: affinity.nodeAffinity } : {}),
   };

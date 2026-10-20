@@ -1,5 +1,8 @@
-import { Fragment } from 'react';
+import { Fragment, useId } from 'react';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -14,6 +17,9 @@ import {
 import type { BenchmarkRun, BenchmarkRunStatus } from './benchmarkApi';
 import type { PollingFeedback } from './benchmarkRunPolling';
 import { BenchmarkNodeAffinitySummary } from './BenchmarkNodeAffinitySummary.js';
+import { BenchmarkRunMetrics } from './BenchmarkRunMetrics.js';
+import { BenchmarkRunOptions } from './BenchmarkRunOptions.js';
+import { describeRunOptions } from './drivers/index.js';
 
 const STATUS_LABELS: Record<BenchmarkRunStatus, string> = {
   running: 'Running',
@@ -43,10 +49,13 @@ function statusLabel(run: BenchmarkRun | null, feedback: PollingFeedback | null)
 const formatTimestamp = (value: string) => new Date(value).toLocaleString();
 
 export function BenchmarkRunResult({ id, run, feedback, onRetry, onDismiss }: BenchmarkRunResultProps) {
+  const logsId = useId();
   const completed = run !== null && run.status !== 'running';
   const pollingActive = !feedback && (run === null || run.status === 'running');
   const details: Array<[string, string | undefined]> = [
     ['Run ID', id],
+    ['Driver', run?.driver],
+    ['Runner image', run?.runnerImage],
     ['Database', run?.database],
     ['Created', run ? formatTimestamp(run.createdAt) : undefined],
     ['Completed', run?.completedAt ? formatTimestamp(run.completedAt) : undefined],
@@ -86,6 +95,8 @@ export function BenchmarkRunResult({ id, run, feedback, onRetry, onDismiss }: Be
               )
             )}
           </Box>
+
+          {run?.options !== undefined && <BenchmarkRunOptions options={describeRunOptions(run.driver, run.options)} />}
 
           {run?.resources !== undefined && (
             <Box component="section" aria-label="Configured runner resources">
@@ -135,40 +146,49 @@ export function BenchmarkRunResult({ id, run, feedback, onRetry, onDismiss }: Be
           {run?.nodeAffinity !== undefined && <BenchmarkNodeAffinitySummary affinity={run.nodeAffinity} />}
 
           {completed && (
-            <Box>
-              <Typography variant="subtitle2" component="h4" gutterBottom>
-                Benchmark output
-              </Typography>
-              {run.outputTruncated && (
-                <Typography variant="caption" component="p" color="text.secondary" gutterBottom>
-                  Output was truncated by the backend.
-                </Typography>
-              )}
-              {run.output ? (
-                <Box
-                  component="pre"
-                  tabIndex={0}
-                  aria-label="Benchmark output"
-                  sx={{
-                    m: 0,
-                    p: 1.5,
-                    maxHeight: 400,
-                    overflow: 'auto',
-                    bgcolor: 'action.hover',
-                    borderRadius: 1,
-                    fontFamily: 'monospace',
-                    fontSize: 13,
-                    whiteSpace: 'pre',
-                  }}
-                >
-                  {run.output}
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  No output was captured.
-                </Typography>
-              )}
-            </Box>
+            <>
+              <BenchmarkRunMetrics metrics={run.metrics} />
+              <Accordion variant="outlined" disableGutters>
+                <AccordionSummary id={`${logsId}-summary`} aria-controls={`${logsId}-details`}
+                  expandIcon={<span aria-hidden="true">⌄</span>}>
+                  <Stack component="span" direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                    <Typography variant="subtitle2" component="span">Raw logs</Typography>
+                    {run.outputTruncated && <Chip size="small" label="Truncated" />}
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails>
+                  {run.outputTruncated && (
+                    <Typography variant="caption" component="p" color="text.secondary" gutterBottom>
+                      Output was truncated by the backend.
+                    </Typography>
+                  )}
+                  {run.output ? (
+                    <Box
+                      component="pre"
+                      tabIndex={0}
+                      aria-label="Benchmark output"
+                      sx={{
+                        m: 0,
+                        p: 1.5,
+                        maxHeight: 400,
+                        overflow: 'auto',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        whiteSpace: 'pre',
+                      }}
+                    >
+                      {run.output}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No output was captured.
+                    </Typography>
+                  )}
+                </AccordionDetails>
+              </Accordion>
+            </>
           )}
         </Stack>
       </CardContent>

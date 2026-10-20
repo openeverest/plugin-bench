@@ -139,5 +139,24 @@ not logged or returned.
 History remains in backend memory. Restarts lose records, completed runs become
 unavailable after one hour, and running records do not expire. Expired completed
 records are removed from memory on subsequent creation. Durable storage,
-comparison charts, a metric taxonomy, and frontend display of the new contracts
-are separate follow-up work.
+comparison charts, and a metric taxonomy are separate follow-up work.
+
+## Frontend display and compatibility
+
+The benchmark tab submits explicit `driver` and `options` fields. Its shared form
+renders the selected driver's options component; pgbench is currently the only
+registered UI driver. The UI explicitly selects a 30-second run and initialization
+enabled by default, while the API defaults above apply to omitted fields.
+
+Result cards display the stored driver, configured image reference, and effective
+options without interpreting a driver's option schema. Completed runs show metric
+names, values, and units in a separate table. Raw logs are collapsed initially and
+can be expanded, with truncation clearly identified. Failed runs can show available
+metrics and logs alongside their error.
+
+Older status responses without snapshots or metrics remain readable. The client
+omits malformed optional metadata and treats an invalid or empty metric set as
+unavailable, including duplicate `(name, unit)` pairs or non-finite values. It does
+not invent zero values or change the execution status. Core status fields, saved
+resources, and affinity still undergo the existing response validation. The UI
+shows metrics availability only after a run finishes.

@@ -4,7 +4,9 @@ import { BenchmarkApiError, createBenchmarkRun } from '../dist/submission-test/b
 
 const request = {
   target: { k8sCluster: 'main', namespace: 'default', instance: 'postgres-a' },
-  database: 'bench', durationSeconds: 30, clients: 1, threads: 1, scale: 1, initialize: false,
+  database: 'bench',
+  driver: 'pgbench',
+  options: { durationSeconds: 30, clients: 1, threads: 1, scale: 1, initialize: false },
 };
 const unknownOutcome = error => error instanceof BenchmarkApiError && error.outcomeUnknown;
 
@@ -116,6 +118,9 @@ test('POST forwards native affinity without changing the acceptance contract', a
       assert.equal(path, '/api/runs');
       assert.equal(init.method, 'POST');
       assert.deepEqual(JSON.parse(init.body), before);
+      assert.equal(JSON.parse(init.body).driver, 'pgbench');
+      assert.deepEqual(JSON.parse(init.body).options, request.options);
+      assert.equal('durationSeconds' in JSON.parse(init.body), false);
       return new Response('{"id":"run-1","status":"running"}', { status: 202 });
     }, payload), { id: 'run-1', status: 'running' });
     assert.deepEqual(payload, before);

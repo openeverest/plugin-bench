@@ -27,6 +27,23 @@ test('shows the database the run used', () => {
   assert.doesNotMatch(render(base), /Database/);
 });
 
+test('driver snapshots and metrics render as escaped text with zero and false preserved', () => {
+  const html = render({ ...base, driver: 'custom-driver', runnerImage: 'registry/runner:v2', jobName: 'runner-job',
+    options: { enabled: false, count: 0, custom: { mode: 'read' }, note: '<script>option</script>' },
+    metrics: [{ name: '<script>metric</script>', unit: '<img src=x>', value: 0 }],
+  });
+  assert.match(html, /custom-driver/);
+  assert.match(html, /registry\/runner:v2/);
+  assert.doesNotMatch(html, /runner-job/);
+  assert.match(html, /enabled<\/dt><dd[^>]*>false<\/dd>/);
+  assert.match(html, /count<\/dt><dd[^>]*>0<\/dd>/);
+  assert.match(html, /&quot;mode&quot;:&quot;read&quot;/);
+  assert.match(html, /&lt;script&gt;option/);
+  assert.match(html, /&lt;script&gt;metric/);
+  assert.match(html, /&lt;img src=x&gt;/);
+  assert.doesNotMatch(html, /<script>|<img/);
+});
+
 test('shows each run resource snapshot without implying measured usage', () => {
   const withoutStyles = html => html.replace(/<style[^>]*>[\s\S]*?<\/style>/g, '');
   const first = withoutStyles(render({ ...base, resources: {

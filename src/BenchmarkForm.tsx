@@ -9,29 +9,22 @@ import {
   Card,
   CardActions,
   CardContent,
-  Checkbox,
-  FormControlLabel,
-  FormHelperText,
+  MenuItem,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
 import { BenchmarkTargetSummary } from './BenchmarkTargetSummary';
-import { initialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation';
+import { createInitialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation';
 import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormValidation';
 import type { BenchmarkTarget } from './benchmarkTarget';
-import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity';
+import { prepareNodeAffinityDraft } from './benchmarkNodeAffinity';
 import { BenchmarkNodeAffinityForm } from './BenchmarkNodeAffinityForm';
+import { benchmarkDrivers, benchmarkDriverIds, createDriverDraft, isBenchmarkDriverId } from './drivers';
+import { DriverOptionsForm } from './drivers/DriverOptionsForm';
+import type { DriverDraft } from './drivers';
 
-type NumericField = 'durationSeconds' | 'clients' | 'threads' | 'scale';
 type ResourceField = 'cpuRequest' | 'cpuLimit' | 'memoryRequest' | 'memoryLimit';
-
-const NUMERIC_FIELDS: ReadonlyArray<{ field: NumericField; label: string; hint: string }> = [
-  { field: 'durationSeconds', label: 'Duration (seconds)', hint: 'How long the benchmark runs.' },
-  { field: 'clients', label: 'Clients', hint: 'Concurrent database sessions.' },
-  { field: 'threads', label: 'Threads', hint: 'Worker threads, up to the number of clients.' },
-  { field: 'scale', label: 'Scale', hint: 'Dataset size on initialization (×100,000 rows).' },
-];
 
 const RESOURCE_FIELDS: ReadonlyArray<{ field: ResourceField; label: string; hint: string }> = [
   { field: 'cpuRequest', label: 'CPU request (millicores)', hint: '1000m = 1 CPU core.' },
@@ -47,27 +40,28 @@ interface BenchmarkFormProps {
 }
 
 export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormProps) {
-  const [values, setValues] = useState<BenchmarkFormValues>(() => ({
-    ...initialBenchmarkFormValues, nodeAffinity: createNodeAffinityDraft(),
-  }));
+  const [values, setValues] = useState<BenchmarkFormValues>(createInitialBenchmarkFormValues);
   const [touched, setTouched] = useState<Partial<Record<BenchmarkFormField, boolean>>>({});
+  const [submitted, setSubmitted] = useState(false);
   const [resourcesExpanded, setResourcesExpanded] = useState(false);
   const errors = validateBenchmarkForm(values);
   const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
   const canSubmit = Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
   const resourceError = RESOURCE_FIELDS.some(({ field }) => Boolean(errors[field]));
 
-  const updateValue = <K extends keyof BenchmarkFormValues>(key: K, value: BenchmarkFormValues[K]) => {
+  const updateValue = <K extends BenchmarkFormField | 'nodeAffinity'>(key: K, value: BenchmarkFormValues[K]) => {
     setValues(current => ({ ...current, [key]: value }));
   };
   const markTouched = (field: BenchmarkFormField) => {
     setTouched(current => ({ ...current, [field]: true }));
   };
   const fieldError = (field: BenchmarkFormField) => (touched[field] ? errors[field] : undefined);
+  const updateDriver = (selection: DriverDraft) => setValues(current => ({ ...current, ...selection }));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setTouched({ database: true, durationSeconds: true, clients: true, threads: true, scale: true,
+    setSubmitted(true);
+    setTouched({ database: true,
       cpuRequest: true, cpuLimit: true, memoryRequest: true, memoryLimit: true });
     if (canSubmit) void onSubmit(values);
   };
@@ -98,48 +92,28 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
             slotProps={{ inputLabel: { shrink: true } }}
           />
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
-            {NUMERIC_FIELDS.map(({ field, label, hint }) => {
-              // pgbench takes the scale from existing tables when it doesn't initialize.
-              const reusesScale = field === 'scale' && !values.initialize;
-              return (
-                <TextField
-                  key={field}
-                  id={`benchmark-${field}`}
-                  name={field}
-                  label={label}
-                  type="number"
-                  size="small"
-                  value={values[field]}
-                  disabled={reusesScale}
-                  error={Boolean(fieldError(field))}
-                  helperText={fieldError(field) ?? (reusesScale ? 'Scale is only used when initializing pgbench tables.' : hint)}
-                  onChange={event => updateValue(field, event.target.value)}
-                  onBlur={() => markTouched(field)}
-                  slotProps={{ htmlInput: { min: 1, step: 1 } }}
-                />
-              );
-            })}
-          </Box>
-
-          <Box>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  id="benchmark-initialize"
-                  name="initialize"
-                  checked={values.initialize}
-                  onChange={event => updateValue('initialize', event.target.checked)}
-                />
+          <TextField
+            id="benchmark-driver"
+            name="driver"
+            label="Benchmark driver"
+            select
+            size="small"
+            value={values.driver}
+            disabled={isSubmitting}
+            onChange={event => {
+              const driver = event.target.value;
+              if (isBenchmarkDriverId(driver) && driver !== values.driver) {
+                updateDriver(createDriverDraft(driver));
+                setSubmitted(false);
               }
-              label="Initialize pgbench tables"
-            />
-            <FormHelperText sx={{ mt: 0 }}>
-              {values.initialize
-                ? 'Drops and recreates the pgbench tables for a fresh dataset. Uncheck to reuse existing pgbench tables.'
-                : 'Reuses the existing pgbench tables. The run fails if they don\'t exist yet.'}
-            </FormHelperText>
-          </Box>
+            }}
+          >
+            {benchmarkDriverIds.map(driver => (
+              <MenuItem key={driver} value={driver}>{benchmarkDrivers[driver].label}</MenuItem>
+            ))}
+          </TextField>
+          <DriverOptionsForm key={values.driver} selection={values} errors={errors.options ?? {}}
+            disabled={isSubmitting} showErrors={submitted} onChange={updateDriver} />
 
           <Accordion
             variant="outlined"

@@ -27,6 +27,77 @@ test('status accepts optional resolved resource snapshots without changing them'
   }
 });
 
+test('GET preserves driver snapshots and generic metrics for every run status', async () => {
+  for (const status of ['running', 'succeeded', 'failed']) {
+    const run = {
+      ...running, status,
+      driver: 'another-tool', runnerImage: 'ghcr.io/example/another-tool:2.0',
+      options: { duration: 60, nested: { mode: 'read' }, enabled: false, labels: ['a'], optional: null },
+      metrics: [{ name: 'custom_metric', unit: 'items/s', value: 0 },
+        { name: 'latency_avg', unit: 'ms', value: 3.2 }],
+      ...(status === 'running' ? {} : { completedAt: running.createdAt, output: 'tool output', outputTruncated: true }),
+      ...(status === 'failed' ? { error: 'cleanup failed' } : {}),
+    };
+    assert.deepEqual(await getBenchmarkRun(async () => response(run), running.id), run);
+  }
+});
+
+test('legacy responses omit unavailable metadata, while empty options remain a valid snapshot', async () => {
+  const legacy = await getBenchmarkRun(async () => response(running), running.id);
+  assert.deepEqual(legacy, running);
+  for (const key of ['driver', 'runnerImage', 'options', 'metrics']) assert.equal(key in legacy, false);
+  assert.deepEqual(await getBenchmarkRun(async () => response({ ...running, options: {} }), running.id),
+    { ...running, options: {} });
+});
+
+test('malformed optional metadata is omitted independently and cannot hide terminal diagnostics', async () => {
+  const terminal = { ...running, status: 'failed', completedAt: running.createdAt,
+    output: 'saved logs', outputTruncated: true, error: 'execution failed' };
+  const valid = { driver: 'pgbench', runnerImage: 'runner:v1', options: { clients: 4 },
+    metrics: [{ name: 'tps', unit: 'tx/s', value: 1234.5 }] };
+  for (const [field, invalidValues] of [
+    ['driver', [null, 42, false, [], {}, '', '  ']],
+    ['runnerImage', [null, 42, false, [], {}, '', '  ']],
+    ['options', [null, [], 'options', 42, false]],
+  ]) {
+    for (const invalid of invalidValues) {
+      const expected = { ...terminal, ...valid };
+      delete expected[field];
+      assert.deepEqual(await getBenchmarkRun(async () => response({ ...terminal, ...valid, [field]: invalid }), running.id),
+        expected);
+    }
+  }
+});
+
+test('malformed metric sets become unavailable without losing logs, status, or valid metadata', async () => {
+  const run = { ...running, status: 'succeeded', completedAt: running.createdAt,
+    driver: 'pgbench', options: { clients: 4 }, output: 'raw logs', outputTruncated: true };
+  const metric = { name: 'tps', unit: 'tx/s', value: 1234.5 };
+  for (const metrics of [null, {}, 'metrics', [], [null], [[]], ['metric'],
+    [{ ...metric, name: '' }], [{ ...metric, name: '  ' }], [{ ...metric, name: 42 }],
+    [{ ...metric, unit: '' }], [{ ...metric, unit: '  ' }], [{ ...metric, unit: 42 }],
+    [{ name: 'tps', unit: 'tx/s' }], [{ ...metric, value: null }], [{ ...metric, value: '1234.5' }],
+    [{ ...metric, value: false }], [metric, { ...metric }], [metric, { ...metric, unit: null }],
+  ]) {
+    assert.deepEqual(await getBenchmarkRun(async () => response({ ...run, metrics }), running.id), run);
+  }
+  for (const number of ['1e400', '-1e400']) {
+    const json = JSON.stringify({ ...run, metrics: [{ ...metric, value: 'overflow' }] })
+      .replace('"overflow"', number);
+    assert.deepEqual(await getBenchmarkRun(async () => new Response(json), running.id), run);
+  }
+});
+
+test('metric identity includes both name and unit and preserves numeric zero', async () => {
+  const metrics = [
+    { name: 'throughput', unit: 'tx/s', value: 0 },
+    { name: 'throughput', unit: 'bytes/s', value: 50 },
+    { name: 'delta', unit: 'ms', value: -1.5 },
+  ];
+  assert.deepEqual(await getBenchmarkRun(async () => response({ ...running, metrics }), running.id),
+    { ...running, metrics });
+});
+
 test('invalid JSON, shapes, IDs and terminal fields are rejected', async () => {
   for (const body of [null, {}, { ...running, id: 'other' }, { ...running, status: 'pending' },
     { ...running, createdAt: 'invalid' }, { ...running, outputTruncated: 'false' },
