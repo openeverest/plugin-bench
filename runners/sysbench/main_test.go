@@ -1,9 +1,22 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func validEnvironment() map[string]string {
@@ -150,5 +163,214 @@ func assertConfigError(t *testing.T, env map[string]string, field string) {
 	}
 	if got != (config{}) {
 		t.Fatal("configuration error returned partially populated credentials")
+	}
+}
+
+func TestRunWorkflow(t *testing.T) {
+	failure := errors.New("child failure")
+	for _, tc := range []struct {
+		name       string
+		initialize bool
+		failAt     int
+		phases     []string
+	}{
+		{"reuse", false, 0, []string{"run"}},
+		{"initialize", true, 0, []string{"prepare", "run"}},
+		{"preparation fails", true, 1, []string{"prepare"}},
+		{"benchmark fails", true, 2, []string{"prepare", "run"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := testConfig(t)
+			c.duration, c.threads, c.tables, c.tableSize, c.initialize = 7, 4, 2, 500, tc.initialize
+			var output bytes.Buffer
+			var calls [][]string
+			err := run(context.Background(), c, "/private/connection.conf", func(_ context.Context, args []string, stdout io.Writer) error {
+				calls = append(calls, args)
+				fmt.Fprintln(stdout, args[len(args)-1])
+				if len(calls) == tc.failAt {
+					return failure
+				}
+				return nil
+			}, &output)
+			if len(calls) != len(tc.phases) || errors.Is(err, failure) != (tc.failAt > 0) {
+				t.Fatalf("unexpected invocation count or error: %v", err)
+			}
+			for i, phase := range tc.phases {
+				want := []string{
+					"--config-file=/private/connection.conf", "--db-driver=mysql",
+					"--threads=4", "--tables=2", "--table-size=500", "--time=7",
+					"--events=0", "--report-interval=0", "--db-debug=off", "--mysql-debug=off",
+					"oltp_read_write", phase,
+				}
+				if !reflect.DeepEqual(calls[i], want) || strings.Contains(strings.Join(calls[i], " "), c.password) {
+					t.Fatal("wrong arguments or credentials present in command arguments")
+				}
+			}
+			if output.String() != strings.Join(tc.phases, "\n")+"\n" {
+				t.Fatal("subprocess output was not streamed")
+			}
+		})
+	}
+}
+
+func TestRunCancellation(t *testing.T) {
+	for _, cancelAt := range []int{0, 1, 2} {
+		t.Run(strconv.Itoa(cancelAt), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if cancelAt == 0 {
+				cancel()
+			}
+			c := testConfig(t)
+			c.initialize = true
+			calls := 0
+			err := run(ctx, c, "/private/connection.conf", func(context.Context, []string, io.Writer) error {
+				calls++
+				if calls == cancelAt {
+					cancel()
+				}
+				return nil
+			}, io.Discard)
+			if !errors.Is(err, context.Canceled) || calls != cancelAt {
+				t.Fatal("cancelled execution started another phase or lost cancellation")
+			}
+		})
+	}
+}
+
+func TestCommandEnvironment(t *testing.T) {
+	env := []string{"LC_ALL=fr_FR.UTF-8", "LC_ALL=de_DE.UTF-8", "MYSQL_PASSWORD=dummy-secret", "PATH=/bin"}
+	before := append([]string(nil), env...)
+	got := commandEnvironment(env)
+	if !reflect.DeepEqual(got, []string{"PATH=/bin", "LC_ALL=C"}) || !reflect.DeepEqual(env, before) {
+		t.Fatal("child environment did not enforce the locale, remove the password, or preserve its input")
+	}
+}
+
+func TestChildProcess(t *testing.T) {
+	switch os.Getenv("RUNNER_TEST_CHILD") {
+	case "exit":
+		fmt.Fprint(os.Stdout, "stdout/"+os.Getenv("LC_ALL"))
+		fmt.Fprint(os.Stderr, "stderr")
+		os.Exit(7)
+	case "ignore-term":
+		signal.Ignore(syscall.SIGTERM)
+		fmt.Fprintln(os.Stdout, "ready")
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	}
+}
+
+func TestExecutePreservesStreamsAndExitCode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	env := commandEnvironment([]string{"RUNNER_TEST_CHILD=exit", "GOCOVERDIR=" + t.TempDir()})
+	err := execute(context.Background(), os.Args[0], []string{"-test.run=^TestChildProcess$"}, env, &stdout, &stderr)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("child exit code was lost: %v", err)
+	}
+	if stdout.String() != "stdout/C" || stderr.String() != "stderr" {
+		t.Fatal("child stdout, stderr, or locale changed")
+	}
+}
+
+func TestExecuteKillsChildIgnoringTermination(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	env := []string{"RUNNER_TEST_CHILD=ignore-term", "GOCOVERDIR=" + t.TempDir()}
+	go func() {
+		done <- execute(ctx, os.Args[0], []string{"-test.run=^TestChildProcess$"},
+			env, writer, io.Discard)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("child did not exit during test cleanup")
+		}
+	})
+	ready := make(chan bool, 1)
+	go func() {
+		line, err := bufio.NewReader(reader).ReadString('\n')
+		ready <- err == nil && line == "ready\n"
+	}()
+	select {
+	case ok := <-ready:
+		if !ok {
+			t.Fatal("child did not become ready")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("child did not start")
+	}
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || time.Since(start) < 4*time.Second {
+			t.Fatal("child did not receive its termination grace period")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("child was not killed after its termination grace period")
+	}
+}
+
+func TestRunnerEntrypoint(t *testing.T) {
+	if os.Getenv("RUNNER_TEST_ENTRYPOINT") == "true" {
+		os.Exit(runnerMain())
+	}
+}
+
+func TestRunnerEntrypointCleansUpAfterChildFailure(t *testing.T) {
+	dir := t.TempDir()
+	connectionPath := filepath.Join(dir, "connection-path")
+	// This stub records only the config path and fails with a tool exit code.
+	const stub = `#!/bin/sh
+for argument do
+  case "$argument" in
+    --config-file=*) printf '%s' "${argument#--config-file=}" > "$RUNNER_TEST_CONNECTION_PATH" ;;
+  esac
+done
+printf 'native output\n'
+exit 7
+`
+	if err := os.WriteFile(filepath.Join(dir, "sysbench"), []byte(stub), 0700); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"PATH=" + dir, "TMPDIR=" + dir, "RUNNER_TEST_ENTRYPOINT=true",
+		"RUNNER_TEST_CONNECTION_PATH=" + connectionPath, "GOCOVERDIR=" + dir,
+	}
+	for key, value := range validEnvironment() {
+		env = append(env, key+"="+value)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRunnerEntrypoint$")
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatal("entrypoint did not preserve sysbench's exit code")
+	}
+	if stdout.String() != "native output\n" || stderr.String() != "runner error: sysbench execution failed\n" {
+		t.Fatal("entrypoint output changed or leaked configuration")
+	}
+	path, err := os.ReadFile(connectionPath)
+	if err != nil {
+		t.Fatal("stub was not invoked with a connection file")
+	}
+	if _, err := os.Stat(filepath.Dir(string(path))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("entrypoint left its connection configuration directory behind")
 	}
 }
