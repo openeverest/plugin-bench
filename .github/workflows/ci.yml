@@ -67,6 +67,26 @@ jobs:
         timeout-minutes: 3
         run: bash .github/scripts/test-runner.sh plugin-bench-pgbench:ci
 
+  sysbench-runner:
+    name: Sysbench Runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25"
+          cache-dependency-path: runners/sysbench/go.mod
+      - name: Vet runner
+        run: cd runners/sysbench && go vet ./...
+      - name: Test runner
+        run: cd runners/sysbench && go test -race ./...
+      - name: Build runner image
+        run: docker build -t plugin-bench-sysbench:ci runners/sysbench
+      - name: Integration test runner
+        timeout-minutes: 10
+        run: bash .github/scripts/test-sysbench-runner.sh plugin-bench-sysbench:ci
+
   helm-lint:
     name: Helm lint
     runs-on: ubuntu-latest

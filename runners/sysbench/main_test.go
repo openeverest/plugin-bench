@@ -196,9 +196,13 @@ func TestRunWorkflow(t *testing.T) {
 				t.Fatalf("unexpected invocation count or error: %v", err)
 			}
 			for i, phase := range tc.phases {
+				threads := "4"
+				if phase == "prepare" {
+					threads = "1"
+				}
 				want := []string{
 					"--config-file=/private/connection.conf", "--db-driver=mysql",
-					"--threads=4", "--tables=2", "--table-size=500", "--time=7",
+					"--threads=" + threads, "--tables=2", "--table-size=500", "--time=7",
 					"--events=0", "--report-interval=0", "--db-debug=off", "--mysql-debug=off",
 					"oltp_read_write", phase,
 				}

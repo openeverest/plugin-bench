@@ -110,10 +110,16 @@ func run(ctx context.Context, c config, connectionPath string, invoke func(conte
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		threads := c.threads
+		if phase == "prepare" {
+			// Sysbench 1.0.20 can lose worker errors during parallel prepare.
+			// A single preparation worker preserves its failure exit status.
+			threads = 1
+		}
 		args := []string{
 			"--config-file=" + connectionPath,
 			"--db-driver=mysql",
-			"--threads=" + strconv.Itoa(c.threads),
+			"--threads=" + strconv.Itoa(threads),
 			"--tables=" + strconv.Itoa(c.tables),
 			"--table-size=" + strconv.Itoa(c.tableSize),
 			"--time=" + strconv.Itoa(c.duration),
