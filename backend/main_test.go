@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -10,6 +13,25 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	corev1 "k8s.io/api/core/v1"
 )
+
+func TestHandleStatusReportsGenericReadiness(t *testing.T) {
+	w := httptest.NewRecorder()
+	handleStatus(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("unexpected status response: %d %s", w.Code, w.Header().Get("Content-Type"))
+	}
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["status"] != "ready" || response["runnerReady"] != true || response["storage"] != "ephemeral" ||
+		response["message"] != "Benchmark runs execute as Kubernetes Jobs." {
+		t.Fatal("status response lost backend readiness metadata")
+	}
+	if _, exists := response["database"]; exists {
+		t.Fatal("generic backend readiness must not advertise a single database type")
+	}
+}
 
 func TestBenchmarkRegistryUsesExistingImageConfiguration(t *testing.T) {
 	t.Setenv("BENCHMARK_DRIVERS", "")
@@ -25,6 +47,9 @@ func TestBenchmarkRegistryUsesExistingImageConfiguration(t *testing.T) {
 	registration, err := registry.Resolve("pgbench", driver.TargetInfo{DatabaseType: "postgresql", Provider: "new-provider"})
 	if err != nil || registration.Runner.Image != "example.com/custom-pgbench:version" || registration.Runner.ImagePullPolicy != "IfNotPresent" {
 		t.Fatal("registration did not use existing image configuration")
+	}
+	if _, err := registry.Resolve("sysbench", driver.TargetInfo{DatabaseType: "mysql"}); err == nil {
+		t.Fatal("legacy pgbench image configuration implicitly enabled sysbench")
 	}
 	for _, test := range []struct{ image, policy string }{{"", "IfNotPresent"}, {"runner:test", "invalid"}} {
 		t.Setenv("RUNNER_IMAGE", test.image)

@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-const modernRunBody = `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":"bench","driver":"pgbench","options":{}}`
-
 func TestDecodeCanonicalAndLegacyRequests(t *testing.T) {
 	for _, test := range []struct{ name, body, wantOptions string }{
 		{"modern omissions are driver defaults", modernRunBody, `{}`},

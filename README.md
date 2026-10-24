@@ -42,6 +42,11 @@ Missing or invalid metrics do not turn a successful benchmark into a failed run.
 The frontend submits the explicit driver/options envelope and displays these
 effective settings and metrics.
 
+`GET /api/status` returns generic backend readiness with `status`, `runnerReady`,
+`storage`, and `message`. The former PostgreSQL-only `database` field has been
+removed. This endpoint does not test database connectivity or runner-image
+availability; an individual run's `driver` identifies its benchmark tool.
+
 See [the request and runner result contracts](docs/runner-result-contract.md)
 for payloads, defaults, compatibility, and metrics transport details.
 
