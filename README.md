@@ -1,31 +1,32 @@
 # OpenEverest Plugin Bench
 
-OpenEverest Plugin Bench provides PostgreSQL benchmarking for OpenEverest.
-It runs `pgbench` benchmarks from the OpenEverest
-database cluster view, with each benchmark executing in a temporary Kubernetes
-Job.
+OpenEverest Plugin Bench runs database benchmarks as temporary Kubernetes Jobs.
+The backend supports PostgreSQL through pgbench and MySQL through Sysbench.
+The OpenEverest database cluster tab currently exposes the pgbench workflow;
+Sysbench is available through the backend API when enabled in deployment settings.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
-> launching, and inspecting benchmark runs. Additional drivers and features
-> are planned for future releases.
+> launching, and inspecting benchmark runs. MySQL backend support is implemented;
+> its frontend integration and runner image publication are separate follow-ups.
 
 ## How it works
 
 The plugin backend coordinates a benchmark run:
 
-1. Resolve connection details for the selected PostgreSQL instance through the
+1. Resolve authorized connection details for the selected instance through the
    OpenEverest API.
 2. Pick the database: the one entered in the form, otherwise the instance's
    default database (the provider's `database` connection key, or the database
    in its connection URI).
-3. Create a temporary Secret containing the database credentials.
-4. Create a Kubernetes Job using the pgbench runner image.
+3. Select the requested driver, validate its options and connection details,
+   and create a temporary Secret containing its password.
+4. Create a Kubernetes Job using the configured driver image and prepared settings.
 5. Wait for the Job and collect the runner logs and optional structured metrics.
 6. Delete the Job and temporary Secret.
 
 The frontend is currently available as a PostgreSQL cluster detail tab. It is
 built with MUI and themed from the host through `@openeverest/plugin-theme`.
-The backend uses a shared driver interface; pgbench is the current implementation.
+The backend uses a shared driver interface with pgbench and Sysbench implementations.
 Additional benchmark tools can supply their own option validation and workload
 preparation while sharing the Kubernetes execution lifecycle.
 
@@ -49,6 +50,41 @@ availability; an individual run's `driver` identifies its benchmark tool.
 
 See [the request and runner result contracts](docs/runner-result-contract.md)
 for payloads, defaults, compatibility, and metrics transport details.
+
+### MySQL benchmarks through the API
+
+Enable `drivers.sysbench` with an accessible runner image, or use the local Tilt
+configuration described below. Submit an explicit `driver: "sysbench"` with the
+OpenEverest target and Sysbench options to `POST /api/runs`:
+
+```json
+{
+  "target": {"k8sCluster": "main", "namespace": "default", "instance": "my-mysql"},
+  "database": "sbtest",
+  "driver": "sysbench",
+  "options": {"durationSeconds": 5, "threads": 2, "tables": 1, "tableSize": 1000, "initialize": true}
+}
+```
+
+The target must be registered in OpenEverest with database type `mysql`
+(case-insensitive); the caller must have access to it. The database and account
+must already exist. Database selection uses the explicit name, then the upstream
+database field, then the path in a `mysql://` URI. If none supplies a name, the
+request is rejected. URI-only credentials are unsupported.
+
+Sysbench uses the bundled `oltp_read_write` workload. Omitted options default to
+60 seconds, one thread, one table, 10,000 rows per table, and initialization off.
+Use a fresh disposable database with `initialize: true` to prepare tables. Existing
+table names cause preparation to fail; the runner does not drop them. For reuse,
+set `initialize: false` and keep `tables` and `tableSize` consistent with the
+existing data. Jobs and Secrets are cleaned up after execution; benchmark tables
+remain in the database.
+
+Poll `GET /api/runs/{id}` with the accepted ID and caller authorization. Completed
+runs expose the effective options, configured image, logs, and optional `tps`
+(`tx/s`) and `latency_avg` (`ms`) metrics. See the
+[Sysbench runner README](runners/sysbench/README.md) for image build instructions,
+credential constraints, standalone examples, and manual table cleanup.
 
 ### Using the benchmark tab
 
@@ -110,7 +146,7 @@ written to the backend log.
 
 The grace period starts at the first observation of scheduler rejection, not at
 submission. Scheduling recovery, Pod replacement, or a gap in scheduling
-observations resets it. It does not limit pgbench runtime or image downloading.
+observations resets it. It does not limit benchmark runtime or image downloading.
 Choose a period that allows enough time for autoscalers to provision nodes, or
 set `"0"` to disable early failure and skip the extra Pod lookup on each Job poll.
 
@@ -130,8 +166,9 @@ For local development, install:
 - Go
 - Node.js and npm
 
-An OpenEverest installation and a supported PostgreSQL provider are required
-when running the plugin in a cluster.
+An OpenEverest installation and a provider for the selected database type are
+required when running the plugin in a cluster. Sysbench currently targets MySQL;
+MariaDB/PXC-specific compatibility and ARM64 runner verification are not claimed.
 
 ## Local development
 
@@ -147,10 +184,12 @@ If the cluster already exists, run:
 tilt up -f dev/Tiltfile
 ```
 
-Tilt builds the frontend, coordinator image, and pgbench runner image. The
-runner image is used only when the coordinator starts a benchmark Job.
-Tilt injects that local image through `drivers.pgbench.image.repository` and
-`drivers.pgbench.image.tag`; no published runner image is needed for this flow.
+Tilt builds the frontend, backend image, and both pgbench and Sysbench runner
+images. It enables Sysbench locally and injects each runner's repository and tag
+through `drivers.<id>.image.repository` and `drivers.<id>.image.tag`. Runner images
+are used when the coordinator starts benchmark Jobs; no published runner image
+is needed for this flow. MySQL runs currently require API submission because
+the frontend still exposes only pgbench.
 
 ## Driver configuration
 
@@ -164,6 +203,12 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  sysbench:
+    enabled: false
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: ""
 ```
 
 Empty image fields use the defaults below after any legacy pgbench overrides.
@@ -171,6 +216,26 @@ With no overrides, pgbench uses
 `ghcr.io/openeverest/plugin-bench-pgbench:<appVersion>` and `IfNotPresent`.
 `appVersion` comes from the chart being installed, including metadata set by
 `helm package --app-version` during a release.
+
+Sysbench is disabled by default because the release workflow does not publish
+its image yet. To enable it outside Tilt, first build and publish an image using
+the [runner instructions](runners/sysbench/README.md#build), then supply that
+accessible image, for example:
+
+```yaml
+drivers:
+  sysbench:
+    enabled: true
+    image:
+      repository: registry.example.com/team/plugin-bench-sysbench
+      tag: tested-version
+      pullPolicy: IfNotPresent
+```
+
+The example registry and tag are placeholders for an image you supply. Empty
+Sysbench image fields resolve to
+`ghcr.io/openeverest/plugin-bench-sysbench:<appVersion>` and `IfNotPresent`;
+enabling those defaults does not ensure that image exists.
 
 | Image field | First choice | Deprecated pgbench fallback | Default |
 | --- | --- | --- | --- |
@@ -196,15 +261,16 @@ own image remains under the top-level `image` settings.
 Helm serializes the resolved settings into one backend environment variable:
 
 ```json
-{"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.1.0","imagePullPolicy":"IfNotPresent"}}
+{"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.1.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":false}}
 ```
 
 The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
 `enabled` boolean. Enabled entries require a nonempty image reference, and pull
 policy must be `Always`, `IfNotPresent`, or `Never` (omitted/empty defaults to
 `IfNotPresent`). Only drivers compiled into the backend can be enabled; adding
-a Helm entry does not install an implementation. Currently only pgbench is
-available, so disabling it leaves no enabled drivers and stops backend startup.
+a Helm entry does not install an implementation. The compiled drivers are
+pgbench and Sysbench. At least one must remain enabled; disabling pgbench is
+valid when Sysbench is enabled with a usable image.
 
 For deployments setting environment variables directly, `RUNNER_IMAGE` and
 `RUNNER_IMAGE_PULL_POLICY` remain deprecated pgbench fallbacks **only when
@@ -216,7 +282,7 @@ disablement is never reversed by a legacy image setting.
 
 ## Runner settings
 
-The runner receives its PostgreSQL connection through these variables:
+The pgbench runner receives its PostgreSQL connection through these variables:
 
 ```text
 PGHOST
@@ -239,6 +305,14 @@ BENCH_SCALE        default 1
 with a disposable database. See [runners/pgbench/README.md](runners/pgbench/README.md)
 for detailed runner instructions.
 
+The Sysbench runner receives `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`,
+`MYSQL_USER`, and `MYSQL_PASSWORD`, plus `BENCH_DURATION`, `BENCH_THREADS`,
+`BENCH_TABLES`, `BENCH_TABLE_SIZE`, and `BENCH_INITIALIZE`. The backend supplies
+the password through a Kubernetes Secret reference; ordinary connection and
+benchmark settings use environment values. See the
+[Sysbench configuration reference](runners/sysbench/README.md#configuration)
+for defaults and credential-file encoding rules.
+
 ## Useful commands
 
 ```bash
@@ -256,6 +330,7 @@ cd backend && go vet ./...
 
 helm lint charts/plugin-bench/
 docker build -t plugin-bench-pgbench:dev runners/pgbench
+docker build -t plugin-bench-sysbench:dev runners/sysbench
 ```
 
 Both PR CI and release builds run these frontend test suites before building the
@@ -282,6 +357,9 @@ release workflow. It publishes:
 - the `oci://ghcr.io/openeverest/charts/plugin-bench` Helm chart
 - a GitHub release with the chart archive and release notes
 
+Sysbench image publication is a separate follow-up. Its CI job builds and smoke
+tests the runner against MySQL 8.4, but the release workflow does not publish it.
+
 GHCR creates new packages as private, so the first release fails at the
 "Verify public access" step. Make each new package public in its GHCR package
 settings, then re-run the failed job. Publishing is idempotent, so re-runs are
@@ -293,10 +371,11 @@ safe.
 src/                         React frontend
 backend/                     Go backend
 backend/internal/everest/    OpenEverest API client
-backend/internal/driver/     Driver contracts, registry, and pgbench preparation
+backend/internal/driver/     Driver contracts, registry, pgbench/Sysbench preparation
 backend/internal/coordinator Kubernetes Job and Secret orchestration
 backend/internal/runnerresult Generic runner metrics decoder
 runners/pgbench/             pgbench runner image
+runners/sysbench/            MySQL Sysbench runner image
 charts/plugin-bench/         Helm chart and Plugin resource
 dev/                         Tilt and k3d configuration
 spec.md                      MVP requirements
@@ -304,13 +383,15 @@ spec.md                      MVP requirements
 
 ## Current limitations
 
-The MVP targets PostgreSQL instances managed by OpenEverest. Run records,
-including output and metrics, are held in backend memory and are lost on restart.
+The UI targets PostgreSQL instances managed by OpenEverest; MySQL Sysbench runs
+are available through the backend API with an explicitly enabled driver and a
+usable runner image. Additional workloads and MongoDB support remain future work.
+Run records, including output and metrics, are held in backend memory and are
+lost on restart.
 Completed records become unavailable one hour after completion; running records
 do not expire. Expired records are removed from memory when a new run is created.
 Keep one backend replica until shared storage and cross-pod coordination exist.
-Persistent history, comparisons, and additional database technologies remain
-future work.
+Persistent history and comparisons remain future work.
 
 ## License
 
