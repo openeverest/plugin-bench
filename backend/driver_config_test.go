@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -54,9 +55,12 @@ func TestDriverConfigurationRejectsInvalidPayloadWithoutLegacyFallback(t *testin
 		{"null enabled", `{"pgbench":{"enabled":null,"image":"runner:v2"}}`, "explicit enabled boolean"},
 		{"wrong enabled type", `{"pgbench":{"enabled":"true","image":"runner:v2"}}`, "parse BENCHMARK_DRIVERS"},
 		{"unknown field", `{"pgbench":{"enabled":true,"image":"runner:v2","pullPolicy":"Always"}}`, "parse BENCHMARK_DRIVERS"},
-		{"unknown enabled driver", `{"sysbench":{"enabled":true,"image":"runner:v2"}}`, "not compiled into the backend"},
+		{"unknown enabled driver", `{"future-tool":{"enabled":true,"image":"runner:v2"}}`, "not compiled into the backend"},
 		{"disabled pgbench", `{"pgbench":{"enabled":false}}`, "at least one enabled driver"},
-		{"only unknown disabled driver", `{"sysbench":{"enabled":false}}`, "at least one enabled driver"},
+		{"only unknown disabled driver", `{"future-tool":{"enabled":false}}`, "at least one enabled driver"},
+		{"disabled sysbench", `{"sysbench":{"enabled":false}}`, "at least one enabled driver"},
+		{"missing sysbench image", `{"sysbench":{"enabled":true}}`, "runner image is required"},
+		{"invalid sysbench pull policy", `{"sysbench":{"enabled":true,"image":"runner:v2","imagePullPolicy":"Sometimes"}}`, "image pull policy"},
 		{"missing image", `{"pgbench":{"enabled":true}}`, "runner image is required"},
 		{"blank image", `{"pgbench":{"enabled":true,"image":"  "}}`, "runner image is required"},
 		{"invalid pull policy", `{"pgbench":{"enabled":true,"image":"runner:v2","imagePullPolicy":"Sometimes"}}`, "image pull policy"},
@@ -70,6 +74,69 @@ func TestDriverConfigurationRejectsInvalidPayloadWithoutLegacyFallback(t *testin
 			registry, err := benchmarkRegistryFromEnv()
 			if err == nil || registry != nil || !strings.Contains(err.Error(), test.message) {
 				t.Fatalf("registry = %v, error = %v; want error containing %q", registry, err, test.message)
+			}
+		})
+	}
+}
+
+func TestDriverConfigurationSupportsSysbench(t *testing.T) {
+	for _, test := range []struct {
+		name, payload string
+		want          map[string]driver.RunnerConfig
+	}{
+		{
+			name: "both drivers",
+			payload: `{"pgbench":{"enabled":true,"image":"example.com/pgbench:v1","imagePullPolicy":"Always"},` +
+				`"sysbench":{"enabled":true,"image":"example.com/sysbench:v2","imagePullPolicy":"Never"}}`,
+			want: map[string]driver.RunnerConfig{
+				"pgbench":  {Image: "example.com/pgbench:v1", ImagePullPolicy: "Always"},
+				"sysbench": {Image: "example.com/sysbench:v2", ImagePullPolicy: "Never"},
+			},
+		},
+		{
+			name: "sysbench only", payload: `{"sysbench":{"enabled":true,"image":"example.com/sysbench:v2"}}`,
+			want: map[string]driver.RunnerConfig{"sysbench": {Image: "example.com/sysbench:v2", ImagePullPolicy: "IfNotPresent"}},
+		},
+		{
+			name: "pgbench explicitly disabled", payload: `{"pgbench":{"enabled":false},"sysbench":{"enabled":true,"image":"example.com/sysbench:v2"}}`,
+			want: map[string]driver.RunnerConfig{"sysbench": {Image: "example.com/sysbench:v2", ImagePullPolicy: "IfNotPresent"}},
+		},
+		{
+			name: "sysbench explicitly disabled", payload: `{"pgbench":{"enabled":true,"image":"example.com/pgbench:v1"},"sysbench":{"enabled":false}}`,
+			want: map[string]driver.RunnerConfig{"pgbench": {Image: "example.com/pgbench:v1", ImagePullPolicy: "IfNotPresent"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("BENCHMARK_DRIVERS", test.payload)
+			// A present payload must not inherit any legacy pgbench image settings.
+			t.Setenv("RUNNER_IMAGE", "legacy:old")
+			t.Setenv("RUNNER_IMAGE_PULL_POLICY", "invalid-legacy-policy")
+			registry, err := benchmarkRegistryFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for id, databaseType := range map[string]string{"pgbench": "postgresql", "sysbench": "mysql"} {
+				registration, err := registry.Resolve(id, driver.TargetInfo{DatabaseType: databaseType, Provider: "unfamiliar-provider"})
+				want, enabled := test.want[id]
+				if !enabled {
+					var problem *driver.Error
+					if !errors.As(err, &problem) || problem.Kind != driver.DriverSelection {
+						t.Fatalf("unconfigured driver %s resolved: %v", id, err)
+					}
+					continue
+				}
+				if err != nil || registration.Runner != want || registration.Driver.ID() != id {
+					t.Fatalf("driver %s configuration = %+v, error = %v; want %+v", id, registration.Runner, err, want)
+				}
+				wrongType := "mysql"
+				if databaseType == "mysql" {
+					wrongType = "postgresql"
+				}
+				_, err = registry.Resolve(id, driver.TargetInfo{DatabaseType: wrongType})
+				var problem *driver.Error
+				if !errors.As(err, &problem) || problem.Kind != driver.UnsupportedConnection {
+					t.Fatalf("driver %s accepted an unsupported database type: %v", id, err)
+				}
 			}
 		})
 	}

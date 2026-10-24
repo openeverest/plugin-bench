@@ -18,33 +18,6 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 )
 
-const validCreateRunBody = `{"target":{"k8sCluster":"local","namespace":"dbs","instance":"postgres-1"},"database":"bench","durationSeconds":30,"clients":1,"threads":1,"scale":1}`
-
-func testCredentials() *everest.Credentials {
-	return &everest.Credentials{
-		Host: "postgres.example.com", Port: "5432", Username: "bench-user",
-		Password: "bench-password", Provider: "provider-cloudnative-pg", Type: "postgresql",
-	}
-}
-
-type testRunner struct{}
-
-func (testRunner) Run(context.Context, coordinator.RunInput) (coordinator.Result, error) {
-	return coordinator.Result{Output: "benchmark complete"}, nil
-}
-
-type testRunnerFunc func(context.Context, coordinator.RunInput) (coordinator.Result, error)
-
-func (f testRunnerFunc) Run(ctx context.Context, input coordinator.RunInput) (coordinator.Result, error) {
-	return f(ctx, input)
-}
-
-func testAPI() *API {
-	return newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
-		return testCredentials(), nil
-	}, nil, testRunner{}, NewRunStore(), context.Background(), coordinator.Resources{})
-}
-
 func TestWriteErrorReturnsJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeError(w, http.StatusBadRequest, "invalid request")

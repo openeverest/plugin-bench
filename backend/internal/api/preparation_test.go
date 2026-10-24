@@ -28,38 +28,6 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func submitRun(a *API, body string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer test-token")
-	w := httptest.NewRecorder()
-	a.createRun(w, r)
-	return w
-}
-
-func awaitAcceptedRun(t *testing.T, a *API, w *httptest.ResponseRecorder) Run {
-	t.Helper()
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("POST = %d: %s", w.Code, w.Body.String())
-	}
-	var response struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := a.Shutdown(ctx); err != nil {
-		t.Fatal(err)
-	}
-	run, err := a.store.Get(response.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return run
-}
-
 func TestCanonicalRunStoresEffectiveOptionsAndOwnedSnapshots(t *testing.T) {
 	const wantOptions = `{"durationSeconds":60,"clients":1,"threads":1,"scale":1,"initialize":false}`
 	affinity := testNodeAffinity()
