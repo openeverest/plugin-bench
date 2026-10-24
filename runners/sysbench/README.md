@@ -14,10 +14,11 @@ docker build -t plugin-bench-sysbench:dev runners/sysbench
 ```
 
 The image uses a Go 1.25 build stage and a Debian 12 (`bookworm-slim`) runtime.
-It installs [Debian's sysbench 1.0.20 package](https://packages.debian.org/bookworm/sysbench)
-(`1.0.20+ds-5`), including its Lua workloads and MySQL connector. The dynamically
-linked sysbench executable uses the `libmariadb3` client library; only the Go
-wrapper is compiled with `CGO_ENABLED=0`.
+It installs [Debian's sysbench 1.0.20 package](https://packages.debian.org/bookworm/sysbench),
+including its Lua workloads and MySQL connector. The `sysbench=1.0.20*` constraint
+allows updated Debian package revisions; the build checks that the executable
+still reports version 1.0.20. The dynamically linked sysbench executable uses the
+`libmariadb3` client library; only the Go wrapper is compiled with `CGO_ENABLED=0`.
 
 The build checks the sysbench version, compiled MySQL driver, and availability of
 the `oltp_read_write` workload. It prints the exact installed versions of sysbench
@@ -176,7 +177,7 @@ docker run --rm --name sysbench-demo-runner --network sysbench-demo \
     umask 077
     config=$(mktemp /tmp/sysbench-cleanup.XXXXXX)
     trap '\''rm -f "$config"'\'' EXIT
-    printf "mysql-host=%s\nmysql-port=%s\nmysql-db=%s\nmysql-user=%s\nmysql-password=%s\n" \
+    printf "mysql-host='\''%s'\''\nmysql-port=%s\nmysql-db='\''%s'\''\nmysql-user='\''%s'\''\nmysql-password='\''%s'\''\n" \
       "$MYSQL_HOST" "$MYSQL_PORT" "$MYSQL_DATABASE" "$MYSQL_USER" "$MYSQL_PASSWORD" > "$config"
     unset MYSQL_PASSWORD
     sysbench --config-file="$config" --db-driver=mysql --tables="$BENCH_TABLES" \
@@ -230,7 +231,11 @@ shutdown and credential-file cleanup.
 ## Image verification
 
 The `Sysbench Runner` CI job runs Go vet, race tests, an image build, and the
-MySQL smoke script below. To run the Go checks locally:
+MySQL smoke script below. After building the image, it also runs
+`TestConnectionConfigRoundTripsThroughSysbench` inside that image against the
+installed sysbench parser. CI requires the test to pass without skipping; this
+checks exact credential bytes, quotes, whitespace, and the line-length boundary.
+To run the Go checks locally:
 
 ```bash
 go -C runners/sysbench vet ./...

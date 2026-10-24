@@ -34,6 +34,8 @@ func connectionConfig(c config) ([]byte, error) {
 			value = `"` + value + `"`
 		case strings.ContainsRune(value, ',') || strings.ContainsFunc(value, unicode.IsSpace) || strings.ContainsAny(value[:1], "'\"#"):
 			return nil, fmt.Errorf("%s cannot be represented in the sysbench configuration file", field.setting)
+		default:
+			// Both quote types present: sysbench reads the value unquoted.
 		}
 		line := field.option + "=" + value + "\n"
 		if len(line) > 254 {

@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.22"
+          go-version: "1.25"
           cache-dependency-path: runners/pgbench/go.mod
       - name: Vet runner
         run: cd runners/pgbench && go vet ./...
@@ -83,6 +83,21 @@ jobs:
         run: cd runners/sysbench && go test -race ./...
       - name: Build runner image
         run: docker build -t plugin-bench-sysbench:ci runners/sysbench
+      - name: Test credential encoding inside runner image
+        timeout-minutes: 2
+        working-directory: runners/sysbench
+        run: |
+          set -euo pipefail
+          runner_test_binary="$RUNNER_TEMP/sysbench-runner.test"
+          roundtrip_log="$RUNNER_TEMP/sysbench-roundtrip.log"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o "$runner_test_binary" .
+          docker run --rm --network none --entrypoint /tmp/sysbench-runner.test \
+            --mount "type=bind,src=$runner_test_binary,dst=/tmp/sysbench-runner.test,readonly" \
+            plugin-bench-sysbench:ci \
+            -test.run '^TestConnectionConfigRoundTripsThroughSysbench$' -test.v \
+            | tee "$roundtrip_log"
+          grep -Fq -- '--- PASS: TestConnectionConfigRoundTripsThroughSysbench (' "$roundtrip_log"
+          ! grep -q -- '--- SKIP' "$roundtrip_log"
       - name: Integration test runner
         timeout-minutes: 10
         run: bash .github/scripts/test-sysbench-runner.sh plugin-bench-sysbench:ci

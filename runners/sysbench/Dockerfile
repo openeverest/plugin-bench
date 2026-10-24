@@ -17,7 +17,7 @@ FROM debian:bookworm-slim
 # package includes the Lua workloads and pulls in the MySQL client library.
 RUN set -eu; \
 	apt-get update; \
-	apt-get install -y --no-install-recommends sysbench=1.0.20+ds-5; \
+	apt-get install -y --no-install-recommends 'sysbench=1.0.20*'; \
 	rm -rf /var/lib/apt/lists/*; \
 	sysbench --version; \
 	sysbench --version | grep -Eq '^sysbench 1\.0\.20$'; \

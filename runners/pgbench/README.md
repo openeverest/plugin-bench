@@ -10,6 +10,9 @@ From the repository root:
 docker build -t plugin-bench-pgbench:dev runners/pgbench
 ```
 
+The Go wrapper is built with Go 1.25, matching the backend and Sysbench runner.
+The runtime image remains PostgreSQL 16 on Alpine.
+
 ## Disposable PostgreSQL database
 
 ```bash
