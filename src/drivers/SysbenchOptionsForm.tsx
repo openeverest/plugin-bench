@@ -7,7 +7,7 @@ const NUMERIC_FIELDS: ReadonlyArray<{ field: SysbenchOptionField; label: string;
   { field: 'durationSeconds', label: 'Duration (seconds)', hint: 'How long the measured benchmark runs.' },
   { field: 'threads', label: 'Threads', hint: 'Concurrent workers and database connections.' },
   { field: 'tables', label: 'Tables', hint: 'Number of Sysbench tables to prepare or reuse.' },
-  { field: 'tableSize', label: 'Rows per table', hint: 'Dataset size per table. Must match existing tables when reusing them.' },
+  { field: 'tableSize', label: 'Rows per table', hint: 'Rows in each Sysbench table.' },
 ];
 
 export function SysbenchOptionsForm({
@@ -56,11 +56,8 @@ export function SysbenchOptionsForm({
         />
         <FormHelperText sx={{ mt: 0 }}>
           {draft.initialize
-            ? 'Creates the Sysbench tables before running. Existing table names cause preparation to fail; tables are not dropped automatically.'
-            : 'Reuses existing Sysbench tables. Set Tables and Rows per table to match the existing dataset.'}
-        </FormHelperText>
-        <FormHelperText>
-          Use an existing disposable database. Preparation and connection setup also count toward the overall execution timeout.
+            ? 'Creates benchmark tables in an existing database. Preparation fails if the tables already exist.'
+            : 'Reuse existing tables. Table count and size must match the existing dataset.'}
         </FormHelperText>
       </Box>
     </Stack>

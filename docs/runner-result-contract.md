@@ -104,8 +104,8 @@ ordinary environment values. Effective options and snapshots contain no credenti
 
 Sysbench must be explicitly enabled in deployment configuration with an accessible
 image. The chart defaults it to disabled pending image publication; Tilt builds
-and enables it locally. MySQL UI/provider exposure, MariaDB/PXC-specific
-certification, and ARM64 runner verification are separate follow-ups.
+and enables it locally. The UI offers Sysbench for `percona-server-mysql` instances.
+MariaDB/PXC-specific certification and ARM64 runner verification remain follow-ups.
 
 ### Admission and stored settings
 

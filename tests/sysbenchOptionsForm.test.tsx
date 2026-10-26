@@ -40,7 +40,7 @@ describe('Sysbench options form', () => {
     expect(screen.queryByLabelText('Clients')).toBeNull();
     expect(screen.queryByLabelText('Scale')).toBeNull();
     expect(screen.getByText(/oltp_read_write/)).toBeTruthy();
-    expect(screen.getByText(/Reuses existing Sysbench tables/)).toBeTruthy();
+    expect(screen.getByText('Reuse existing tables. Table count and size must match the existing dataset.')).toBeTruthy();
     fireEvent.click(start());
     expect(submissions).toEqual([{
       target, driver: 'sysbench',
@@ -56,7 +56,7 @@ describe('Sysbench options form', () => {
     change('Tables', '2');
     change('Rows per table', '500');
     fireEvent.click(prepare());
-    expect(screen.getByText(/Existing table names cause preparation to fail; tables are not dropped automatically/)).toBeTruthy();
+    expect(screen.getByText('Creates benchmark tables in an existing database. Preparation fails if the tables already exist.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Job resources' }));
     change('CPU request (millicores)', '500');
     change('Memory limit (MiB)', '1024');

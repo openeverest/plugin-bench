@@ -122,6 +122,19 @@ describe('benchmark result metrics and logs', () => {
     expect(custom.queryByText('From existing tables')).toBeNull();
   });
 
+  it.each([false, true])('displays saved Sysbench table settings with preparation=%s', initialize => {
+    const options = { durationSeconds: 5, threads: 2, tables: 3, tableSize: 500, initialize };
+    render(card({ ...completed, driver: 'sysbench', runnerImage: 'registry/sysbench:v2', options }));
+    const effective = within(screen.getByRole('region', { name: 'Effective benchmark options' }));
+    expect(effective.getByText('tables')).toBeTruthy();
+    expect(effective.getByText('3')).toBeTruthy();
+    expect(effective.getByText('tableSize')).toBeTruthy();
+    expect(effective.getByText('500')).toBeTruthy();
+    expect(effective.getByText(String(initialize))).toBeTruthy();
+    expect(effective.queryByText('From existing tables')).toBeNull();
+    expect(options).toEqual({ durationSeconds: 5, threads: 2, tables: 3, tableSize: 500, initialize });
+  });
+
   it('keeps log expansion independent for cards displayed side by side', () => {
     render(<>{card({ ...completed, output: 'first logs', metrics })}
       {card({ ...completed, id: 'run-2', output: 'second logs',

@@ -8,8 +8,9 @@ import { TrackedBenchmarkRun } from './TrackedBenchmarkRun';
 import { BenchmarkApiError, createBenchmarkRun } from './benchmarkApi';
 import { toCreateBenchmarkRunRequest } from './benchmarkFormValidation';
 import type { BenchmarkFormValues } from './benchmarkFormValidation';
-import { targetFromClusterDetailProps } from './benchmarkTarget';
+import { providerFromClusterDetailProps, targetFromClusterDetailProps } from './benchmarkTarget';
 import type { BenchmarkTarget } from './benchmarkTarget';
+import { getBenchmarkDriversForProvider } from './drivers';
 
 interface BenchmarkTabProps extends ClusterDetailTabProps {
   pluginFetch: PluginApi['fetch'];
@@ -23,11 +24,13 @@ type SubmissionState =
 
 export function BenchmarkTab({ pluginFetch, ...props }: BenchmarkTabProps) {
   const target = targetFromClusterDetailProps(props);
+  const provider = providerFromClusterDetailProps(props);
   return (
     <BenchmarkWorkflow
-      key={JSON.stringify([target.k8sCluster, target.namespace, target.instance])}
+      key={JSON.stringify([target.k8sCluster, target.namespace, target.instance, provider])}
       pluginFetch={pluginFetch}
       target={target}
+      provider={provider}
     />
   );
 }
@@ -35,9 +38,11 @@ export function BenchmarkTab({ pluginFetch, ...props }: BenchmarkTabProps) {
 interface BenchmarkWorkflowProps {
   pluginFetch: PluginApi['fetch'];
   target: BenchmarkTarget;
+  provider: string | undefined;
 }
 
-function BenchmarkWorkflow({ pluginFetch, target }: BenchmarkWorkflowProps) {
+function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowProps) {
+  const availableDrivers = getBenchmarkDriversForProvider(provider);
   const [submission, setSubmission] = useState<SubmissionState>({ status: 'idle' });
   const activeRequest = useRef<AbortController | null>(null);
   const [runIds, setRunIds] = useState<string[]>([]);
@@ -54,7 +59,7 @@ function BenchmarkWorkflow({ pluginFetch, target }: BenchmarkWorkflowProps) {
   }, []);
 
   const submitRun = async (values: BenchmarkFormValues) => {
-    if (activeRequest.current) return;
+    if (activeRequest.current || !availableDrivers.includes(values.driver)) return;
     const request = toCreateBenchmarkRunRequest(values, target);
     if (!request) return;
 
@@ -83,7 +88,16 @@ function BenchmarkWorkflow({ pluginFetch, target }: BenchmarkWorkflowProps) {
   return (
     <Stack spacing={3} sx={{ p: 3, maxWidth: 1100 }}>
       <PageHeader subtitle="Configure and run a benchmark for this database instance." />
-      <BenchmarkForm target={target} availableDrivers={['pgbench']} isSubmitting={submission.status === 'submitting'} onSubmit={submitRun} />
+      {availableDrivers.length > 0 ? (
+        <BenchmarkForm target={target} availableDrivers={availableDrivers}
+          isSubmitting={submission.status === 'submitting'} onSubmit={submitRun} />
+      ) : (
+        <Alert severity="info">
+          {provider
+            ? 'Benchmarking is not available for this database provider.'
+            : 'Waiting for database provider information.'}
+        </Alert>
+      )}
       {submission.status === 'failed' && <Alert severity="error">{submission.message}</Alert>}
       {runIds.length > 0 && (
         <Stack spacing={1.5} component="section" aria-label="Benchmark runs">

@@ -5,6 +5,21 @@ import { getBenchmarkRun, BenchmarkStatusError } from '../dist/status-test/bench
 const running = { id: 'run/1', status: 'running', createdAt: '2026-10-02T10:00:00Z', outputTruncated: false };
 const response = body => new Response(JSON.stringify(body));
 
+test('preserves Sysbench effective settings, logs, and optional metrics', async () => {
+  for (const status of ['running', 'succeeded', 'failed']) {
+    const run = {
+      ...running, status, driver: 'sysbench', runnerImage: 'registry/sysbench:v2', database: 'sbtest',
+      options: { durationSeconds: 5, threads: 2, tables: 3, tableSize: 500, initialize: false },
+      ...(status === 'running' ? {} : { completedAt: running.createdAt, output: 'native sysbench logs', outputTruncated: true }),
+      ...(status === 'failed' ? { error: 'benchmark execution failed' } : {}),
+    };
+    for (const metrics of [undefined, [{ name: 'tps', unit: 'tx/s', value: 1234.5 }, { name: 'latency_avg', unit: 'ms', value: 3.2 }]]) {
+      const snapshot = { ...run, ...(metrics ? { metrics } : {}) };
+      assert.deepEqual(await getBenchmarkRun(async () => response(snapshot), run.id), snapshot);
+    }
+  }
+});
+
 test('GET encodes the ID and accepts all statuses and optional diagnostics', async () => {
   for (const status of ['running', 'succeeded', 'failed']) {
     const run = { ...running, status, ...(status === 'running' ? {} : {
