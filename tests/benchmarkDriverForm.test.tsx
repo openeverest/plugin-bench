@@ -4,6 +4,7 @@ import { BenchmarkForm } from '../src/BenchmarkForm';
 import { toCreateBenchmarkRunRequest } from '../src/benchmarkFormValidation';
 import type { BenchmarkFormValues } from '../src/benchmarkFormValidation';
 import type { CreateBenchmarkRunRequest } from '../src/benchmarkApi';
+import type { BenchmarkDriverId } from '../src/drivers';
 
 afterEach(cleanup);
 
@@ -12,17 +13,20 @@ const input = (label: string) => screen.getByLabelText(label) as HTMLInputElemen
 const change = (label: string, value: string) => fireEvent.change(input(label), { target: { value } });
 const start = () => screen.getByRole('button', { name: /Start benchmark|Starting…/ }) as HTMLButtonElement;
 
-function setup() {
+function setup(availableDrivers: readonly BenchmarkDriverId[] = ['pgbench']) {
   const submissions: CreateBenchmarkRunRequest[] = [];
   const onSubmit = (values: BenchmarkFormValues) => {
     const request = toCreateBenchmarkRunRequest(values, target);
     if (request) submissions.push(request);
   };
-  const view = render(<BenchmarkForm target={target} isSubmitting={false} onSubmit={onSubmit} />);
+  const view = render(<BenchmarkForm target={target} availableDrivers={availableDrivers} isSubmitting={false} onSubmit={onSubmit} />);
   return {
     submissions,
     pending: (isSubmitting: boolean) => view.rerender(
-      <BenchmarkForm target={target} isSubmitting={isSubmitting} onSubmit={onSubmit} />,
+      <BenchmarkForm target={target} availableDrivers={availableDrivers} isSubmitting={isSubmitting} onSubmit={onSubmit} />,
+    ),
+    available: (drivers: readonly BenchmarkDriverId[]) => view.rerender(
+      <BenchmarkForm target={target} availableDrivers={drivers} isSubmitting={false} onSubmit={onSubmit} />,
     ),
   };
 }
@@ -108,6 +112,88 @@ describe('benchmark driver form', () => {
     pending(false);
     expect(input('Clients').value).toBe('4');
     fireEvent.click(start());
-    expect(submissions[0].options.clients).toBe(4);
+    expect(submissions[0]).toMatchObject({ driver: 'pgbench', options: { clients: 4 } });
+  });
+
+  it('resets driver options and touched errors while retaining shared fields', () => {
+    const { submissions } = setup(['pgbench', 'sysbench']);
+    const select = (label: string) => {
+      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Benchmark driver' }));
+      fireEvent.click(screen.getByRole('option', { name: label }));
+    };
+    change('Database', 'app');
+    fireEvent.click(screen.getByRole('button', { name: 'Job resources' }));
+    change('CPU request (millicores)', '500');
+    fireEvent.click(screen.getByRole('button', { name: /Job placement/ }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Run on nodes with specific labels' }));
+    change('Label key 1', 'pool');
+    change('Label value 1', 'benchmark');
+    change('Clients', '0');
+    fireEvent.blur(input('Clients'));
+    expect(screen.getByText('Clients must be greater than zero.')).toBeTruthy();
+
+    select('Sysbench');
+    expect(screen.queryByLabelText('Clients')).toBeNull();
+    expect(input('Threads').value).toBe('1');
+    expect(input('Database').value).toBe('app');
+    expect(input('CPU request (millicores)').value).toBe('500');
+    expect(input('Label key 1').value).toBe('pool');
+    expect(input('Label value 1').value).toBe('benchmark');
+    fireEvent.click(start());
+    expect(submissions[0]).toMatchObject({
+      database: 'app', driver: 'sysbench',
+      options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+      resources: { cpuRequest: '500m' },
+    });
+    expect(submissions[0]).toHaveProperty('nodeAffinity');
+    expect(submissions[0].options).not.toHaveProperty('clients');
+    expect(submissions[0].options).not.toHaveProperty('scale');
+
+    select('pgbench');
+    expect(input('Clients').value).toBe('1');
+    expect(input('Database').value).toBe('app');
+    change('Clients', '0');
+    expect(screen.queryByText('Clients must be greater than zero.')).toBeNull();
+    change('Clients', '2');
+    fireEvent.click(start());
+    expect(submissions[1]).toMatchObject({
+      database: 'app', driver: 'pgbench', options: { clients: 2, scale: 1 },
+      resources: { cpuRequest: '500m' },
+    });
+    expect(submissions[1]).toHaveProperty('nodeAffinity');
+    expect(submissions[1].options).not.toHaveProperty('tables');
+  });
+
+  it('uses the selected driver to validate the shared database field', () => {
+    setup(['pgbench', 'sysbench']);
+    change('Database', 'dbname=app');
+    expect(start().disabled).toBe(true);
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Benchmark driver' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Sysbench' }));
+    expect(start().disabled).toBe(false);
+  });
+
+  it('blocks submission when the driver is no longer available', () => {
+    const { submissions, available } = setup();
+    available(['sysbench']);
+    expect(start().disabled).toBe(true);
+    fireEvent.submit(start().closest('form')!);
+    expect(submissions).toHaveLength(0);
+    expect(screen.queryByLabelText('Clients')).toBeNull();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Benchmark driver' }));
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('option', { name: 'Sysbench' }));
+    fireEvent.click(start());
+    expect(submissions[0]).toMatchObject({ driver: 'sysbench' });
+  });
+
+  it('blocks submission with an empty available-driver list', () => {
+    const { submissions } = setup([]);
+    expect(start().disabled).toBe(true);
+    expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.submit(start().closest('form')!);
+    expect(submissions).toHaveLength(0);
+    expect(screen.queryByLabelText('Clients')).toBeNull();
+    expect(screen.queryByLabelText('Tables')).toBeNull();
   });
 });

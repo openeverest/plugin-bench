@@ -20,9 +20,9 @@ import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormVal
 import type { BenchmarkTarget } from './benchmarkTarget';
 import { prepareNodeAffinityDraft } from './benchmarkNodeAffinity';
 import { BenchmarkNodeAffinityForm } from './BenchmarkNodeAffinityForm';
-import { benchmarkDrivers, benchmarkDriverIds, createDriverDraft, isBenchmarkDriverId } from './drivers';
+import { benchmarkDrivers, createDriverDraft, defaultBenchmarkDriver, isBenchmarkDriverId } from './drivers';
 import { DriverOptionsForm } from './drivers/DriverOptionsForm';
-import type { DriverDraft } from './drivers';
+import type { BenchmarkDriverId, DriverDraft } from './drivers';
 
 type ResourceField = 'cpuRequest' | 'cpuLimit' | 'memoryRequest' | 'memoryLimit';
 
@@ -35,18 +35,22 @@ const RESOURCE_FIELDS: ReadonlyArray<{ field: ResourceField; label: string; hint
 
 interface BenchmarkFormProps {
   target: BenchmarkTarget;
+  availableDrivers: readonly BenchmarkDriverId[];
   isSubmitting: boolean;
   onSubmit: (values: BenchmarkFormValues) => void | Promise<void>;
 }
 
-export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormProps) {
-  const [values, setValues] = useState<BenchmarkFormValues>(createInitialBenchmarkFormValues);
+export function BenchmarkForm({ target, availableDrivers, isSubmitting, onSubmit }: BenchmarkFormProps) {
+  const [values, setValues] = useState<BenchmarkFormValues>(
+    () => createInitialBenchmarkFormValues(availableDrivers[0] ?? defaultBenchmarkDriver),
+  );
   const [touched, setTouched] = useState<Partial<Record<BenchmarkFormField, boolean>>>({});
   const [submitted, setSubmitted] = useState(false);
   const [resourcesExpanded, setResourcesExpanded] = useState(false);
   const errors = validateBenchmarkForm(values);
   const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
-  const canSubmit = Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
+  const driverAvailable = availableDrivers.includes(values.driver);
+  const canSubmit = driverAvailable && Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
   const resourceError = RESOURCE_FIELDS.some(({ field }) => Boolean(errors[field]));
 
   const updateValue = <K extends BenchmarkFormField | 'nodeAffinity'>(key: K, value: BenchmarkFormValues[K]) => {
@@ -98,22 +102,24 @@ export function BenchmarkForm({ target, isSubmitting, onSubmit }: BenchmarkFormP
             label="Benchmark driver"
             select
             size="small"
-            value={values.driver}
-            disabled={isSubmitting}
+            value={driverAvailable ? values.driver : ''}
+            disabled={isSubmitting || availableDrivers.length === 0}
             onChange={event => {
               const driver = event.target.value;
-              if (isBenchmarkDriverId(driver) && driver !== values.driver) {
+              if (!isSubmitting && isBenchmarkDriverId(driver) && availableDrivers.includes(driver) && driver !== values.driver) {
                 updateDriver(createDriverDraft(driver));
                 setSubmitted(false);
               }
             }}
           >
-            {benchmarkDriverIds.map(driver => (
+            {availableDrivers.map(driver => (
               <MenuItem key={driver} value={driver}>{benchmarkDrivers[driver].label}</MenuItem>
             ))}
           </TextField>
-          <DriverOptionsForm key={values.driver} selection={values} errors={errors.options ?? {}}
-            disabled={isSubmitting} showErrors={submitted} onChange={updateDriver} />
+          {driverAvailable && (
+            <DriverOptionsForm key={values.driver} selection={values} errors={errors.options ?? {}}
+              disabled={isSubmitting} showErrors={submitted} onChange={updateDriver} />
+          )}
 
           <Accordion
             variant="outlined"

@@ -6,6 +6,20 @@ import { initialPgbenchOptionsDraft, preparePgbenchOptions, validatePgbenchDatab
 const validValues = { ...initialBenchmarkFormValues, database: 'benchdb' };
 const target = { k8sCluster: 'main', namespace: 'dbs', instance: 'pg-1' };
 
+test('maps Sysbench defaults through the standalone request builder without pgbench fields', () => {
+  const values = createInitialBenchmarkFormValues('sysbench');
+  assert.deepEqual(validateBenchmarkForm(values), {});
+  assert.deepEqual(toCreateBenchmarkRunRequest({ ...values, database: ' dbname=app ' }, target), {
+    target, database: 'dbname=app', driver: 'sysbench',
+    options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+  });
+  for (const field of ['tables', 'tableSize']) {
+    const invalid = { ...values, options: { ...values.options, [field]: '' } };
+    assert.ok(validateBenchmarkForm(invalid).options[field]);
+    assert.equal(toCreateBenchmarkRunRequest(invalid, target), undefined);
+  }
+});
+
 test('accepts valid form values and initializes the dataset by default', () => {
   assert.equal(initialBenchmarkFormValues.options.initialize, true);
   assert.deepEqual(validateBenchmarkForm(validValues), {});

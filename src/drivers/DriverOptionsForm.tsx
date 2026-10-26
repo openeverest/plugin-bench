@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import { PgbenchOptionsForm } from './PgbenchOptionsForm';
+import { SysbenchOptionsForm } from './SysbenchOptionsForm';
 import type { BenchmarkDriverId, DriverDraft, DriverOptionsErrors } from './index';
 
 export interface DriverOptionsFormProps<K extends BenchmarkDriverId = BenchmarkDriverId> {
@@ -14,6 +15,7 @@ export interface DriverOptionsFormProps<K extends BenchmarkDriverId = BenchmarkD
 // options component here and its data definition in index.ts.
 const optionsForms: { [K in BenchmarkDriverId]: (props: DriverOptionsFormProps<K>) => ReactElement } = {
   pgbench: PgbenchOptionsForm,
+  sysbench: SysbenchOptionsForm,
 };
 
 export function DriverOptionsForm<K extends BenchmarkDriverId>(props: DriverOptionsFormProps<K>) {

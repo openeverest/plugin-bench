@@ -15,11 +15,11 @@ function setup(isSubmitting = false) {
     const request = toCreateBenchmarkRunRequest(values, target);
     if (request) submissions.push(request);
   };
-  const view = render(<BenchmarkForm target={target} isSubmitting={isSubmitting} onSubmit={onSubmit} />);
+  const view = render(<BenchmarkForm target={target} availableDrivers={['pgbench']} isSubmitting={isSubmitting} onSubmit={onSubmit} />);
   return {
     submissions,
     rerender: (pending: boolean) => view.rerender(
-      <BenchmarkForm target={target} isSubmitting={pending} onSubmit={onSubmit} />,
+      <BenchmarkForm target={target} availableDrivers={['pgbench']} isSubmitting={pending} onSubmit={onSubmit} />,
     ),
   };
 }

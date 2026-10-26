@@ -3,7 +3,7 @@ import type { BenchmarkTarget } from './benchmarkTarget';
 import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity.js';
 import type { NodeAffinityDraft } from './benchmarkNodeAffinity';
 import { benchmarkDrivers, createDriverDraft, defaultBenchmarkDriver, prepareDriver } from './drivers/index.js';
-import type { DriverDraft, DriverOptionsErrors } from './drivers';
+import type { BenchmarkDriverId, DriverDraft, DriverOptionsErrors } from './drivers';
 
 type SharedFormValues = {
   database: string;
@@ -16,9 +16,9 @@ type SharedFormValues = {
 
 export type BenchmarkFormValues = SharedFormValues & DriverDraft;
 
-export function createInitialBenchmarkFormValues(): BenchmarkFormValues {
+export function createInitialBenchmarkFormValues(driver: BenchmarkDriverId = defaultBenchmarkDriver): BenchmarkFormValues {
   return {
-    ...createDriverDraft(defaultBenchmarkDriver),
+    ...createDriverDraft(driver),
     database: '',
     cpuRequest: '',
     cpuLimit: '',
