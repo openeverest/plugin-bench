@@ -44,7 +44,7 @@ jobs:
             echo "prerelease=${prerelease}"
           } >> "$GITHUB_OUTPUT"
 
-  # Build and test the frontend before publishing either image.
+  # Build and test the frontend before publishing any image.
   build-frontend:
     name: Build frontend bundle
     runs-on: ubuntu-latest
@@ -79,6 +79,7 @@ jobs:
     outputs:
       backend-tags: ${{ steps.backend-meta.outputs.tags }}
       runner-tags: ${{ steps.runner-meta.outputs.tags }}
+      sysbench-tags: ${{ steps.sysbench-meta.outputs.tags }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Download frontend bundle
@@ -93,7 +94,7 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: "3.14.0"
-      - name: Test backend and runner
+      - name: Test backend and runners
         shell: bash
         run: |
           set -euo pipefail
@@ -101,6 +102,7 @@ jobs:
           cp dist/main.js backend/dist/main.js
           (cd backend && go vet ./... && go test -race ./...)
           (cd runners/pgbench && go vet ./... && go test -race ./...)
+          (cd runners/sysbench && go vet ./... && go test -race ./...)
       - run: helm lint charts/plugin-bench/
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -120,6 +122,15 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ needs.prepare.outputs.image }}-pgbench
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+      - name: Extract Sysbench runner image metadata
+        id: sysbench-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ needs.prepare.outputs.image }}-sysbench
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -147,6 +158,16 @@ jobs:
           labels: ${{ steps.runner-meta.outputs.labels }}
           cache-from: type=gha,scope=runner
           cache-to: type=gha,scope=runner,mode=max
+      - name: Build Sysbench runner archive
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: runners/sysbench
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=image-artifacts/sysbench-runner.tar
+          tags: ${{ needs.prepare.outputs.image }}-sysbench:${{ needs.prepare.outputs.version }}
+          labels: ${{ steps.sysbench-meta.outputs.labels }}
+          cache-from: type=gha,scope=sysbench-runner
+          cache-to: type=gha,scope=sysbench-runner,mode=max
       - name: Install image tools
         run: |
           sudo apt-get update
@@ -159,6 +180,30 @@ jobs:
       - name: Integration test runner
         timeout-minutes: 3
         run: bash .github/scripts/test-runner.sh plugin-bench-pgbench:release-test
+      - name: Load Sysbench runner from release archive
+        run: |
+          skopeo --override-os linux --override-arch amd64 copy \
+            oci-archive:image-artifacts/sysbench-runner.tar \
+            docker-daemon:plugin-bench-sysbench:release-test
+      - name: Test credential encoding inside Sysbench release image
+        timeout-minutes: 2
+        working-directory: runners/sysbench
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner_test_binary="$RUNNER_TEMP/sysbench-runner.test"
+          roundtrip_log="$RUNNER_TEMP/sysbench-roundtrip.log"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o "$runner_test_binary" .
+          docker run --rm --network none --entrypoint /tmp/sysbench-runner.test \
+            --mount "type=bind,src=$runner_test_binary,dst=/tmp/sysbench-runner.test,readonly" \
+            plugin-bench-sysbench:release-test \
+            -test.run '^TestConnectionConfigRoundTripsThroughSysbench$' -test.v \
+            | tee "$roundtrip_log"
+          grep -Fq -- '--- PASS: TestConnectionConfigRoundTripsThroughSysbench (' "$roundtrip_log"
+          ! grep -q -- '--- SKIP' "$roundtrip_log"
+      - name: Integration test Sysbench runner
+        timeout-minutes: 10
+        run: bash .github/scripts/test-sysbench-runner.sh plugin-bench-sysbench:release-test
       - name: Upload tested images
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -204,6 +249,7 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BACKEND_TAGS: ${{ needs.build-image.outputs.backend-tags }}
           RUNNER_TAGS: ${{ needs.build-image.outputs.runner-tags }}
+          SYSBENCH_TAGS: ${{ needs.build-image.outputs.sysbench-tags }}
         run: |
           set -euo pipefail
           auth="$RUNNER_TEMP/ghcr-auth.json"
@@ -219,9 +265,11 @@ jobs:
           }
           publish image-artifacts/backend.tar "$RUNNER_TEMP/backend.digest" "$BACKEND_TAGS"
           publish image-artifacts/runner.tar "$RUNNER_TEMP/runner.digest" "$RUNNER_TAGS"
+          publish image-artifacts/sysbench-runner.tar "$RUNNER_TEMP/sysbench.digest" "$SYSBENCH_TAGS"
           {
             echo "backend-digest=$(cat "$RUNNER_TEMP/backend.digest")"
             echo "runner-digest=$(cat "$RUNNER_TEMP/runner.digest")"
+            echo "sysbench-digest=$(cat "$RUNNER_TEMP/sysbench.digest")"
           } >> "$GITHUB_OUTPUT"
       - name: Publish Helm chart to GHCR
         env:
@@ -242,6 +290,8 @@ jobs:
             || not_public "${IMAGE}"
           skopeo inspect --no-creds "docker://${IMAGE}-pgbench:${VERSION}" > /dev/null \
             || not_public "${IMAGE}-pgbench"
+          skopeo inspect --no-creds "docker://${IMAGE}-sysbench:${VERSION}" > /dev/null \
+            || not_public "${IMAGE}-sysbench"
           helm show chart "oci://${IMAGE%/*}/charts/plugin-bench" --version "$VERSION" \
             --registry-config "$RUNNER_TEMP/anonymous-helm.json" > /dev/null \
             || not_public "${IMAGE%/*}/charts/plugin-bench"
@@ -250,6 +300,7 @@ jobs:
         env:
           BACKEND_DIGEST: ${{ steps.publish.outputs.backend-digest }}
           RUNNER_DIGEST: ${{ steps.publish.outputs.runner-digest }}
+          SYSBENCH_DIGEST: ${{ steps.publish.outputs.sysbench-digest }}
         run: |
           cat > release-artifacts/notes.md <<EOF
           ## Plugin Bench v${VERSION}
@@ -259,6 +310,8 @@ jobs:
             - Digest: \`${BACKEND_DIGEST}\`
           - pgbench runner: \`${IMAGE}-pgbench:${VERSION}\`
             - Digest: \`${RUNNER_DIGEST}\`
+          - Sysbench runner: \`${IMAGE}-sysbench:${VERSION}\`
+            - Digest: \`${SYSBENCH_DIGEST}\`
 
           Platforms: \`linux/amd64\`, \`linux/arm64\`.
 

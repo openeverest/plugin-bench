@@ -2,6 +2,7 @@ package driver
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,22 @@ func TestRegistryResolvesExplicitDriver(t *testing.T) {
 		if err != nil || again.Runner != want.Runner {
 			t.Fatal("changing a returned registration changed the registry")
 		}
+	}
+}
+
+func TestRegistryIDsAreSortedAndOwnedByCaller(t *testing.T) {
+	registry, err := NewRegistry(registration("sysbench"), registration("pgbench"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pgbench", "sysbench"}
+	ids := registry.IDs()
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("IDs() = %v; want %v", ids, want)
+	}
+	ids[0] = "changed"
+	if got := registry.IDs(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("mutating returned IDs changed the registry: %v", got)
 	}
 }
 

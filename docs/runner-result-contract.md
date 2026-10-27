@@ -71,6 +71,8 @@ runner currently fixes the database driver to MySQL and uses the bundled
 
 The authorized OpenEverest credentials must report database type `mysql`, matched
 case-insensitively after trimming. The provider name does not select the driver.
+The API therefore also accepts `provider-mariadb` and `percona-xtradb-cluster`
+targets reporting `mysql`; compatibility with those providers has not been verified.
 Clients must explicitly send `driver: "sysbench"`; omitting it does not infer
 Sysbench from the target. The legacy flat envelope remains pgbench-only.
 
@@ -102,10 +104,11 @@ node affinity work identically for both drivers. The password is supplied throug
 a per-run Secret reference; other connection fields and benchmark settings use
 ordinary environment values. Effective options and snapshots contain no credentials.
 
-Sysbench must be explicitly enabled in deployment configuration with an accessible
-image. The chart defaults it to disabled pending image publication; Tilt builds
-and enables it locally. The UI offers Sysbench for `percona-server-mysql` instances.
-MariaDB/PXC-specific certification and ARM64 runner verification remain follow-ups.
+The chart enables Sysbench by default using its published runner image tagged
+with the chart's `appVersion`. Administrators can disable it or override the image;
+Tilt builds and injects a local image. Release builds target AMD64 and ARM64, with
+image integration tests on AMD64. The UI offers Sysbench for `percona-server-mysql`
+instances. MariaDB/PXC-specific certification remains a follow-up.
 
 ### Admission and stored settings
 
@@ -216,11 +219,11 @@ comparison charts, and a metric taxonomy are separate follow-up work.
 ## Frontend display and compatibility
 
 The benchmark tab submits explicit `driver` and `options` fields. Its shared form
-renders the selected driver's options component; pgbench is currently the only
-registered UI driver. Sysbench backend support does not add a MySQL form or
-expose MySQL providers in the plugin manifest. The UI explicitly selects a
-30-second run and initialization enabled by default, while the API defaults
-above apply to omitted fields.
+renders the selected driver's options component: pgbench for the supported
+PostgreSQL providers and Sysbench for `percona-server-mysql`. The pgbench form
+defaults to a 30-second run with initialization enabled; Sysbench defaults to
+60 seconds with initialization disabled. The API defaults above apply to
+omitted fields.
 
 Result cards display the stored driver, configured image reference, and effective
 options without interpreting a driver's option schema. Completed runs show metric
