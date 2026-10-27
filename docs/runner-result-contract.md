@@ -15,9 +15,9 @@ most 16 KiB. New clients always identify the driver and provide an options objec
 }
 ```
 
-Use a disposable benchmark database. `initialize: true` drops and recreates
-pgbench tables. An omitted or empty `database` uses the driver's resolution of
-upstream connection details; it does not create a database.
+Use a disposable benchmark database. For pgbench, `initialize: true` drops and
+recreates pgbench tables. An omitted or empty `database` uses the driver's
+resolution of upstream connection details; it does not create a database.
 
 Resources and node affinity remain optional shared fields outside `options`.
 The selected driver must support the database type returned by OpenEverest;
@@ -26,8 +26,8 @@ deployment settings, never from the request.
 
 The API checks the shared request envelope; the driver strictly decodes its
 options into a typed struct and validates them. Arrays, strings, and `null` are
-not options objects. Unknown option fields and explicitly null pgbench fields
-are rejected. Omitted pgbench fields receive these defaults:
+not options objects. Both drivers reject unknown option fields and explicitly
+null fields. Omitted pgbench fields receive these defaults:
 
 | Field | Default | Validation |
 | --- | --- | --- |
@@ -42,6 +42,74 @@ negative numeric settings fail validation. Scale remains a valid positive number
 even when initialization is disabled, though it is only used for initialization.
 Shared backend code resolves Kubernetes resource defaults from deployment
 settings and per-run overrides.
+
+### Sysbench MySQL requests
+
+The Sysbench driver uses the same shared request fields with its own options:
+
+```json
+{
+  "target": {"k8sCluster": "main", "namespace": "default", "instance": "my-mysql"},
+  "database": "sbtest",
+  "driver": "sysbench",
+  "options": {"durationSeconds": 5, "threads": 2, "tables": 1, "tableSize": 1000, "initialize": true}
+}
+```
+
+| Field | Default | Validation |
+| --- | --- | --- |
+| `durationSeconds` | 60 | Integer from 1 to 2147483647 |
+| `threads` | 1 | Integer from 1 to 2147483647 |
+| `tables` | 1 | Integer from 1 to 2147483647 |
+| `tableSize` | 10000 | Integer from 1 to 2147483647 |
+| `initialize` | false | Boolean |
+
+An empty options object applies all defaults. Explicit zero, negative values,
+nulls, and fields such as `clients`, `scale`, or `workload` are rejected. The
+runner currently fixes the database driver to MySQL and uses the bundled
+`oltp_read_write` workload; these are not selectable options.
+
+The authorized OpenEverest credentials must report database type `mysql`, matched
+case-insensitively after trimming. The provider name does not select the driver.
+The API therefore also accepts `provider-mariadb` and `percona-xtradb-cluster`
+targets reporting `mysql`; compatibility with those providers has not been verified.
+Clients must explicitly send `driver: "sysbench"`; omitting it does not infer
+Sysbench from the target. The legacy flat envelope remains pgbench-only.
+
+The driver resolves the database in this order:
+
+1. A nonblank `database` supplied in the request.
+2. A nonblank database field in the upstream credentials.
+3. A database path in the upstream `mysql://` URI.
+
+If no database is available, the request returns `400` asking for a name.
+Structured host, port, username, and password remain required: the URI supplies
+only a database hint, and URI-only credentials return `422`. Invalid structured
+credentials, malformed URI hints, or values incompatible with the runner's
+configuration file return `502`. Request database encoding errors return `400`.
+See [runner credential constraints](../runners/sysbench/README.md#credentials).
+
+The database and account must already exist. With `initialize: true`, the runner
+performs `prepare` using one worker before the measured phase. Existing table
+names fail preparation, and benchmarking is skipped. With `initialize: false`,
+the expected tables must already exist; keep `tables` and `tableSize` consistent
+with them because both settings control generated queries. Both remain positive
+required effective values even when initialization is disabled. Preparation may
+leave partial tables after failure; the runner never automatically drops them.
+Job and Secret cleanup does not remove database tables.
+
+`durationSeconds` limits the measured phase. Scheduling, image startup, and
+preparation also consume the shared overall execution timeout. Resources and
+node affinity work identically for both drivers. The password is supplied through
+a per-run Secret reference; other connection fields and benchmark settings use
+ordinary environment values. Effective options and snapshots contain no credentials.
+
+The chart enables Sysbench by default using its published runner image tagged
+with the chart's `appVersion`. Administrators can disable it or override the image;
+Tilt builds and injects a local image. Release builds target AMD64 and ARM64, with
+image integration tests on AMD64. MySQL UI/provider exposure is a separate follow-up.
+
+### Admission and stored settings
 
 Successful admission returns `202` with `id` and `status: "running"`. Running
 includes time spent awaiting scheduling or initialization. Invalid requests,
@@ -67,8 +135,9 @@ mutable tags do not guarantee identical runner binaries across runs.
 ## Runner transport and wire format
 
 Each runner writes one final JSON record to `/dev/termination-log` after obtaining
-its measurements. For pgbench, this happens after a successful benchmark and
-after its stdout has been drained. The record uses this version-1 format:
+its measurements. Both pgbench and Sysbench write it after a successful,
+uncancelled benchmark and after measured stdout has been drained. The record
+uses this version-1 format:
 
 ```json
 {"version":1,"metrics":[{"name":"tps","unit":"tx/s","value":1234.5},{"name":"latency_avg","unit":"ms","value":3.2}]}
@@ -97,8 +166,13 @@ errors, or cleanup errors do not discard metrics already collected.
 
 Tool-specific parsing belongs inside each runner image. The pgbench runner
 extracts TPS without initial connection time and average latency from its own
-summary. Shared backend code only decodes named numbers with units. Multi-step
-operations such as initialization, prepare/run/cleanup, or load/run belong inside
+summary. The Sysbench runner extracts transaction throughput and average latency
+from the final SQL statistics and latency sections of `oltp_read_write`, excluding
+preparation output and intermediate reports. It emits `tps` in `tx/s` and
+`latency_avg` in `ms`. Shared names and units do not make results from different
+workloads or engines directly comparable. Shared backend code only decodes named
+numbers with units. Multi-step operations such as initialization,
+prepare/run/cleanup, or load/run belong inside
 the runner; the coordinator manages one Job per benchmark run.
 
 ## API availability and output
@@ -124,10 +198,10 @@ and `outputTruncated` flag. This limit does not truncate termination metrics.
 Missing or invalid records mean metrics are unavailable. Running records and
 terminal runs without available metrics omit `metrics`; this alone never changes
 execution status or removes log output. Older runner images remain usable.
-The pgbench runner warns generically if metrics cannot be produced/written and
-preserves its benchmark exit status; failed/cancelled pgbench runs do not write a
-success record. Shared collection can retain valid metrics from another runner
-even if the Job fails. Log or cleanup errors can still make execution fail while
+Both runners warn generically if metrics cannot be produced/written and preserve
+their benchmark exit status; failed/cancelled runs do not write a success record.
+Shared collection can retain valid metrics from another runner even if the Job
+fails. Log or cleanup errors can still make execution fail while
 leaving previously collected metrics available.
 
 Before storing results, the API redacts logs using Secret data and additional
@@ -145,8 +219,10 @@ comparison charts, and a metric taxonomy are separate follow-up work.
 
 The benchmark tab submits explicit `driver` and `options` fields. Its shared form
 renders the selected driver's options component; pgbench is currently the only
-registered UI driver. The UI explicitly selects a 30-second run and initialization
-enabled by default, while the API defaults above apply to omitted fields.
+registered UI driver. Sysbench backend support does not add a MySQL form or
+expose MySQL providers in the plugin manifest. The UI explicitly selects a
+30-second run and initialization enabled by default, while the API defaults
+above apply to omitted fields.
 
 Result cards display the stored driver, configured image reference, and effective
 options without interpreting a driver's option schema. Completed runs show metric

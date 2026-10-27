@@ -19,6 +19,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/pgbench"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/sysbench"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -61,14 +62,16 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func handleStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":      "ready",
-		"database":    "postgresql",
-		"runnerReady": true,
-		"storage":     "ephemeral",
-		"message":     "Benchmark runs execute as Kubernetes Jobs.",
-	})
+func handleStatus(registry *driver.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":      "ready",
+			"runnerReady": true,
+			"storage":     "ephemeral",
+			"message":     "Benchmark runs execute as Kubernetes Jobs.",
+			"drivers":     registry.IDs(),
+		})
+	}
 }
 
 func handleIcon(w http.ResponseWriter, _ *http.Request) {
@@ -139,7 +142,8 @@ func decodeJSONEnv(key string, target any) error {
 // those implementations and selects their runner images.
 func benchmarkRegistryFromEnv() (*driver.Registry, error) {
 	registrations, err := driverRegistrationsFromEnv(map[string]func() driver.Driver{
-		"pgbench": pgbench.New,
+		"pgbench":  pgbench.New,
+		"sysbench": sysbench.New,
 	})
 	if err != nil {
 		return nil, err
@@ -172,7 +176,7 @@ func run() error {
 	mux.HandleFunc("GET /main.js", handleBundle)
 	mux.HandleFunc("GET /icon.png", handleIcon)
 	mux.HandleFunc("GET /healthz", handleHealth)
-	mux.HandleFunc("GET /api/status", handleStatus)
+	mux.HandleFunc("GET /api/status", handleStatus(registry))
 	benchmarkAPI.RegisterRoutes(mux)
 
 	port := envOrDefault("PORT", "8080")

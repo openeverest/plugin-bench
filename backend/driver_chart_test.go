@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,8 +39,8 @@ func renderDriverDeployment(t *testing.T, chart string, overrides ...string) app
 	return deployment
 }
 
-func TestChartDriverImageResolution(t *testing.T) {
-	chart := filepath.Join("..", "charts", "plugin-bench")
+func chartAppVersion(t *testing.T, chart string) string {
+	t.Helper()
 	metadata, err := os.ReadFile(filepath.Join(chart, "Chart.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -52,13 +53,19 @@ func TestChartDriverImageResolution(t *testing.T) {
 	if err := json.Unmarshal(data, &version); err != nil {
 		t.Fatal(err)
 	}
+	return version.AppVersion
+}
+
+func TestChartDriverImageResolution(t *testing.T) {
+	chart := filepath.Join("..", "charts", "plugin-bench")
+	appVersion := chartAppVersion(t, chart)
 	for _, test := range []struct {
 		name, settings, image, policy string
 	}{
-		{"defaults", "", "ghcr.io/openeverest/plugin-bench-pgbench:" + version.AppVersion, "IfNotPresent"},
+		{"defaults", "", "ghcr.io/openeverest/plugin-bench-pgbench:" + appVersion, "IfNotPresent"},
 		{"tag only", "drivers.pgbench.image.tag=2.0.0", "ghcr.io/openeverest/plugin-bench-pgbench:2.0.0", "IfNotPresent"},
-		{"repository only", "drivers.pgbench.image.repository=example.com/custom", "example.com/custom:" + version.AppVersion, "IfNotPresent"},
-		{"legacy repository", "runner.image.repository=example.com/legacy", "example.com/legacy:" + version.AppVersion, "IfNotPresent"},
+		{"repository only", "drivers.pgbench.image.repository=example.com/custom", "example.com/custom:" + appVersion, "IfNotPresent"},
+		{"legacy repository", "runner.image.repository=example.com/legacy", "example.com/legacy:" + appVersion, "IfNotPresent"},
 		{"legacy tag and policy", "runner.image.tag=old,runner.image.pullPolicy=Never", "ghcr.io/openeverest/plugin-bench-pgbench:old", "Never"},
 		{"new settings win", "runner.image.repository=old,runner.image.tag=old,runner.image.pullPolicy=Never,drivers.pgbench.image.repository=new,drivers.pgbench.image.tag=new,drivers.pgbench.image.pullPolicy=Always", "new:new", "Always"},
 		{"field inheritance", "runner.image.repository=example.com/legacy,runner.image.tag=old,runner.image.pullPolicy=Never,drivers.pgbench.image.tag=new", "example.com/legacy:new", "Never"},
@@ -97,9 +104,75 @@ func TestChartDriverImageResolution(t *testing.T) {
 	}
 }
 
+func TestChartSysbenchConfiguration(t *testing.T) {
+	chart := filepath.Join("..", "charts", "plugin-bench")
+	appVersion := chartAppVersion(t, chart)
+	defaultImage := "ghcr.io/openeverest/plugin-bench-sysbench:" + appVersion
+	defaultPgbenchImage := "ghcr.io/openeverest/plugin-bench-pgbench:" + appVersion
+	for _, test := range []struct {
+		name, settings, image, policy string
+		pgbenchDisabled               bool
+		pgbenchImage                  string
+	}{
+		{name: "enabled by default", image: defaultImage, policy: "IfNotPresent"},
+		{name: "explicit disablement", settings: "drivers.sysbench.enabled=false,drivers.sysbench.image.repository=example.com/unused,drivers.sysbench.image.tag=unused"},
+		{name: "both drivers enabled", settings: "drivers.sysbench.enabled=true", image: defaultImage, policy: "IfNotPresent"},
+		{name: "tag only", settings: "drivers.sysbench.enabled=true,drivers.sysbench.image.tag=2.0.0", image: "ghcr.io/openeverest/plugin-bench-sysbench:2.0.0", policy: "IfNotPresent"},
+		{name: "repository only", settings: "drivers.sysbench.enabled=true,drivers.sysbench.image.repository=example.com/custom-sysbench", image: "example.com/custom-sysbench:" + appVersion, policy: "IfNotPresent"},
+		{name: "pull policy only", settings: "drivers.sysbench.enabled=true,drivers.sysbench.image.pullPolicy=Always", image: defaultImage, policy: "Always"},
+		{name: "all image overrides", settings: "drivers.sysbench.enabled=true,drivers.sysbench.image.repository=local/sysbench,drivers.sysbench.image.tag=dev,drivers.sysbench.image.pullPolicy=Never", image: "local/sysbench:dev", policy: "Never"},
+		{name: "legacy overrides stay with pgbench", settings: "drivers.sysbench.enabled=true,runner.image.repository=example.com/legacy,runner.image.tag=old,runner.image.pullPolicy=Never", image: defaultImage, policy: "IfNotPresent", pgbenchImage: "example.com/legacy:old"},
+		{name: "sysbench only", settings: "drivers.sysbench.enabled=true,drivers.pgbench.enabled=false", image: defaultImage, policy: "IfNotPresent", pgbenchDisabled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var args []string
+			if test.settings != "" {
+				args = []string{"--set", test.settings}
+			}
+			deployment := renderDriverDeployment(t, chart, args...)
+			var payload string
+			for _, variable := range deployment.Spec.Template.Spec.Containers[0].Env {
+				if variable.Name == "BENCHMARK_DRIVERS" {
+					payload = variable.Value
+				}
+			}
+			t.Setenv("BENCHMARK_DRIVERS", payload)
+			t.Setenv("RUNNER_IMAGE", "unused:legacy")
+			registry, err := benchmarkRegistryFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			registration, err := registry.Resolve("sysbench", driver.TargetInfo{DatabaseType: "mysql"})
+			if test.image == "" {
+				var selectionError *driver.Error
+				if !errors.As(err, &selectionError) || selectionError.Kind != driver.DriverSelection {
+					t.Fatalf("disabled sysbench resolution = %v; want driver selection error", err)
+				}
+			} else if err != nil || registration.Runner.Image != test.image || registration.Runner.ImagePullPolicy != test.policy {
+				t.Fatalf("sysbench registration = %+v, %v; want %s / %s", registration.Runner, err, test.image, test.policy)
+			}
+			pgbench, err := registry.Resolve("pgbench", driver.TargetInfo{DatabaseType: "postgresql"})
+			if test.pgbenchDisabled {
+				var selectionError *driver.Error
+				if !errors.As(err, &selectionError) || selectionError.Kind != driver.DriverSelection {
+					t.Fatalf("disabled pgbench resolution = %v; want driver selection error", err)
+				}
+				return
+			}
+			wantImage, wantPolicy := defaultPgbenchImage, "IfNotPresent"
+			if test.pgbenchImage != "" {
+				wantImage, wantPolicy = test.pgbenchImage, "Never"
+			}
+			if err != nil || pgbench.Runner.Image != wantImage || pgbench.Runner.ImagePullPolicy != wantPolicy {
+				t.Fatalf("pgbench registration = %+v, %v; want %s / %s", pgbench.Runner, err, wantImage, wantPolicy)
+			}
+		})
+	}
+}
+
 func TestChartDriverDisablementAndMultipleEntries(t *testing.T) {
 	deployment := renderDriverDeployment(t, filepath.Join("..", "charts", "plugin-bench"),
-		"--set", "drivers.pgbench.enabled=false,runner.image.repository=legacy,runner.image.tag=old,drivers.future.enabled=true,drivers.future.image.tag=2.0.0")
+		"--set", "drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,runner.image.repository=legacy,runner.image.tag=old,drivers.future.enabled=true,drivers.future.image.tag=2.0.0")
 	var payload string
 	for _, variable := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if variable.Name == "BENCHMARK_DRIVERS" {
@@ -110,8 +183,9 @@ func TestChartDriverDisablementAndMultipleEntries(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &entries); err != nil {
 		t.Fatal(err)
 	}
-	pgbench, future := entries["pgbench"], entries["future"]
-	if len(entries) != 2 || pgbench.Enabled == nil || *pgbench.Enabled || pgbench.Image != "" ||
+	pgbench, sysbench, future := entries["pgbench"], entries["sysbench"], entries["future"]
+	if len(entries) != 3 || pgbench.Enabled == nil || *pgbench.Enabled || pgbench.Image != "" ||
+		sysbench.Enabled == nil || *sysbench.Enabled || sysbench.Image != "" || sysbench.ImagePullPolicy != "" ||
 		future.Enabled == nil || !*future.Enabled || future.Image != "ghcr.io/openeverest/plugin-bench-future:2.0.0" || future.ImagePullPolicy != "IfNotPresent" {
 		t.Fatalf("wrong rendered driver entries: %s", payload)
 	}
@@ -130,11 +204,12 @@ func TestChartRejectsScalarImageSettings(t *testing.T) {
 	chart := filepath.Join("..", "charts", "plugin-bench")
 	for _, test := range []struct{ name, setting, message string }{
 		{"driver image", "drivers.pgbench.image=ghcr.io/example/pgbench:1.0", "drivers.pgbench.image must be an object"},
+		{"sysbench image", "drivers.sysbench.image=ghcr.io/example/sysbench:1.0", "drivers.sysbench.image must be an object"},
 		{"legacy image", "runner.image=ghcr.io/example/pgbench:1.0", "runner.image must be an object"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			output, err := exec.Command(helm, "template", "driver-config-test", chart,
-				"--show-only", "templates/deployment.yaml", "--set-string", test.setting).CombinedOutput()
+				"--show-only", "templates/deployment.yaml", "--set", "drivers.sysbench.enabled=true", "--set-string", test.setting).CombinedOutput()
 			if err == nil || !strings.Contains(string(output), test.message) {
 				t.Fatalf("expected %q rendering error, got %v\n%s", test.message, err, output)
 			}
@@ -162,7 +237,7 @@ func TestPackagedChartUsesReleaseAppVersionForImages(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var args []string
 			if test.tag != releaseVersion {
-				args = []string{"--set-string", "drivers.pgbench.image.tag=" + test.tag}
+				args = append(args, "--set-string", "drivers.pgbench.image.tag="+test.tag+",drivers.sysbench.image.tag="+test.tag)
 			}
 			deployment := renderDriverDeployment(t, archive, args...)
 			container := deployment.Spec.Template.Spec.Containers[0]
@@ -180,9 +255,12 @@ func TestPackagedChartUsesReleaseAppVersionForImages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			registration, err := registry.Resolve("pgbench", driver.TargetInfo{DatabaseType: "postgresql"})
-			if err != nil || registration.Runner.Image != "ghcr.io/openeverest/plugin-bench-pgbench:"+test.tag {
-				t.Fatalf("packaged runner image = %q, error = %v", registration.Runner.Image, err)
+			for _, target := range []struct{ id, databaseType string }{{"pgbench", "postgresql"}, {"sysbench", "mysql"}} {
+				registration, err := registry.Resolve(target.id, driver.TargetInfo{DatabaseType: target.databaseType})
+				wantImage := "ghcr.io/openeverest/plugin-bench-" + target.id + ":" + test.tag
+				if err != nil || registration.Runner.Image != wantImage {
+					t.Fatalf("packaged %s runner image = %q, error = %v; want %s", target.id, registration.Runner.Image, err, wantImage)
+				}
 			}
 		})
 	}

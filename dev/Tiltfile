@@ -164,8 +164,8 @@ docker_build(
     ],
 )
 
-# The benchmark runs in a separate Kubernetes Job, so its pgbench image must
-# be built and made available to the cluster independently of the coordinator.
+# Benchmarks run in separate Kubernetes Jobs, so runner images must be built
+# and made available to the cluster independently of the coordinator.
 pgbench_runner_image = 'plugin-bench-pgbench:tilt-dev'
 docker_build(
     pgbench_runner_image,
@@ -179,18 +179,33 @@ docker_build(
     ],
 )
 
+sysbench_runner_image = 'plugin-bench-sysbench:tilt-dev'
+docker_build(
+    sysbench_runner_image,
+    context='{0}/runners/sysbench'.format(bench_dir),
+    dockerfile='{0}/runners/sysbench/Dockerfile'.format(bench_dir),
+    only=[
+        'Dockerfile',
+        'go.mod',
+        'main.go',
+        'credentials.go',
+        'metrics.go',
+    ],
+)
+
 # ===========================
 # Plugin: Helm chart
 # ===========================
 # Deployed with a real `helm upgrade --install` (via the helm_resource
 # extension). Tilt injects the locally built image into the chart's
-# image.repository/image.tag and drivers.pgbench.image.repository/tag values.
-# Helm passes the runner image to the backend through BENCHMARK_DRIVERS.
+# image.repository/image.tag and each driver's image.repository/tag values.
+# Helm passes the runner images to the backend through BENCHMARK_DRIVERS.
 # helm_resource also guarantees the Plugin CR is applied only after the core
 # CRDs exist.
 plugin_flags = [
     '--create-namespace',
     '--set', 'image.pullPolicy=IfNotPresent',
+    '--set', 'drivers.sysbench.enabled=true',
 ]
 if everest_api_url:
     plugin_flags = plugin_flags + ['--set', 'everestAPIURL={0}'.format(everest_api_url)]
@@ -204,10 +219,11 @@ helm_resource(
     chart_dir,
     namespace=plugin_namespace,
     flags=plugin_flags,
-    image_deps=[plugin_bench_image, pgbench_runner_image],
+    image_deps=[plugin_bench_image, pgbench_runner_image, sysbench_runner_image],
     image_keys=[
         ('image.repository', 'image.tag'),
         ('drivers.pgbench.image.repository', 'drivers.pgbench.image.tag'),
+        ('drivers.sysbench.image.repository', 'drivers.sysbench.image.tag'),
     ],
     resource_deps=plugin_resource_deps,
     labels=['plugin-bench'],

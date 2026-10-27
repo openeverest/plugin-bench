@@ -59,6 +59,14 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  sysbench:
+    enabled: true
+    image:
+      # Empty fields default to ghcr.io/openeverest/plugin-bench-sysbench,
+      # appVersion, and IfNotPresent. Legacy runner.image affects pgbench only.
+      repository: ""
+      tag: ""
+      pullPolicy: ""
 
 # Shared configuration for benchmark Kubernetes Jobs.
 runner:

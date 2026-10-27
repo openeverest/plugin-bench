@@ -16,27 +16,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func testNodeAffinity() *corev1.NodeAffinity {
-	return &corev1.NodeAffinity{
-		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{
-			{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "workload", Operator: corev1.NodeSelectorOpIn, Values: []string{"benchmark"}}}},
-			{MatchFields: []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-1"}}}},
-		}},
-		PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{{Weight: 75, Preference: corev1.NodeSelectorTerm{
-			MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "disk-type", Operator: corev1.NodeSelectorOpIn, Values: []string{"ssd"}}},
-			MatchFields:      []corev1.NodeSelectorRequirement{{Key: "metadata.name", Operator: corev1.NodeSelectorOpNotIn, Values: []string{"node-2"}}},
-		}}},
-	}
-}
-
-func mutateTestNodeAffinity(affinity *corev1.NodeAffinity) {
-	affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values[0] = "changed"
-	affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[1].MatchFields[0].Values[0] = "changed"
-	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 1
-	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchExpressions[0].Values[0] = "changed"
-	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchFields[0].Values[0] = "changed"
-}
-
 func bodyWithNodeAffinity(value string) string {
 	if value == "" {
 		return validCreateRunBody

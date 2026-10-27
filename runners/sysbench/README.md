@@ -47,9 +47,8 @@ docker run --rm --entrypoint sysbench plugin-bench-sysbench:dev oltp_read_write 
 ```
 
 The Dockerfile uses architecture-specific base images selected by Docker and does
-not hardcode a Go target architecture. Local packaging checks cover Linux/AMD64;
-ARM64 verification belongs to the later delivery integration. Database execution
-is verified separately against disposable MySQL.
+not hardcode a Go target architecture. The release workflow builds Linux/AMD64 and
+Linux/ARM64 archives and tests the AMD64 image against disposable MySQL.
 
 ## Configuration
 
