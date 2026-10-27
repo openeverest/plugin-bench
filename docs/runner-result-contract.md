@@ -104,10 +104,10 @@ node affinity work identically for both drivers. The password is supplied throug
 a per-run Secret reference; other connection fields and benchmark settings use
 ordinary environment values. Effective options and snapshots contain no credentials.
 
-Sysbench must be explicitly enabled in deployment configuration with an accessible
-image. The chart defaults it to disabled pending image publication; Tilt builds
-and enables it locally. MySQL UI/provider exposure and ARM64 runner verification
-are separate follow-ups.
+The chart enables Sysbench by default using its published runner image tagged
+with the chart's `appVersion`. Administrators can disable it or override the image;
+Tilt builds and injects a local image. Release builds target AMD64 and ARM64, with
+image integration tests on AMD64. MySQL UI/provider exposure is a separate follow-up.
 
 ### Admission and stored settings
 

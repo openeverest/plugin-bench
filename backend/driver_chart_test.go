@@ -114,7 +114,7 @@ func TestChartSysbenchConfiguration(t *testing.T) {
 		pgbenchDisabled               bool
 		pgbenchImage                  string
 	}{
-		{name: "disabled by default"},
+		{name: "enabled by default", image: defaultImage, policy: "IfNotPresent"},
 		{name: "explicit disablement", settings: "drivers.sysbench.enabled=false,drivers.sysbench.image.repository=example.com/unused,drivers.sysbench.image.tag=unused"},
 		{name: "both drivers enabled", settings: "drivers.sysbench.enabled=true", image: defaultImage, policy: "IfNotPresent"},
 		{name: "tag only", settings: "drivers.sysbench.enabled=true,drivers.sysbench.image.tag=2.0.0", image: "ghcr.io/openeverest/plugin-bench-sysbench:2.0.0", policy: "IfNotPresent"},
@@ -172,7 +172,7 @@ func TestChartSysbenchConfiguration(t *testing.T) {
 
 func TestChartDriverDisablementAndMultipleEntries(t *testing.T) {
 	deployment := renderDriverDeployment(t, filepath.Join("..", "charts", "plugin-bench"),
-		"--set", "drivers.pgbench.enabled=false,runner.image.repository=legacy,runner.image.tag=old,drivers.future.enabled=true,drivers.future.image.tag=2.0.0")
+		"--set", "drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,runner.image.repository=legacy,runner.image.tag=old,drivers.future.enabled=true,drivers.future.image.tag=2.0.0")
 	var payload string
 	for _, variable := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if variable.Name == "BENCHMARK_DRIVERS" {
@@ -235,7 +235,7 @@ func TestPackagedChartUsesReleaseAppVersionForImages(t *testing.T) {
 		{"tag override", "runner-override"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			args := []string{"--set", "drivers.sysbench.enabled=true"}
+			var args []string
 			if test.tag != releaseVersion {
 				args = append(args, "--set-string", "drivers.pgbench.image.tag="+test.tag+",drivers.sysbench.image.tag="+test.tag)
 			}

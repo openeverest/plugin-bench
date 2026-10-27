@@ -7,7 +7,7 @@ Sysbench is available through the backend API when enabled in deployment setting
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
 > launching, and inspecting benchmark runs. MySQL backend support is implemented;
-> its frontend integration and runner image publication are separate follow-ups.
+> its frontend integration is a separate follow-up.
 
 ## How it works
 
@@ -54,9 +54,8 @@ for payloads, defaults, compatibility, and metrics transport details.
 
 ### MySQL benchmarks through the API
 
-Enable `drivers.sysbench` with an accessible runner image, or use the local Tilt
-configuration described below. Submit an explicit `driver: "sysbench"` with the
-OpenEverest target and Sysbench options to `POST /api/runs`:
+Sysbench is enabled by default in Helm. Submit an explicit `driver: "sysbench"`
+with the OpenEverest target and Sysbench options to `POST /api/runs`:
 
 ```json
 {
@@ -207,7 +206,7 @@ drivers:
       tag: ""
       pullPolicy: ""
   sysbench:
-    enabled: false
+    enabled: true
     image:
       repository: ""
       tag: ""
@@ -220,10 +219,8 @@ With no overrides, pgbench uses
 `appVersion` comes from the chart being installed, including metadata set by
 `helm package --app-version` during a release.
 
-Sysbench is disabled by default because the release workflow does not publish
-its image yet. To enable it outside Tilt, first build and publish an image using
-the [runner instructions](runners/sysbench/README.md#build), then supply that
-accessible image, for example:
+Both drivers are enabled by default and use their published release images.
+To use a custom Sysbench image, override its repository or tag:
 
 ```yaml
 drivers:
@@ -238,7 +235,7 @@ drivers:
 The example registry and tag are placeholders for an image you supply. Empty
 Sysbench image fields resolve to
 `ghcr.io/openeverest/plugin-bench-sysbench:<appVersion>` and `IfNotPresent`;
-enabling those defaults does not ensure that image exists.
+the release workflow publishes the matching image alongside the chart.
 
 | Image field | First choice | Deprecated pgbench fallback | Default |
 | --- | --- | --- | --- |
@@ -261,10 +258,11 @@ Legacy `runner.image` overrides apply only to pgbench. Migrate them to
 node selectors, and tolerations remain under `runner`; the backend Deployment's
 own image remains under the top-level `image` settings.
 
-Helm serializes the resolved settings into one backend environment variable:
+Helm serializes the resolved settings into one backend environment variable.
+For a chart with `appVersion: 0.2.0`:
 
 ```json
-{"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.1.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":false}}
+{"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.2.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-sysbench:0.2.0","imagePullPolicy":"IfNotPresent"}}
 ```
 
 The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
@@ -355,18 +353,18 @@ For a live check after starting Tilt, use a disposable PostgreSQL database:
 Push a `vX.Y.Z` tag, or `vX.Y.Z-<pre-release>` for a pre-release, to run the
 release workflow. It publishes:
 
-- `ghcr.io/openeverest/plugin-bench` and `ghcr.io/openeverest/plugin-bench-pgbench`
-  images for `linux/amd64` and `linux/arm64`
+- `ghcr.io/openeverest/plugin-bench`, `ghcr.io/openeverest/plugin-bench-pgbench`,
+  and `ghcr.io/openeverest/plugin-bench-sysbench` images for `linux/amd64` and `linux/arm64`
 - the `oci://ghcr.io/openeverest/charts/plugin-bench` Helm chart
 - a GitHub release with the chart archive and release notes
 
-Sysbench image publication is a separate follow-up. Its CI job builds and smoke
-tests the runner against MySQL 8.4, but the release workflow does not publish it.
+The workflow tests both runners from their built AMD64 archives before publishing.
+Release notes include each image reference and digest.
 
 GHCR creates new packages as private, so the first release fails at the
-"Verify public access" step. Make each new package public in its GHCR package
-settings, then re-run the failed job. Publishing is idempotent, so re-runs are
-safe.
+"Verify public access" step. Make each new package, including
+`plugin-bench-sysbench`, public in its GHCR package settings, then re-run the failed
+job. Publishing is idempotent, so re-runs are safe.
 
 ## Project structure
 
