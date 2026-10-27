@@ -62,13 +62,16 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func handleStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":      "ready",
-		"runnerReady": true,
-		"storage":     "ephemeral",
-		"message":     "Benchmark runs execute as Kubernetes Jobs.",
-	})
+func handleStatus(registry *driver.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":      "ready",
+			"runnerReady": true,
+			"storage":     "ephemeral",
+			"message":     "Benchmark runs execute as Kubernetes Jobs.",
+			"drivers":     registry.IDs(),
+		})
+	}
 }
 
 func handleIcon(w http.ResponseWriter, _ *http.Request) {
@@ -173,7 +176,7 @@ func run() error {
 	mux.HandleFunc("GET /main.js", handleBundle)
 	mux.HandleFunc("GET /icon.png", handleIcon)
 	mux.HandleFunc("GET /healthz", handleHealth)
-	mux.HandleFunc("GET /api/status", handleStatus)
+	mux.HandleFunc("GET /api/status", handleStatus(registry))
 	benchmarkAPI.RegisterRoutes(mux)
 
 	port := envOrDefault("PORT", "8080")

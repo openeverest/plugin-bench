@@ -71,6 +71,8 @@ runner currently fixes the database driver to MySQL and uses the bundled
 
 The authorized OpenEverest credentials must report database type `mysql`, matched
 case-insensitively after trimming. The provider name does not select the driver.
+The API therefore also accepts `provider-mariadb` and `percona-xtradb-cluster`
+targets reporting `mysql`; compatibility with those providers has not been verified.
 Clients must explicitly send `driver: "sysbench"`; omitting it does not infer
 Sysbench from the target. The legacy flat envelope remains pgbench-only.
 
@@ -104,8 +106,8 @@ ordinary environment values. Effective options and snapshots contain no credenti
 
 Sysbench must be explicitly enabled in deployment configuration with an accessible
 image. The chart defaults it to disabled pending image publication; Tilt builds
-and enables it locally. MySQL UI/provider exposure, MariaDB/PXC-specific
-certification, and ARM64 runner verification are separate follow-ups.
+and enables it locally. MySQL UI/provider exposure and ARM64 runner verification
+are separate follow-ups.
 
 ### Admission and stored settings
 

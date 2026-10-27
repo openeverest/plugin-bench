@@ -3,6 +3,7 @@ package driver
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -44,6 +45,16 @@ func NewRegistry(registrations ...Registration) (*Registry, error) {
 		registry.registrations[id] = registration
 	}
 	return registry, nil
+}
+
+// IDs returns the enabled driver IDs in sorted order. The caller owns the slice.
+func (r *Registry) IDs() []string {
+	ids := make([]string, 0, len(r.registrations))
+	for id := range r.registrations {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // Resolve selects exactly the requested driver; it never infers a driver or

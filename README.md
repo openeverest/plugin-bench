@@ -44,9 +44,10 @@ The frontend submits the explicit driver/options envelope and displays these
 effective settings and metrics.
 
 `GET /api/status` returns generic backend readiness with `status`, `runnerReady`,
-`storage`, and `message`. The former PostgreSQL-only `database` field has been
-removed. This endpoint does not test database connectivity or runner-image
-availability; an individual run's `driver` identifies its benchmark tool.
+`storage`, `message`, and a sorted `drivers` array of enabled driver IDs, such as
+`["pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
+`database` field has been removed. This endpoint does not test database
+connectivity or runner-image availability.
 
 See [the request and runner result contracts](docs/runner-result-contract.md)
 for payloads, defaults, compatibility, and metrics transport details.
@@ -167,8 +168,10 @@ For local development, install:
 - Node.js and npm
 
 An OpenEverest installation and a provider for the selected database type are
-required when running the plugin in a cluster. Sysbench currently targets MySQL;
-MariaDB/PXC-specific compatibility and ARM64 runner verification are not claimed.
+required when running the plugin in a cluster. Sysbench matches database type
+`mysql` rather than provider name. The API also accepts `provider-mariadb` and
+`percona-xtradb-cluster` targets reporting `mysql`, but MariaDB/PXC compatibility
+has not been verified. ARM64 runner verification is also pending.
 
 ## Local development
 
