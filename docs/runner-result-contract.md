@@ -220,10 +220,10 @@ comparison charts, and a metric taxonomy are separate follow-up work.
 
 The benchmark tab submits explicit `driver` and `options` fields. Its shared form
 renders the selected driver's options component: pgbench for the supported
-PostgreSQL providers and Sysbench for `percona-server-mysql`. The pgbench form
-defaults to a 30-second run with initialization enabled; Sysbench defaults to
-60 seconds with initialization disabled. The API defaults above apply to
-omitted fields.
+PostgreSQL providers and Sysbench for `percona-server-mysql`. Both forms default
+to a 30-second run with initialization enabled. The MySQL form requires a database
+name for `percona-server-mysql`, whose credentials provide no default database.
+The API defaults above apply to omitted fields.
 
 Result cards display the stored driver, configured image reference, and effective
 options without interpreting a driver's option schema. Completed runs show metric

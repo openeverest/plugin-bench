@@ -11,7 +11,7 @@ test('maps Sysbench defaults through the standalone request builder without pgbe
   assert.deepEqual(validateBenchmarkForm(values), {});
   assert.deepEqual(toCreateBenchmarkRunRequest({ ...values, database: ' dbname=app ' }, target), {
     target, database: 'dbname=app', driver: 'sysbench',
-    options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+    options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
   });
   for (const field of ['tables', 'tableSize']) {
     const invalid = { ...values, options: { ...values.options, [field]: '' } };

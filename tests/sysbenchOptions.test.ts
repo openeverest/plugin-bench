@@ -10,13 +10,13 @@ import type { SysbenchOptionField } from '../src/drivers/sysbench';
 const numericFields: readonly SysbenchOptionField[] = ['durationSeconds', 'threads', 'tables', 'tableSize'];
 
 describe('Sysbench options', () => {
-  it('matches the backend defaults with table preparation off', () => {
+  it('defaults the UI to preparing fresh tables', () => {
     expect(initialSysbenchOptionsDraft).toEqual({
-      durationSeconds: '60', threads: '1', tables: '1', tableSize: '10000', initialize: false,
+      durationSeconds: '30', threads: '1', tables: '1', tableSize: '10000', initialize: true,
     });
     expect(prepareSysbenchOptions(initialSysbenchOptionsDraft)).toEqual({
       ok: true,
-      options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
     });
   });
 

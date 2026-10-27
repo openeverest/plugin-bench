@@ -36,11 +36,12 @@ const RESOURCE_FIELDS: ReadonlyArray<{ field: ResourceField; label: string; hint
 interface BenchmarkFormProps {
   target: BenchmarkTarget;
   availableDrivers: readonly BenchmarkDriverId[];
+  provider?: string;
   isSubmitting: boolean;
   onSubmit: (values: BenchmarkFormValues) => void | Promise<void>;
 }
 
-export function BenchmarkForm({ target, availableDrivers, isSubmitting, onSubmit }: BenchmarkFormProps) {
+export function BenchmarkForm({ target, availableDrivers, provider, isSubmitting, onSubmit }: BenchmarkFormProps) {
   const [values, setValues] = useState<BenchmarkFormValues>(
     () => createInitialBenchmarkFormValues(availableDrivers[0] ?? defaultBenchmarkDriver),
   );
@@ -48,6 +49,10 @@ export function BenchmarkForm({ target, availableDrivers, isSubmitting, onSubmit
   const [submitted, setSubmitted] = useState(false);
   const [resourcesExpanded, setResourcesExpanded] = useState(false);
   const errors = validateBenchmarkForm(values);
+  const databaseRequired = benchmarkDrivers[values.driver].databaseRequiredProviders?.includes(provider ?? '') ?? false;
+  if (databaseRequired && values.database.trim() === '') {
+    errors.database = 'Enter the name of an existing database.';
+  }
   const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
   const driverAvailable = availableDrivers.includes(values.driver);
   const canSubmit = driverAvailable && Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
@@ -85,15 +90,18 @@ export function BenchmarkForm({ target, availableDrivers, isSubmitting, onSubmit
             id="benchmark-database"
             name="database"
             label="Database"
-            placeholder="Instance default"
+            placeholder={databaseRequired ? 'Existing database name' : 'Instance default'}
+            required={databaseRequired}
             size="small"
             fullWidth
             value={values.database}
             error={Boolean(fieldError('database'))}
-            helperText={fieldError('database') ?? "Leave empty to use the instance's default database."}
+            helperText={fieldError('database') ?? (databaseRequired
+              ? 'Enter an existing disposable database. This provider does not supply a default; table preparation does not create the database.'
+              : "Leave empty to use the instance's default database.")}
             onChange={event => updateValue('database', event.target.value)}
             onBlur={() => markTouched('database')}
-            slotProps={{ inputLabel: { shrink: true } }}
+            slotProps={{ inputLabel: { shrink: true }, htmlInput: { 'aria-label': 'Database' } }}
           />
 
           <TextField

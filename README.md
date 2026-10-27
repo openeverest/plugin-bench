@@ -79,18 +79,23 @@ which driver is offered:
 | `provider-cloudnative-pg`, `provider-percona-postgresql` | pgbench |
 | `percona-server-mysql` | Sysbench |
 
+The tab checks `/api/status` and only offers drivers enabled on the backend.
+If none are enabled for the provider, run lookup remains available.
+
 Database, **Job resources**, and **Job placement** are shared settings. A blank
 database uses the instance default when available; otherwise enter an existing
 database name. Use a disposable benchmark database.
+For `percona-server-mysql`, a database name is required because the provider
+does not supply a default. Create the database before starting the benchmark.
 
 **pgbench** starts with 30 seconds, one client/thread, scale 1, and initialization
 enabled. Initialization drops and recreates pgbench tables. When reusing tables,
 scale is disabled and displayed as **From existing tables** in the run result.
 
-**Sysbench** starts with 60 seconds, one thread, one table, 10,000 rows per table,
-and preparation off. It runs `oltp_read_write`. Enable **Prepare Sysbench tables**
-for a fresh dataset; existing table names cause preparation to fail. To reuse
-tables, leave preparation off and match **Tables** and **Rows per table** to the
+**Sysbench** starts with 30 seconds, one thread, one table, 10,000 rows per table,
+and preparation on. It runs `oltp_read_write`. **Prepare Sysbench tables** creates
+a fresh dataset; existing table names cause preparation to fail. To reuse
+tables, turn preparation off and match **Tables** and **Rows per table** to the
 existing dataset. Tables remain after Job cleanup. Sysbench must be enabled with
 an accessible runner image; see [Driver configuration](#driver-configuration).
 

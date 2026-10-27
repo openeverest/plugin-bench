@@ -16,15 +16,28 @@ const run = (id: string, status: BenchmarkRunStatus, extra: Partial<BenchmarkRun
   ...(status === 'failed' ? { error: 'benchmark execution failed' } : {}),
   ...extra,
 });
+// Existing execution tests assume both drivers are enabled; availability itself
+// is exercised with real status requests in benchmarkEnabledDrivers.test.tsx.
+const fetchWrappers = new WeakMap<PluginApi['fetch'], PluginApi['fetch']>();
+const withEnabledDrivers = (fetch: PluginApi['fetch']): PluginApi['fetch'] => {
+  if (!fetchWrappers.has(fetch)) fetchWrappers.set(fetch, (path, init) =>
+    path === '/api/status' ? Promise.resolve(response({ drivers: ['pgbench', 'sysbench'] })) : fetch(path, init));
+  return fetchWrappers.get(fetch)!;
+};
+const renderReady = async (element: React.ReactElement) => {
+  let view!: ReturnType<typeof render>;
+  await act(async () => { view = render(element); });
+  return view;
+};
 const tab = (fetch: PluginApi['fetch'], instanceName = 'pg-1', provider = 'provider-cloudnative-pg') => (
   <BenchmarkTab cluster={{ clusterName: 'main', spec: { providerRef: { name: provider } } }}
-    namespace="default" instanceName={instanceName} pluginFetch={fetch} />
+    namespace="default" instanceName={instanceName} pluginFetch={withEnabledDrivers(fetch)} />
 );
 const workflowTargets = [
   { driver: 'pgbench', provider: 'provider-cloudnative-pg', instanceName: 'pg-1',
     options: { durationSeconds: 30, clients: 1, threads: 1, scale: 1, initialize: true } },
   { driver: 'sysbench', provider: 'percona-server-mysql', instanceName: 'mysql-1',
-    options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false } },
+    options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true } },
 ];
 const start = () => screen.getByRole('button', { name: /Start benchmark|Starting…/ });
 const lookup = async (id: string) => {
@@ -42,9 +55,9 @@ describe('benchmark driver workflow', () => {
     { provider: 'provider-cloudnative-pg', driver: 'pgbench' },
     { provider: 'provider-percona-postgresql', driver: 'pgbench' },
     { provider: 'percona-server-mysql', driver: 'Sysbench' },
-  ])('offers only $driver for $provider', ({ provider, driver }) => {
+  ])('offers only $driver for $provider', async ({ provider, driver }) => {
     const fetch = vi.fn<PluginApi['fetch']>();
-    render(tab(fetch, 'instance-1', provider));
+    await renderReady(tab(fetch, 'instance-1', provider));
     const picker = screen.getByRole('combobox', { name: 'Benchmark driver' });
     expect(picker.textContent).toBe(driver);
     fireEvent.mouseDown(picker);
@@ -67,13 +80,15 @@ describe('benchmark driver workflow', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('initializes the MySQL form when provider metadata arrives', () => {
+  it('initializes the MySQL form when provider metadata arrives', async () => {
     const fetch = vi.fn<PluginApi['fetch']>();
     const view = render(<BenchmarkTab cluster={{ clusterName: 'main' }} namespace="default" instanceName="mysql-1" pluginFetch={fetch} />);
     expect(screen.getByText('Waiting for database provider information.')).toBeTruthy();
-    view.rerender(tab(fetch, 'mysql-1', 'percona-server-mysql'));
+    await act(async () => { view.rerender(tab(fetch, 'mysql-1', 'percona-server-mysql')); });
     expect(screen.queryByText('Waiting for database provider information.')).toBeNull();
     expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe('Sysbench');
+    expect((start() as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'sbtest' } });
     expect((start() as HTMLButtonElement).disabled).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -85,16 +100,16 @@ describe('benchmark driver workflow', () => {
       requests.push({ method: init?.method, signal: init?.signal });
       return accepted.promise;
     };
-    const view = render(tab(fetch));
+    const view = await renderReady(tab(fetch));
     fireEvent.change(screen.getByLabelText('Duration (seconds)'), { target: { value: '5' } });
     await act(async () => { fireEvent.click(start()); });
-    view.rerender(tab(fetch));
+    await act(async () => { view.rerender(tab(fetch)); });
     expect(requests[0].signal?.aborted).toBe(false);
     expect((screen.getByLabelText('Duration (seconds)') as HTMLInputElement).value).toBe('5');
-    view.rerender(tab(fetch, 'pg-1', 'percona-server-mysql'));
+    await act(async () => { view.rerender(tab(fetch, 'pg-1', 'percona-server-mysql')); });
     expect(requests[0].signal?.aborted).toBe(true);
     expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe('Sysbench');
-    expect((screen.getByLabelText('Duration (seconds)') as HTMLInputElement).value).toBe('60');
+    expect((screen.getByLabelText('Duration (seconds)') as HTMLInputElement).value).toBe('30');
     await act(async () => { accepted.resolve(response({ id: 'old-run', status: 'running' }, 202)); });
     expect(screen.queryByRole('region', { name: 'Benchmark run result' })).toBeNull();
     expect(requests.map(request => request.method)).toEqual(['POST']);
@@ -107,9 +122,9 @@ describe('benchmark driver workflow', () => {
       signal = init?.signal;
       return pending.promise;
     });
-    const view = render(tab(fetch));
+    const view = await renderReady(tab(fetch));
     await lookup('old-run');
-    view.rerender(tab(fetch, 'pg-1', 'percona-server-mysql'));
+    await act(async () => { view.rerender(tab(fetch, 'pg-1', 'percona-server-mysql')); });
     expect(signal?.aborted).toBe(true);
     await act(async () => { pending.resolve(response(run('old-run', 'succeeded'))); });
     expect(screen.queryByRole('region', { name: 'Benchmark run result' })).toBeNull();
@@ -135,10 +150,12 @@ describe('benchmark driver workflow', () => {
         output: `${id} native output`,
       }));
     };
-    render(tab(fetch, instanceName, provider));
+    await renderReady(tab(fetch, instanceName, provider));
+    if (driver === 'sysbench') fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'sbtest' } });
     await act(async () => { fireEvent.click(start()); });
     await act(async () => { fireEvent.click(start()); });
-    const expected = { target: { k8sCluster: 'main', namespace: 'default', instance: instanceName }, driver, options };
+    const expected = { target: { k8sCluster: 'main', namespace: 'default', instance: instanceName },
+      ...(driver === 'sysbench' ? { database: 'sbtest' } : {}), driver, options };
     expect(requests.filter(request => request.method === 'POST').map(request => request.body)).toEqual([expected, expected]);
     expect([...gets.values()]).toEqual([1, 1]);
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
@@ -168,7 +185,7 @@ describe('benchmark driver workflow', () => {
       return requests.length === 1 ? response({ error: 'benchmark run not found' }, 404)
         : response(run('saved-run', 'succeeded', { driver, options, output: 'saved output', metrics: undefined }));
     };
-    render(tab(fetch, instanceName, provider));
+    await renderReady(tab(fetch, instanceName, provider));
     await lookup(' saved-run ');
     expect(screen.getByText(/Status updates paused.*benchmark run not found/)).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
@@ -186,7 +203,8 @@ describe('benchmark driver workflow', () => {
       requests.push({ method: init?.method, signal: init?.signal });
       return accepted.promise;
     };
-    const view = render(tab(fetch, instanceName, provider));
+    const view = await renderReady(tab(fetch, instanceName, provider));
+    if (provider === 'percona-server-mysql') fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'sbtest' } });
     await act(async () => { fireEvent.click(start()); });
     expect((start() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.submit(start().closest('form')!);
@@ -205,9 +223,9 @@ describe('benchmark driver workflow', () => {
       requests.push({ signal: init?.signal, result });
       return result.promise;
     };
-    const view = render(tab(fetch, instanceName, provider));
+    const view = await renderReady(tab(fetch, instanceName, provider));
     await lookup('old-run');
-    view.rerender(tab(fetch, `${instanceName}-next`, provider));
+    await act(async () => { view.rerender(tab(fetch, `${instanceName}-next`, provider)); });
     expect(requests[0].signal?.aborted).toBe(true);
     await act(async () => { requests[0].result.resolve(response(run('old-run', 'succeeded'))); });
     expect(screen.queryByText('old-run')).toBeNull();
@@ -225,7 +243,7 @@ describe('benchmark driver workflow', () => {
       requests.push(init?.method ?? 'GET');
       return response({ error: 'selected driver does not support this database type' }, 422);
     };
-    render(tab(fetch));
+    await renderReady(tab(fetch));
     await act(async () => { fireEvent.click(start()); });
     expect(screen.getByRole('alert').textContent).toContain('selected driver does not support this database type');
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
@@ -253,7 +271,8 @@ describe('MySQL Sysbench workflow', () => {
         output: 'oltp_read_write completed',
       }));
     };
-    render(mysqlTab(fetch));
+    await renderReady(mysqlTab(fetch));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Prepare Sysbench tables' }));
     change('Database', ' sbtest ');
     change('Duration (seconds)', '5');
     change('Threads', '2');
@@ -316,7 +335,7 @@ describe('MySQL Sysbench workflow', () => {
       if (status === 0) throw new TypeError('Network disconnected');
       return response({ error: message }, status);
     });
-    render(mysqlTab(fetch));
+    await renderReady(mysqlTab(fetch));
     change('Database', 'sbtest');
     change('Threads', '4');
     change('Tables', '3');
@@ -338,11 +357,12 @@ describe('MySQL Sysbench workflow', () => {
     const fetch = vi.fn<PluginApi['fetch']>(async (_path, init) => init?.method === 'POST'
       ? response({ id: 'mysql-run', status: 'running' }, 202)
       : response(snapshot('mysql-run', status, {
-        options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: status === 'failed' },
+        options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: status === 'failed' },
         output, outputTruncated: status === 'failed',
       })));
-    render(mysqlTab(fetch));
-    if (status === 'failed') fireEvent.click(screen.getByRole('checkbox', { name: 'Prepare Sysbench tables' }));
+    await renderReady(mysqlTab(fetch));
+    change('Database', 'sbtest');
+    if (status === 'succeeded') fireEvent.click(screen.getByRole('checkbox', { name: 'Prepare Sysbench tables' }));
     await act(async () => { fireEvent.click(start()); });
     const card = within(screen.getByRole('region', { name: 'Benchmark run result' }));
     expect(card.getByRole('status').textContent).toContain(status === 'failed' ? 'Failed' : 'Succeeded');
@@ -365,7 +385,7 @@ describe('MySQL Sysbench workflow', () => {
     const fetch = vi.fn<PluginApi['fetch']>(async () => response(run('saved-run', 'succeeded', {
       driver, runnerImage: `registry/${driver}:v2`, options: recorded, output: 'saved logs',
     })));
-    render(tab(fetch, 'instance-1', formProvider));
+    await renderReady(tab(fetch, 'instance-1', formProvider));
     await lookup('saved-run');
     const card = within(screen.getByRole('region', { name: 'Benchmark run result' }));
     expect(card.getByText(driver)).toBeTruthy();

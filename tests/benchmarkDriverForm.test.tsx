@@ -142,7 +142,7 @@ describe('benchmark driver form', () => {
     fireEvent.click(start());
     expect(submissions[0]).toMatchObject({
       database: 'app', driver: 'sysbench',
-      options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
       resources: { cpuRequest: '500m' },
     });
     expect(submissions[0]).toHaveProperty('nodeAffinity');

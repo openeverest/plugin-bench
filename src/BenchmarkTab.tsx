@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Box, Stack, Typography } from '@mui/material';
+import { Alert, Box, Button, Stack, Typography } from '@mui/material';
 import type { ClusterDetailTabProps, PluginApi } from '@openeverest/plugin-sdk';
 import { BenchmarkForm } from './BenchmarkForm';
 import { PageHeader } from './PageHeader';
@@ -11,6 +11,7 @@ import type { BenchmarkFormValues } from './benchmarkFormValidation';
 import { providerFromClusterDetailProps, targetFromClusterDetailProps } from './benchmarkTarget';
 import type { BenchmarkTarget } from './benchmarkTarget';
 import { getBenchmarkDriversForProvider } from './drivers';
+import { getEnabledBenchmarkDrivers } from './benchmarkDriversApi';
 
 interface BenchmarkTabProps extends ClusterDetailTabProps {
   pluginFetch: PluginApi['fetch'];
@@ -42,10 +43,29 @@ interface BenchmarkWorkflowProps {
 }
 
 function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowProps) {
-  const availableDrivers = getBenchmarkDriversForProvider(provider);
+  const supportedDrivers = getBenchmarkDriversForProvider(provider);
+  const [driverState, setDriverState] = useState<
+    { status: 'loading' } | { status: 'ready'; ids: string[] } | { status: 'failed'; message: string }
+  >({ status: 'loading' });
+  const [driverAttempt, setDriverAttempt] = useState(0);
+  const availableDrivers = driverState.status === 'ready'
+    ? supportedDrivers.filter(id => driverState.ids.includes(id)) : [];
   const [submission, setSubmission] = useState<SubmissionState>({ status: 'idle' });
   const activeRequest = useRef<AbortController | null>(null);
   const [runIds, setRunIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (getBenchmarkDriversForProvider(provider).length === 0) return;
+    const controller = new AbortController();
+    setDriverState({ status: 'loading' });
+    getEnabledBenchmarkDrivers(pluginFetch, { signal: controller.signal }).then(
+      ids => { if (!controller.signal.aborted) setDriverState({ status: 'ready', ids }); },
+      error => {
+        if (!controller.signal.aborted) setDriverState({ status: 'failed', message: error.message });
+      },
+    );
+    return () => controller.abort();
+  }, [pluginFetch, provider, driverAttempt]);
 
   const addRun = (id: string) => {
     if (runIds.includes(id)) return false;
@@ -88,13 +108,21 @@ function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowP
   return (
     <Stack spacing={3} sx={{ p: 3, maxWidth: 1100 }}>
       <PageHeader subtitle="Configure and run a benchmark for this database instance." />
-      {availableDrivers.length > 0 ? (
-        <BenchmarkForm target={target} availableDrivers={availableDrivers}
+      {supportedDrivers.length > 0 && driverState.status === 'failed' ? (
+        <Alert severity="error" action={
+          <Button color="inherit" onClick={() => setDriverAttempt(attempt => attempt + 1)}>Retry driver check</Button>
+        }>{driverState.message}</Alert>
+      ) : availableDrivers.length > 0 ? (
+        <BenchmarkForm target={target} provider={provider} availableDrivers={availableDrivers}
           isSubmitting={submission.status === 'submitting'} onSubmit={submitRun} />
       ) : (
         <Alert severity="info">
           {provider
-            ? 'Benchmarking is not available for this database provider.'
+            ? supportedDrivers.length === 0
+              ? 'Benchmarking is not available for this database provider.'
+              : driverState.status === 'loading'
+                ? 'Checking available benchmark drivers…'
+                : 'No benchmark driver is enabled for this database provider.'
             : 'Waiting for database provider information.'}
         </Alert>
       )}

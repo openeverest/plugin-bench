@@ -19,32 +19,40 @@ function setup() {
     const request = toCreateBenchmarkRunRequest(values, target);
     if (request) submissions.push(request);
   };
-  const view = render(<BenchmarkForm target={target} availableDrivers={['sysbench']} isSubmitting={false} onSubmit={onSubmit} />);
+  const view = render(<BenchmarkForm target={target} provider="percona-server-mysql" availableDrivers={['sysbench']} isSubmitting={false} onSubmit={onSubmit} />);
   return {
     submissions,
     pending: (isSubmitting: boolean) => view.rerender(
-      <BenchmarkForm target={target} availableDrivers={['sysbench']} isSubmitting={isSubmitting} onSubmit={onSubmit} />,
+      <BenchmarkForm target={target} provider="percona-server-mysql" availableDrivers={['sysbench']} isSubmitting={isSubmitting} onSubmit={onSubmit} />,
     ),
   };
 }
 
 describe('Sysbench options form', () => {
-  it('selects Sysbench and submits backend defaults with preparation off', () => {
+  it('requires an existing database and starts with table preparation enabled', () => {
     const { submissions } = setup();
     const picker = screen.getByRole('combobox', { name: 'Benchmark driver' });
     expect(picker.textContent).toBe('Sysbench');
     fireEvent.mouseDown(picker);
     expect(screen.getAllByRole('option')).toHaveLength(1);
     fireEvent.click(screen.getByRole('option', { name: 'Sysbench' }));
-    expect(prepare().checked).toBe(false);
+    expect(prepare().checked).toBe(true);
     expect(screen.queryByLabelText('Clients')).toBeNull();
     expect(screen.queryByLabelText('Scale')).toBeNull();
     expect(screen.getByText(/oltp_read_write/)).toBeTruthy();
-    expect(screen.getByText('Reuse existing tables. Table count and size must match the existing dataset.')).toBeTruthy();
+    expect(screen.getByText(/This provider does not supply a default/)).toBeTruthy();
+    expect(input('Database').required).toBe(true);
+    expect(start().disabled).toBe(true);
+    fireEvent.submit(start().closest('form')!);
+    expect(submissions).toHaveLength(0);
+    expect(screen.getByText('Enter the name of an existing database.')).toBeTruthy();
+    change('Database', '   ');
+    expect(start().disabled).toBe(true);
+    change('Database', ' sbtest ');
     fireEvent.click(start());
     expect(submissions).toEqual([{
-      target, driver: 'sysbench',
-      options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+      target, database: 'sbtest', driver: 'sysbench',
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
     }]);
   });
 
@@ -55,7 +63,6 @@ describe('Sysbench options form', () => {
     change('Threads', '4');
     change('Tables', '2');
     change('Rows per table', '500');
-    fireEvent.click(prepare());
     expect(screen.getByText('Creates benchmark tables in an existing database. Preparation fails if the tables already exist.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Job resources' }));
     change('CPU request (millicores)', '500');
@@ -82,6 +89,8 @@ describe('Sysbench options form', () => {
 
   it('requires table settings during reuse and reveals errors on blur or submission', () => {
     const { submissions } = setup();
+    change('Database', 'sbtest');
+    fireEvent.click(prepare());
     change('Tables', '');
     expect(start().disabled).toBe(true);
     expect(screen.queryByText('Tables must be a positive whole number.')).toBeNull();
@@ -102,6 +111,7 @@ describe('Sysbench options form', () => {
 
   it('disables options while submitting and retains values afterwards', () => {
     const { submissions, pending } = setup();
+    change('Database', 'sbtest');
     change('Threads', '4');
     pending(true);
     expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).getAttribute('aria-disabled')).toBe('true');

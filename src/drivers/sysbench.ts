@@ -20,11 +20,11 @@ export type SysbenchOptionField = Exclude<keyof SysbenchOptionsDraft, 'initializ
 export type SysbenchOptionsErrors = Partial<Record<SysbenchOptionField, string>>;
 
 export const initialSysbenchOptionsDraft: Readonly<SysbenchOptionsDraft> = {
-  durationSeconds: '60',
+  durationSeconds: '30',
   threads: '1',
   tables: '1',
   tableSize: '10000',
-  initialize: false,
+  initialize: true,
 };
 
 export function validateSysbenchDatabase(database: string): string | undefined {

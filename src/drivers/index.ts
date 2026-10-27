@@ -29,6 +29,8 @@ type DriverPreparation<K extends BenchmarkDriverId> =
 type DriverDefinition<K extends BenchmarkDriverId> = {
   label: string;
   providers: readonly string[];
+  /** Providers whose credentials do not supply a default database. */
+  databaseRequiredProviders?: readonly string[];
   createDraft: () => DriverDraft<K>;
   prepare: (draft: DriverDraft<K>) => DriverPreparation<K>;
   validateDatabase: (database: string) => string | undefined;
@@ -52,6 +54,7 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
   sysbench: {
     label: 'Sysbench',
     providers: ['percona-server-mysql'],
+    databaseRequiredProviders: ['percona-server-mysql'],
     createDraft: () => ({ driver: 'sysbench', options: { ...initialSysbenchOptionsDraft } }),
     prepare: ({ options }) => {
       const prepared = prepareSysbenchOptions(options);

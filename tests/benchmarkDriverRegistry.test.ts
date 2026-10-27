@@ -39,14 +39,14 @@ describe('benchmark driver registry', () => {
       ok: true,
       request: {
         driver: 'sysbench',
-        options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+        options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
       },
     });
     const target = { k8sCluster: 'main', namespace: 'default', instance: 'mysql-1' };
     const values = { ...createInitialBenchmarkFormValues('sysbench'), database: ' dbname=app ' };
     expect(toCreateBenchmarkRunRequest(values, target)).toEqual({
       target, database: 'dbname=app', driver: 'sysbench',
-      options: { durationSeconds: 60, threads: 1, tables: 1, tableSize: 10000, initialize: false },
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
     });
     expect(toCreateBenchmarkRunRequest({ ...values, database: 'bad\nname' }, target)).toBeUndefined();
     draft.options.tableSize = '';
