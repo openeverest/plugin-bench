@@ -15,7 +15,7 @@ import {
   Typography,
 } from '@mui/material';
 import { BenchmarkTargetSummary } from './BenchmarkTargetSummary';
-import { createInitialBenchmarkFormValues, validateBenchmarkForm } from './benchmarkFormValidation';
+import { createInitialBenchmarkFormValues, isBenchmarkDatabaseRequired, validateBenchmarkForm } from './benchmarkFormValidation';
 import type { BenchmarkFormField, BenchmarkFormValues } from './benchmarkFormValidation';
 import type { BenchmarkTarget } from './benchmarkTarget';
 import { prepareNodeAffinityDraft } from './benchmarkNodeAffinity';
@@ -48,11 +48,8 @@ export function BenchmarkForm({ target, availableDrivers, provider, isSubmitting
   const [touched, setTouched] = useState<Partial<Record<BenchmarkFormField, boolean>>>({});
   const [submitted, setSubmitted] = useState(false);
   const [resourcesExpanded, setResourcesExpanded] = useState(false);
-  const errors = validateBenchmarkForm(values);
-  const databaseRequired = benchmarkDrivers[values.driver].databaseRequiredProviders?.includes(provider ?? '') ?? false;
-  if (databaseRequired && values.database.trim() === '') {
-    errors.database = 'Enter the name of an existing database.';
-  }
+  const errors = validateBenchmarkForm(values, provider);
+  const databaseRequired = isBenchmarkDatabaseRequired(values.driver, provider);
   const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
   const driverAvailable = availableDrivers.includes(values.driver);
   const canSubmit = driverAvailable && Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;

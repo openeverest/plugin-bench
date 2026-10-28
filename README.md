@@ -86,10 +86,9 @@ If none are enabled for the provider, run lookup remains available.
 Database, **Job resources**, and **Job placement** are shared settings. A blank
 database uses the instance default when available; otherwise enter an existing
 database name. Use a disposable benchmark database.
-For `percona-server-mysql`, a database name is required because the provider
-does not supply a default. Create the database before starting the benchmark.
-For PXC (`percona-xtradb-cluster`), leaving the field blank lets the backend
-resolve the database from the provider's connection details.
+For both `percona-server-mysql` and PXC (`percona-xtradb-cluster`), a database name
+is required because neither provider supplies a default. Create the database
+before starting the benchmark; table preparation does not create it.
 
 **pgbench** starts with 30 seconds, one client/thread, scale 1, and initialization
 enabled. Initialization drops and recreates pgbench tables. When reusing tables,
@@ -169,10 +168,10 @@ For local development, install:
 
 An OpenEverest installation and a provider for the selected database type are
 required when running the plugin in a cluster. Sysbench matches database type
-`mysql` rather than provider name. The API also accepts `provider-mariadb` and
-`percona-xtradb-cluster` targets reporting `mysql`, but MariaDB/PXC compatibility
-has not been verified. The Sysbench runner has been verified against MySQL 8.4
-on Linux/ARM64.
+`mysql` rather than provider name. A live benchmark against a PXC
+(`percona-xtradb-cluster`) instance has been verified. The API also accepts
+`provider-mariadb` targets reporting `mysql`, but MariaDB compatibility has not
+been verified. The Sysbench runner has been verified against MySQL 8.4 on Linux/ARM64.
 
 ## Local development
 

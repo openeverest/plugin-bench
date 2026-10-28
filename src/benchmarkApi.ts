@@ -3,6 +3,7 @@ import type { BenchmarkTarget } from './benchmarkTarget';
 import type { DriverRequest } from './drivers';
 import { isNodeAffinity } from './benchmarkNodeAffinity.js';
 import type { NodeAffinity } from './benchmarkNodeAffinity';
+import { withRequestTimeout } from './requestTimeout.js';
 
 export type BenchmarkRunResources = {
   cpuRequest?: string;
@@ -69,32 +70,12 @@ export async function getBenchmarkRun(
   id: string,
   { signal, timeoutMs = 30_000 }: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<BenchmarkRun> {
-  const controller = new AbortController();
-  let timedOut = false;
-  const aborted = new Promise<never>((_, reject) => {
-    controller.signal.addEventListener('abort', () => {
-      reject(timedOut
-        ? new BenchmarkStatusError('The status request timed out.', undefined, true)
-        : new DOMException('The status request was interrupted.', 'AbortError'));
-    }, { once: true });
-  });
-  const cancel = () => controller.abort();
-  signal?.addEventListener('abort', cancel, { once: true });
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-
-  try {
-    if (signal?.aborted) {
-      controller.abort();
-      return await aborted;
-    }
-    return await Promise.race([sendGetBenchmarkRun(pluginFetch, id, controller.signal), aborted]);
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener('abort', cancel);
-  }
+  return withRequestTimeout(signal, timeoutMs,
+    timedOut => timedOut
+      ? new BenchmarkStatusError('The status request timed out.', undefined, true)
+      : new DOMException('The status request was interrupted.', 'AbortError'),
+    requestSignal => sendGetBenchmarkRun(pluginFetch, id, requestSignal),
+  );
 }
 
 async function sendGetBenchmarkRun(
@@ -209,34 +190,10 @@ export async function createBenchmarkRun(
   request: CreateBenchmarkRunRequest,
   { signal, timeoutMs = 30_000 }: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<CreateBenchmarkRunResponse> {
-  const controller = new AbortController();
-  let timedOut = false;
-  const aborted = new Promise<never>((_, reject) => {
-    controller.signal.addEventListener('abort', () => {
-      reject(unknownOutcome(timedOut ? 'The submission timed out.' : 'The submission was interrupted.'));
-    }, { once: true });
-  });
-  const cancel = () => controller.abort();
-  signal?.addEventListener('abort', cancel, { once: true });
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-
-  try {
-    if (signal?.aborted) {
-      controller.abort();
-      return await aborted;
-    }
-    // Bound both fetching and reading the body, even if the host ignores abort.
-    return await Promise.race([
-      sendCreateBenchmarkRun(pluginFetch, request, controller.signal),
-      aborted,
-    ]);
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener('abort', cancel);
-  }
+  return withRequestTimeout(signal, timeoutMs,
+    timedOut => unknownOutcome(timedOut ? 'The submission timed out.' : 'The submission was interrupted.'),
+    requestSignal => sendCreateBenchmarkRun(pluginFetch, request, requestSignal),
+  );
 }
 
 function unknownOutcome(reason: string, status?: number): BenchmarkApiError {

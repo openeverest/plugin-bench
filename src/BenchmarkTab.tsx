@@ -80,7 +80,7 @@ function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowP
 
   const submitRun = async (values: BenchmarkFormValues) => {
     if (activeRequest.current || !availableDrivers.includes(values.driver)) return;
-    const request = toCreateBenchmarkRunRequest(values, target);
+    const request = toCreateBenchmarkRunRequest(values, target, provider);
     if (!request) return;
 
     const controller = new AbortController();

@@ -20,6 +20,20 @@ test('maps Sysbench defaults through the standalone request builder without pgbe
   }
 });
 
+for (const provider of ['percona-server-mysql', 'percona-xtradb-cluster']) {
+  test(`validation and request building require a database for ${provider}`, () => {
+    const values = createInitialBenchmarkFormValues('sysbench');
+    for (const database of ['', '   ']) {
+      const draft = { ...values, database };
+      assert.equal(validateBenchmarkForm(draft, provider).database, 'Enter the name of an existing database.');
+      assert.equal(toCreateBenchmarkRunRequest(draft, target, provider), undefined);
+    }
+    const valid = { ...values, database: ' benchdb ' };
+    assert.deepEqual(validateBenchmarkForm(valid, provider), {});
+    assert.equal(toCreateBenchmarkRunRequest(valid, target, provider).database, 'benchdb');
+  });
+}
+
 test('accepts valid form values and initializes the dataset by default', () => {
   assert.equal(initialBenchmarkFormValues.options.initialize, true);
   assert.deepEqual(validateBenchmarkForm(validValues), {});

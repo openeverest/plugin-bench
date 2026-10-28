@@ -72,7 +72,8 @@ runner currently fixes the database driver to MySQL and uses the bundled
 The authorized OpenEverest credentials must report database type `mysql`, matched
 case-insensitively after trimming. The provider name does not select the driver.
 The API therefore also accepts `provider-mariadb` and `percona-xtradb-cluster`
-targets reporting `mysql`; compatibility with those providers has not been verified.
+targets reporting `mysql`. A live PXC benchmark has been verified; MariaDB
+compatibility has not been verified.
 Clients must explicitly send `driver: "sysbench"`; omitting it does not infer
 Sysbench from the target. The legacy flat envelope remains pgbench-only.
 
@@ -109,8 +110,7 @@ with the chart's `appVersion`. Administrators can disable it or override the ima
 Tilt builds and injects a local image. Release builds target AMD64 and ARM64, with
 image integration tests on AMD64. The Sysbench runner has also been verified
 natively on Linux/ARM64 against MySQL 8.4. The UI offers Sysbench for `percona-server-mysql`
-and `percona-xtradb-cluster` instances. Live PXC verification and MariaDB-specific
-certification remain follow-ups.
+and `percona-xtradb-cluster` instances. MariaDB-specific verification remains a follow-up.
 
 ### Admission and stored settings
 
@@ -224,9 +224,9 @@ The benchmark tab submits explicit `driver` and `options` fields. Its shared for
 renders the selected driver's options component: pgbench for the supported
 PostgreSQL providers and Sysbench for `percona-server-mysql` and
 `percona-xtradb-cluster`. Both forms default
-to a 30-second run with initialization enabled. The MySQL form requires a database
-name for `percona-server-mysql`, whose credentials provide no default database.
-For PXC, the field is optional and the backend uses its existing database resolution.
+to a 30-second run with initialization enabled. The MySQL form requires an existing
+database name for both `percona-server-mysql` and `percona-xtradb-cluster`;
+neither provider's credentials supply a default database.
 The API defaults above apply to omitted fields.
 
 Result cards display the stored driver, configured image reference, and effective

@@ -16,7 +16,7 @@ const prepare = () => screen.getByRole('checkbox', { name: 'Prepare Sysbench tab
 function setup(provider = 'percona-server-mysql') {
   const submissions: CreateBenchmarkRunRequest[] = [];
   const onSubmit = (values: BenchmarkFormValues) => {
-    const request = toCreateBenchmarkRunRequest(values, target);
+    const request = toCreateBenchmarkRunRequest(values, target, provider);
     if (request) submissions.push(request);
   };
   const view = render(<BenchmarkForm target={target} provider={provider} availableDrivers={['sysbench']} isSubmitting={false} onSubmit={onSubmit} />);
@@ -29,46 +29,34 @@ function setup(provider = 'percona-server-mysql') {
 }
 
 describe('Sysbench options form', () => {
-  it('lets PXC use the provider database hint or an explicit database override', () => {
-    const { submissions } = setup('percona-xtradb-cluster');
-    expect(input('Database').required).toBe(false);
-    expect(start().disabled).toBe(false);
-    fireEvent.click(start());
-    expect(submissions[0]).toEqual({
-      target, driver: 'sysbench',
-      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
-    });
-    change('Database', ' benchdb ');
-    fireEvent.click(start());
-    expect(submissions[1]).toEqual({ ...submissions[0], database: 'benchdb' });
-  });
-
-  it('requires an existing database and starts with table preparation enabled', () => {
-    const { submissions } = setup();
-    const picker = screen.getByRole('combobox', { name: 'Benchmark driver' });
-    expect(picker.textContent).toBe('Sysbench');
-    fireEvent.mouseDown(picker);
-    expect(screen.getAllByRole('option')).toHaveLength(1);
-    fireEvent.click(screen.getByRole('option', { name: 'Sysbench' }));
-    expect(prepare().checked).toBe(true);
-    expect(screen.queryByLabelText('Clients')).toBeNull();
-    expect(screen.queryByLabelText('Scale')).toBeNull();
-    expect(screen.getByText(/oltp_read_write/)).toBeTruthy();
-    expect(screen.getByText(/This provider does not supply a default/)).toBeTruthy();
-    expect(input('Database').required).toBe(true);
-    expect(start().disabled).toBe(true);
-    fireEvent.submit(start().closest('form')!);
-    expect(submissions).toHaveLength(0);
-    expect(screen.getByText('Enter the name of an existing database.')).toBeTruthy();
-    change('Database', '   ');
-    expect(start().disabled).toBe(true);
-    change('Database', ' sbtest ');
-    fireEvent.click(start());
-    expect(submissions).toEqual([{
-      target, database: 'sbtest', driver: 'sysbench',
-      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
-    }]);
-  });
+  it.each(['percona-server-mysql', 'percona-xtradb-cluster'])(
+    'requires an existing database and defaults preparation on for %s', provider => {
+      const { submissions } = setup(provider);
+      const picker = screen.getByRole('combobox', { name: 'Benchmark driver' });
+      expect(picker.textContent).toBe('Sysbench');
+      fireEvent.mouseDown(picker);
+      expect(screen.getAllByRole('option')).toHaveLength(1);
+      fireEvent.click(screen.getByRole('option', { name: 'Sysbench' }));
+      expect(prepare().checked).toBe(true);
+      expect(screen.queryByLabelText('Clients')).toBeNull();
+      expect(screen.queryByLabelText('Scale')).toBeNull();
+      expect(screen.getByText(/oltp_read_write/)).toBeTruthy();
+      expect(screen.getByText(/This provider does not supply a default/)).toBeTruthy();
+      expect(input('Database').required).toBe(true);
+      expect(start().disabled).toBe(true);
+      fireEvent.submit(start().closest('form')!);
+      expect(submissions).toHaveLength(0);
+      expect(screen.getByText('Enter the name of an existing database.')).toBeTruthy();
+      change('Database', '   ');
+      expect(start().disabled).toBe(true);
+      change('Database', ' sbtest ');
+      fireEvent.click(start());
+      expect(submissions).toEqual([{
+        target, database: 'sbtest', driver: 'sysbench',
+        options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
+      }]);
+    },
+  );
 
   it('preserves edited table settings across preparation changes and includes shared settings', () => {
     const { submissions } = setup();
