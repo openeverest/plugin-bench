@@ -77,7 +77,7 @@ which driver is offered:
 | Instance provider | Driver |
 | --- | --- |
 | `provider-cloudnative-pg`, `provider-percona-postgresql` | pgbench |
-| `percona-server-mysql` | Sysbench |
+| `percona-server-mysql`, `percona-xtradb-cluster` | Sysbench |
 
 The tab checks `/api/status` and only offers drivers enabled on the backend.
 If none are enabled for the provider, run lookup remains available.
@@ -87,6 +87,8 @@ database uses the instance default when available; otherwise enter an existing
 database name. Use a disposable benchmark database.
 For `percona-server-mysql`, a database name is required because the provider
 does not supply a default. Create the database before starting the benchmark.
+For PXC (`percona-xtradb-cluster`), leaving the field blank lets the backend
+resolve the database from the provider's connection details.
 
 **pgbench** starts with 30 seconds, one client/thread, scale 1, and initialization
 enabled. Initialization drops and recreates pgbench tables. When reusing tables,

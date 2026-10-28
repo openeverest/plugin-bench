@@ -9,11 +9,12 @@ describe('benchmark driver registry', () => {
   it('registers both drivers and their provider metadata', () => {
     expect(benchmarkDriverIds).toEqual(['pgbench', 'sysbench']);
     expect(benchmarkProviderNames).toEqual([
-      'provider-cloudnative-pg', 'provider-percona-postgresql', 'percona-server-mysql',
+      'provider-cloudnative-pg', 'provider-percona-postgresql', 'percona-server-mysql', 'percona-xtradb-cluster',
     ]);
     expect(getBenchmarkDriversForProvider('provider-cloudnative-pg')).toEqual(['pgbench']);
     expect(getBenchmarkDriversForProvider('provider-percona-postgresql')).toEqual(['pgbench']);
     expect(getBenchmarkDriversForProvider('percona-server-mysql')).toEqual(['sysbench']);
+    expect(getBenchmarkDriversForProvider('percona-xtradb-cluster')).toEqual(['sysbench']);
     for (const provider of [undefined, '', 'unknown', 'provider-mariadb', 'provider-percona-xtradb-cluster']) {
       expect(getBenchmarkDriversForProvider(provider)).toEqual([]);
     }

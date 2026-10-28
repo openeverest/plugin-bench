@@ -38,6 +38,7 @@ plugin:
         - provider-cloudnative-pg
         - provider-percona-postgresql
         - percona-server-mysql
+        - percona-xtradb-cluster
 
 everestAPIURL: ""
 

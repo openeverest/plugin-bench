@@ -13,22 +13,36 @@ const change = (label: string, value: string) => fireEvent.change(input(label), 
 const start = () => screen.getByRole('button', { name: /Start benchmark|Starting…/ }) as HTMLButtonElement;
 const prepare = () => screen.getByRole('checkbox', { name: 'Prepare Sysbench tables' }) as HTMLInputElement;
 
-function setup() {
+function setup(provider = 'percona-server-mysql') {
   const submissions: CreateBenchmarkRunRequest[] = [];
   const onSubmit = (values: BenchmarkFormValues) => {
     const request = toCreateBenchmarkRunRequest(values, target);
     if (request) submissions.push(request);
   };
-  const view = render(<BenchmarkForm target={target} provider="percona-server-mysql" availableDrivers={['sysbench']} isSubmitting={false} onSubmit={onSubmit} />);
+  const view = render(<BenchmarkForm target={target} provider={provider} availableDrivers={['sysbench']} isSubmitting={false} onSubmit={onSubmit} />);
   return {
     submissions,
     pending: (isSubmitting: boolean) => view.rerender(
-      <BenchmarkForm target={target} provider="percona-server-mysql" availableDrivers={['sysbench']} isSubmitting={isSubmitting} onSubmit={onSubmit} />,
+      <BenchmarkForm target={target} provider={provider} availableDrivers={['sysbench']} isSubmitting={isSubmitting} onSubmit={onSubmit} />,
     ),
   };
 }
 
 describe('Sysbench options form', () => {
+  it('lets PXC use the provider database hint or an explicit database override', () => {
+    const { submissions } = setup('percona-xtradb-cluster');
+    expect(input('Database').required).toBe(false);
+    expect(start().disabled).toBe(false);
+    fireEvent.click(start());
+    expect(submissions[0]).toEqual({
+      target, driver: 'sysbench',
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
+    });
+    change('Database', ' benchdb ');
+    fireEvent.click(start());
+    expect(submissions[1]).toEqual({ ...submissions[0], database: 'benchdb' });
+  });
+
   it('requires an existing database and starts with table preparation enabled', () => {
     const { submissions } = setup();
     const picker = screen.getByRole('combobox', { name: 'Benchmark driver' });

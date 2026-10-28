@@ -80,6 +80,20 @@ describe('Sysbench database validation', () => {
   it.each(['app\x00db', 'app\rdb', 'app\ndb', 'app\n', '\rapp'])('rejects controls in %j before trimming', database => {
     expect(validateSysbenchDatabase(database)).toBe('Database must not contain NUL bytes or line breaks.');
   });
+
+  it.each([`a'" b`, `a'",b`, `'a"b`, `"a'b`, `#a'"b`, `a'"\u0085b`])(
+    'rejects unsupported quoting in %j', database => {
+      expect(validateSysbenchDatabase(database)).toBe('Database cannot be represented in the Sysbench configuration file.');
+    },
+  );
+
+  it('matches the configuration byte limit for quoted and unquoted names', () => {
+    for (const database of ['a'.repeat(242), 'é'.repeat(121), 'a'.repeat(242) + `'"`]) {
+      expect(validateSysbenchDatabase(database)).toBeUndefined();
+      expect(validateSysbenchDatabase(` \u0085${database}\u0085 `)).toBeUndefined();
+      expect(validateSysbenchDatabase(database + 'a')).toBe('Database exceeds the Sysbench configuration line limit.');
+    }
+  });
 });
 
 describe('Sysbench recorded options', () => {

@@ -108,7 +108,8 @@ The chart enables Sysbench by default using its published runner image tagged
 with the chart's `appVersion`. Administrators can disable it or override the image;
 Tilt builds and injects a local image. Release builds target AMD64 and ARM64, with
 image integration tests on AMD64. The UI offers Sysbench for `percona-server-mysql`
-instances. MariaDB/PXC-specific certification remains a follow-up.
+and `percona-xtradb-cluster` instances. Live PXC verification and MariaDB-specific
+certification remain follow-ups.
 
 ### Admission and stored settings
 
@@ -220,9 +221,11 @@ comparison charts, and a metric taxonomy are separate follow-up work.
 
 The benchmark tab submits explicit `driver` and `options` fields. Its shared form
 renders the selected driver's options component: pgbench for the supported
-PostgreSQL providers and Sysbench for `percona-server-mysql`. Both forms default
+PostgreSQL providers and Sysbench for `percona-server-mysql` and
+`percona-xtradb-cluster`. Both forms default
 to a 30-second run with initialization enabled. The MySQL form requires a database
 name for `percona-server-mysql`, whose credentials provide no default database.
+For PXC, the field is optional and the backend uses its existing database resolution.
 The API defaults above apply to omitted fields.
 
 Result cards display the stored driver, configured image reference, and effective

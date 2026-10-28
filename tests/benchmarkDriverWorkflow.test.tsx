@@ -55,6 +55,7 @@ describe('benchmark driver workflow', () => {
     { provider: 'provider-cloudnative-pg', driver: 'pgbench' },
     { provider: 'provider-percona-postgresql', driver: 'pgbench' },
     { provider: 'percona-server-mysql', driver: 'Sysbench' },
+    { provider: 'percona-xtradb-cluster', driver: 'Sysbench' },
   ])('offers only $driver for $provider', async ({ provider, driver }) => {
     const fetch = vi.fn<PluginApi['fetch']>();
     await renderReady(tab(fetch, 'instance-1', provider));

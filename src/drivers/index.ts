@@ -53,7 +53,7 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
   },
   sysbench: {
     label: 'Sysbench',
-    providers: ['percona-server-mysql'],
+    providers: ['percona-server-mysql', 'percona-xtradb-cluster'],
     databaseRequiredProviders: ['percona-server-mysql'],
     createDraft: () => ({ driver: 'sysbench', options: { ...initialSysbenchOptionsDraft } }),
     prepare: ({ options }) => {

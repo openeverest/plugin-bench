@@ -14,6 +14,7 @@ const tab = (fetch: PluginApi['fetch'], provider = 'percona-server-mysql') => (
 describe('backend-enabled benchmark drivers', () => {
   it.each([
     { provider: 'percona-server-mysql', ids: ['sysbench', 'future'], label: 'Sysbench' },
+    { provider: 'percona-xtradb-cluster', ids: ['pgbench', 'sysbench'], label: 'Sysbench' },
     { provider: 'provider-cloudnative-pg', ids: ['pgbench', 'sysbench'], label: 'pgbench' },
   ])('intersects enabled drivers with $provider support', async ({ provider, ids, label }) => {
     const fetch = vi.fn<PluginApi['fetch']>(async () => response({ drivers: ids }));
@@ -22,10 +23,11 @@ describe('backend-enabled benchmark drivers', () => {
     expect(fetch).toHaveBeenCalledWith('/api/status', expect.objectContaining({ method: 'GET' }));
   });
 
-  it.each([{ ids: [] }, { ids: ['pgbench'] }, { ids: ['future'] }])(
-    'hides a disabled MySQL driver for enabled IDs $ids', async ({ ids }) => {
+  it.each(['percona-server-mysql', 'percona-xtradb-cluster'].flatMap(provider =>
+    [[], ['pgbench'], ['future']].map(ids => ({ provider, ids }))))(
+    'hides a disabled driver for $provider and enabled IDs $ids', async ({ provider, ids }) => {
       const fetch = vi.fn<PluginApi['fetch']>(async () => response({ drivers: ids }));
-      await act(async () => { render(tab(fetch)); });
+      await act(async () => { render(tab(fetch, provider)); });
       expect(screen.getByText('No benchmark driver is enabled for this database provider.')).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Start benchmark' })).toBeNull();
       expect(screen.getByRole('button', { name: 'Find run' })).toBeTruthy();
