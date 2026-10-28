@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
-import { URL } from 'node:url';
+import { resolve } from 'node:path';
 import type { ReactNode } from 'react';
 import { parse as parseYaml } from 'yaml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -40,7 +40,7 @@ function setup() {
 describe('benchmark plugin registration', () => {
   it('keeps the Helm chart benchmark-tab providers in sync with the driver registry', () => {
     const values: { plugin: { extensionPoints: Array<{ type: string; path?: string; providers?: string[] }> } } =
-      parseYaml(readFileSync(new URL('../charts/plugin-bench/values.yaml', import.meta.url), 'utf8'));
+      parseYaml(readFileSync(resolve(process.cwd(), 'charts/plugin-bench/values.yaml'), 'utf8'));
     const tabs = values.plugin.extensionPoints.filter(extension =>
       extension.type === 'clusterDetailTab' && extension.path === 'performance-benchmark');
     expect(tabs).toHaveLength(1);
