@@ -2,6 +2,7 @@
 
 OpenEverest Plugin Bench runs PostgreSQL (pgbench) and MySQL (Sysbench)
 benchmarks as temporary Kubernetes Jobs from the database cluster tab or backend API.
+Both drivers are enabled by default in the Helm chart.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
 > launching, and inspecting benchmark runs.
@@ -170,7 +171,8 @@ An OpenEverest installation and a provider for the selected database type are
 required when running the plugin in a cluster. Sysbench matches database type
 `mysql` rather than provider name. The API also accepts `provider-mariadb` and
 `percona-xtradb-cluster` targets reporting `mysql`, but MariaDB/PXC compatibility
-has not been verified. ARM64 runner verification is also pending.
+has not been verified. The Sysbench runner has been verified against MySQL 8.4
+on Linux/ARM64.
 
 ## Local development
 
@@ -187,7 +189,7 @@ tilt up -f dev/Tiltfile
 ```
 
 Tilt builds the frontend, backend image, and both pgbench and Sysbench runner
-images. It enables Sysbench locally and injects each runner's repository and tag
+images. It injects each runner's repository and tag
 through `drivers.<id>.image.repository` and `drivers.<id>.image.tag`. Runner images
 are used when the coordinator starts benchmark Jobs; no published runner image
 is needed for this flow.

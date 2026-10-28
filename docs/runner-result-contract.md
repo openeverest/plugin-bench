@@ -107,7 +107,8 @@ ordinary environment values. Effective options and snapshots contain no credenti
 The chart enables Sysbench by default using its published runner image tagged
 with the chart's `appVersion`. Administrators can disable it or override the image;
 Tilt builds and injects a local image. Release builds target AMD64 and ARM64, with
-image integration tests on AMD64. The UI offers Sysbench for `percona-server-mysql`
+image integration tests on AMD64. The Sysbench runner has also been verified
+natively on Linux/ARM64 against MySQL 8.4. The UI offers Sysbench for `percona-server-mysql`
 and `percona-xtradb-cluster` instances. Live PXC verification and MariaDB-specific
 certification remain follow-ups.
 
