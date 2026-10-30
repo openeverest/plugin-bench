@@ -205,7 +205,6 @@ docker_build(
 plugin_flags = [
     '--create-namespace',
     '--set', 'image.pullPolicy=IfNotPresent',
-    '--set', 'drivers.sysbench.enabled=true',
 ]
 if everest_api_url:
     plugin_flags = plugin_flags + ['--set', 'everestAPIURL={0}'.format(everest_api_url)]

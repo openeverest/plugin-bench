@@ -2,6 +2,7 @@ import type { ClusterDetailTabProps, PluginApi, PluginRegisterFn } from '@openev
 import { BenchmarkPage } from './BenchmarkPage';
 import { BenchmarkTab } from './BenchmarkTab';
 import { PluginRoot } from './PluginRoot';
+import { benchmarkProviderNames } from './drivers';
 
 const register: PluginRegisterFn = (api: PluginApi) => {
   const pluginFetch = api.fetch.bind(api);
@@ -26,7 +27,7 @@ const register: PluginRegisterFn = (api: PluginApi) => {
     type: 'clusterDetailTab',
     label: 'Performance Benchmark',
     path: 'performance-benchmark',
-    providers: ['provider-cloudnative-pg', 'provider-percona-postgresql'],
+    providers: benchmarkProviderNames,
     component: (props: ClusterDetailTabProps) => (
       <PluginRoot nonce={cssNonce}>
         <BenchmarkTab {...props} pluginFetch={pluginFetch} />

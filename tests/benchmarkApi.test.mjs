@@ -10,6 +10,27 @@ const request = {
 };
 const unknownOutcome = error => error instanceof BenchmarkApiError && error.outcomeUnknown;
 
+test('submits the Sysbench driver envelope without legacy fields or credentials', async () => {
+  const sysbench = {
+    target: { k8sCluster: 'main', namespace: 'default', instance: 'mysql-1' },
+    database: 'sbtest', driver: 'sysbench',
+    options: { durationSeconds: 5, threads: 2, tables: 3, tableSize: 500, initialize: false },
+    resources: { cpuRequest: '500m', memoryLimit: '1024Mi' },
+  };
+  let calls = 0;
+  const accepted = await createBenchmarkRun(async (path, init) => {
+    calls++;
+    assert.equal(path, '/api/runs');
+    assert.equal(init.method, 'POST');
+    assert.equal(init.headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(init.body), sysbench);
+    assert.doesNotMatch(init.body, /clients|scale|MYSQL_|password/);
+    return new Response(JSON.stringify({ id: 'mysql-run', status: 'running' }), { status: 202 });
+  }, sysbench);
+  assert.deepEqual(accepted, { id: 'mysql-run', status: 'running' });
+  assert.equal(calls, 1);
+});
+
 test('lost response reports an uncertain outcome without retrying the POST', async () => {
   let calls = 0;
   await assert.rejects(createBenchmarkRun(async () => {

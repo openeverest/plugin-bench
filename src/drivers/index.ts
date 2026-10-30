@@ -2,11 +2,16 @@ import {
   describePgbenchRunOptions, initialPgbenchOptionsDraft, preparePgbenchOptions, validatePgbenchDatabase,
 } from './pgbench.js';
 import type { PgbenchOptions, PgbenchOptionsDraft } from './pgbench';
+import {
+  describeSysbenchRunOptions, initialSysbenchOptionsDraft, prepareSysbenchOptions, validateSysbenchDatabase,
+} from './sysbench.js';
+import type { SysbenchOptions, SysbenchOptionsDraft } from './sysbench';
 
 // Register each driver's draft and validated options together so their types
 // stay associated throughout the form and the submitted request.
 type DriverTypes = {
   pgbench: { draft: PgbenchOptionsDraft; options: PgbenchOptions };
+  sysbench: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
 };
 
 export type BenchmarkDriverId = keyof DriverTypes;
@@ -23,6 +28,9 @@ type DriverPreparation<K extends BenchmarkDriverId> =
 
 type DriverDefinition<K extends BenchmarkDriverId> = {
   label: string;
+  providers: readonly string[];
+  /** Providers whose credentials do not supply a default database. */
+  databaseRequiredProviders?: readonly string[];
   createDraft: () => DriverDraft<K>;
   prepare: (draft: DriverDraft<K>) => DriverPreparation<K>;
   validateDatabase: (database: string) => string | undefined;
@@ -33,6 +41,7 @@ type DriverDefinition<K extends BenchmarkDriverId> = {
 export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> } = {
   pgbench: {
     label: 'pgbench',
+    providers: ['provider-cloudnative-pg', 'provider-percona-postgresql'],
     createDraft: () => ({ driver: 'pgbench', options: { ...initialPgbenchOptionsDraft } }),
     prepare: ({ options }) => {
       const prepared = preparePgbenchOptions(options);
@@ -42,10 +51,29 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
     validateDatabase: validatePgbenchDatabase,
     describeRunOptions: describePgbenchRunOptions,
   },
+  sysbench: {
+    label: 'Sysbench',
+    providers: ['percona-server-mysql', 'percona-xtradb-cluster'],
+    databaseRequiredProviders: ['percona-server-mysql', 'percona-xtradb-cluster'],
+    createDraft: () => ({ driver: 'sysbench', options: { ...initialSysbenchOptionsDraft } }),
+    prepare: ({ options }) => {
+      const prepared = prepareSysbenchOptions(options);
+      if (prepared.ok === false) return prepared;
+      return { ok: true, request: { driver: 'sysbench', options: prepared.options } };
+    },
+    validateDatabase: validateSysbenchDatabase,
+    describeRunOptions: describeSysbenchRunOptions,
+  },
 };
 
 export const benchmarkDriverIds = Object.keys(benchmarkDrivers) as BenchmarkDriverId[];
+export const benchmarkProviderNames = [...new Set(benchmarkDriverIds.flatMap(driver => benchmarkDrivers[driver].providers))];
 export const defaultBenchmarkDriver: BenchmarkDriverId = 'pgbench';
+
+export function getBenchmarkDriversForProvider(provider: string | undefined): BenchmarkDriverId[] {
+  if (!provider) return [];
+  return benchmarkDriverIds.filter(driver => benchmarkDrivers[driver].providers.includes(provider));
+}
 
 export function isBenchmarkDriverId(value: string): value is BenchmarkDriverId {
   return Object.prototype.hasOwnProperty.call(benchmarkDrivers, value);

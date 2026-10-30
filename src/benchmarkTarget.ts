@@ -17,6 +17,21 @@ function nonEmptyString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+export function providerFromClusterDetailProps(
+  props: Pick<ClusterDetailTabProps, 'cluster'>
+): string | undefined {
+  const instance = record(props.cluster);
+  const spec = record(instance?.spec);
+  const providerRef = record(spec?.providerRef);
+  return nonEmptyString(providerRef?.name);
+}
+
 export function targetFromClusterDetailProps(
   props: Pick<ClusterDetailTabProps, 'cluster' | 'namespace' | 'instanceName'>
 ): BenchmarkTarget {

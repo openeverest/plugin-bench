@@ -19,7 +19,7 @@ service:
 
 plugin:
   displayName: "Performance Benchmark"
-  description: "Run and inspect PostgreSQL benchmarks for OpenEverest database clusters."
+  description: "Run and inspect PostgreSQL and MySQL benchmarks for OpenEverest database clusters."
   vendor: "OpenEverest"
   enabled: true
   bundlePath: "/main.js"
@@ -37,6 +37,8 @@ plugin:
       providers:
         - provider-cloudnative-pg
         - provider-percona-postgresql
+        - percona-server-mysql
+        - percona-xtradb-cluster
 
 everestAPIURL: ""
 

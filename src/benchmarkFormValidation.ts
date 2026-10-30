@@ -3,7 +3,7 @@ import type { BenchmarkTarget } from './benchmarkTarget';
 import { createNodeAffinityDraft, prepareNodeAffinityDraft } from './benchmarkNodeAffinity.js';
 import type { NodeAffinityDraft } from './benchmarkNodeAffinity';
 import { benchmarkDrivers, createDriverDraft, defaultBenchmarkDriver, prepareDriver } from './drivers/index.js';
-import type { DriverDraft, DriverOptionsErrors } from './drivers';
+import type { BenchmarkDriverId, DriverDraft, DriverOptionsErrors } from './drivers';
 
 type SharedFormValues = {
   database: string;
@@ -16,9 +16,9 @@ type SharedFormValues = {
 
 export type BenchmarkFormValues = SharedFormValues & DriverDraft;
 
-export function createInitialBenchmarkFormValues(): BenchmarkFormValues {
+export function createInitialBenchmarkFormValues(driver: BenchmarkDriverId = defaultBenchmarkDriver): BenchmarkFormValues {
   return {
-    ...createDriverDraft(defaultBenchmarkDriver),
+    ...createDriverDraft(driver),
     database: '',
     cpuRequest: '',
     cpuLimit: '',
@@ -33,15 +33,22 @@ export const initialBenchmarkFormValues = createInitialBenchmarkFormValues();
 export type BenchmarkFormField = Exclude<keyof SharedFormValues, 'nodeAffinity'>;
 export type BenchmarkFormErrors = Partial<Record<BenchmarkFormField, string>> & { options?: DriverOptionsErrors };
 
-export function validateBenchmarkForm(values: BenchmarkFormValues): BenchmarkFormErrors {
-  const options = prepareDriver(values);
-  return { ...validateSharedFields(values), ...(options.ok === false ? { options: options.errors } : {}) };
+export function isBenchmarkDatabaseRequired(driver: BenchmarkDriverId, provider?: string): boolean {
+  return benchmarkDrivers[driver].databaseRequiredProviders?.includes(provider ?? '') ?? false;
 }
 
-function validateSharedFields(values: BenchmarkFormValues): BenchmarkFormErrors {
+export function validateBenchmarkForm(values: BenchmarkFormValues, provider?: string): BenchmarkFormErrors {
+  const options = prepareDriver(values);
+  return { ...validateSharedFields(values, provider), ...(options.ok === false ? { options: options.errors } : {}) };
+}
+
+function validateSharedFields(values: BenchmarkFormValues, provider?: string): BenchmarkFormErrors {
   const errors: BenchmarkFormErrors = {};
   const databaseError = benchmarkDrivers[values.driver].validateDatabase(values.database);
   if (databaseError) errors.database = databaseError;
+  if (isBenchmarkDatabaseRequired(values.driver, provider) && values.database.trim() === '') {
+    errors.database = 'Enter the name of an existing database.';
+  }
 
   for (const [field, label] of [
     ['cpuRequest', 'CPU request'],
@@ -70,10 +77,11 @@ function validateSharedFields(values: BenchmarkFormValues): BenchmarkFormErrors 
 
 export function toCreateBenchmarkRunRequest(
   values: BenchmarkFormValues,
-  target: BenchmarkTarget
+  target: BenchmarkTarget,
+  provider?: string,
 ): CreateBenchmarkRunRequest | undefined {
   const prepared = prepareDriver(values);
-  if (prepared.ok === false || Object.keys(validateSharedFields(values)).length > 0) {
+  if (prepared.ok === false || Object.keys(validateSharedFields(values, provider)).length > 0) {
     return undefined;
   }
   const affinity = prepareNodeAffinityDraft(values.nodeAffinity);

@@ -1,13 +1,11 @@
 # OpenEverest Plugin Bench
 
-OpenEverest Plugin Bench runs database benchmarks as temporary Kubernetes Jobs.
-The backend supports PostgreSQL through pgbench and MySQL through Sysbench.
-The OpenEverest database cluster tab currently exposes the pgbench workflow;
-Sysbench is available through the backend API when enabled in deployment settings.
+OpenEverest Plugin Bench runs PostgreSQL (pgbench) and MySQL (Sysbench)
+benchmarks as temporary Kubernetes Jobs from the database cluster tab or backend API.
+Both drivers are enabled by default in the Helm chart.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
-> launching, and inspecting benchmark runs. MySQL backend support is implemented;
-> its frontend integration is a separate follow-up.
+> launching, and inspecting benchmark runs.
 
 ## How it works
 
@@ -24,8 +22,8 @@ The plugin backend coordinates a benchmark run:
 5. Wait for the Job and collect the runner logs and optional structured metrics.
 6. Delete the Job and temporary Secret.
 
-The frontend is currently available as a PostgreSQL cluster detail tab. It is
-built with MUI and themed from the host through `@openeverest/plugin-theme`.
+The benchmark tab is built with MUI and themed from the host through
+`@openeverest/plugin-theme`.
 The backend uses a shared driver interface with pgbench and Sysbench implementations.
 Additional benchmark tools can supply their own option validation and workload
 preparation while sharing the Kubernetes execution lifecycle.
@@ -66,40 +64,42 @@ with the OpenEverest target and Sysbench options to `POST /api/runs`:
 }
 ```
 
-The target must be registered in OpenEverest with database type `mysql`
-(case-insensitive); the caller must have access to it. The database and account
-must already exist. Database selection uses the explicit name, then the upstream
-database field, then the path in a `mysql://` URI. If none supplies a name, the
-request is rejected. URI-only credentials are unsupported.
-
-Sysbench uses the bundled `oltp_read_write` workload. Omitted options default to
-60 seconds, one thread, one table, 10,000 rows per table, and initialization off.
-Use a fresh disposable database with `initialize: true` to prepare tables. Existing
-table names cause preparation to fail; the runner does not drop them. For reuse,
-set `initialize: false` and keep `tables` and `tableSize` consistent with the
-existing data. Jobs and Secrets are cleaned up after execution; benchmark tables
-remain in the database.
-
-Poll `GET /api/runs/{id}` with the accepted ID and caller authorization. Completed
-runs expose the effective options, configured image, logs, and optional `tps`
-(`tx/s`) and `latency_avg` (`ms`) metrics. See the
-[Sysbench runner README](runners/sysbench/README.md) for image build instructions,
-credential constraints, standalone examples, and manual table cleanup.
+The target must report database type `mysql`; its database and account must
+already exist. Poll `GET /api/runs/{id}` with the accepted ID and caller
+authorization. See the [request contract](docs/runner-result-contract.md#sysbench-mysql-requests)
+for defaults and connection rules, and the [runner README](runners/sysbench/README.md)
+for standalone usage and table cleanup.
 
 ### Using the benchmark tab
 
-Open a PostgreSQL instance's **Performance Benchmark** tab. Choose a benchmark
-driver and configure its options; pgbench is currently the only available driver.
-Database, **Job resources**, and **Job placement** are shared settings. Leaving
-the database empty uses the instance's default database.
+Open a supported instance's **Performance Benchmark** tab. Its provider determines
+which driver is offered:
 
-The pgbench form starts with 30 seconds, one client/thread, scale 1, and
-initialization enabled. These are explicit UI choices, distinct from the API's
-defaults for omitted options. Initialization drops and recreates pgbench tables,
-so use a disposable benchmark database. When reusing existing tables, scale is
-disabled and the frontend sends a valid fallback of 1; the run's effective
-options show scale as **From existing tables**, since pgbench uses the scale of
-the tables it finds.
+| Instance provider | Driver |
+| --- | --- |
+| `provider-cloudnative-pg`, `provider-percona-postgresql` | pgbench |
+| `percona-server-mysql`, `percona-xtradb-cluster` | Sysbench |
+
+The tab checks `/api/status` and only offers drivers enabled on the backend.
+If none are enabled for the provider, run lookup remains available.
+
+Database, **Job resources**, and **Job placement** are shared settings. A blank
+database uses the instance default when available; otherwise enter an existing
+database name. Use a disposable benchmark database.
+For both `percona-server-mysql` and PXC (`percona-xtradb-cluster`), a database name
+is required because neither provider supplies a default. Create the database
+before starting the benchmark; table preparation does not create it.
+
+**pgbench** starts with 30 seconds, one client/thread, scale 1, and initialization
+enabled. Initialization drops and recreates pgbench tables. When reusing tables,
+scale is disabled and displayed as **From existing tables** in the run result.
+
+**Sysbench** starts with 30 seconds, one thread, one table, 10,000 rows per table,
+and preparation on. It runs `oltp_read_write`. **Prepare Sysbench tables** creates
+a fresh dataset; existing table names cause preparation to fail. To reuse
+tables, turn preparation off and match **Tables** and **Rows per table** to the
+existing dataset. Tables remain after Job cleanup. Sysbench must be enabled with
+an accessible runner image; see [Driver configuration](#driver-configuration).
 
 Each accepted run has its own card and polls for status every two seconds until
 completion. Completed cards show the driver, configured runner image, effective
@@ -150,9 +150,9 @@ observations resets it. It does not limit benchmark runtime or image downloading
 Choose a period that allows enough time for autoscalers to provision nodes, or
 set `"0"` to disable early failure and skip the extra Pod lookup on each Job poll.
 
-The existing `BENCHMARK_EXECUTION_TIMEOUT` (default `5m`) still bounds the whole
-run, and time spent waiting to be scheduled counts against it. A run that waits
-long for a node therefore has less time left to benchmark.
+`BENCHMARK_EXECUTION_TIMEOUT` (default `5m`) bounds the whole run, including
+scheduling, image startup, connection setup, and table preparation. The duration
+option limits only the measured benchmark phase.
 
 ## Requirements
 
@@ -168,9 +168,10 @@ For local development, install:
 
 An OpenEverest installation and a provider for the selected database type are
 required when running the plugin in a cluster. Sysbench matches database type
-`mysql` rather than provider name. The API also accepts `provider-mariadb` and
-`percona-xtradb-cluster` targets reporting `mysql`, but MariaDB/PXC compatibility
-has not been verified. ARM64 runner verification is also pending.
+`mysql` rather than provider name. A live benchmark against a PXC
+(`percona-xtradb-cluster`) instance has been verified. The API also accepts
+`provider-mariadb` targets reporting `mysql`, but MariaDB compatibility has not
+been verified. The Sysbench runner has been verified against MySQL 8.4 on Linux/ARM64.
 
 ## Local development
 
@@ -187,11 +188,10 @@ tilt up -f dev/Tiltfile
 ```
 
 Tilt builds the frontend, backend image, and both pgbench and Sysbench runner
-images. It enables Sysbench locally and injects each runner's repository and tag
+images. It injects each runner's repository and tag
 through `drivers.<id>.image.repository` and `drivers.<id>.image.tag`. Runner images
 are used when the coordinator starts benchmark Jobs; no published runner image
-is needed for this flow. MySQL runs currently require API submission because
-the frontend still exposes only pgbench.
+is needed for this flow.
 
 ## Driver configuration
 
@@ -339,7 +339,8 @@ bundle. Component tests include the complete submission/polling/results and run
 lookup workflows with mocked API responses, including concurrent cards and
 cancellation on unmount or target changes.
 
-For a live check after starting Tilt, use a disposable PostgreSQL database:
+For a live check after starting Tilt, use a disposable PostgreSQL or supported
+MySQL database:
 
 1. Start a short run and confirm the POST contains `driver` and nested `options`.
 2. Confirm polling reaches a terminal status and stops. Check effective options,
@@ -347,6 +348,9 @@ For a live check after starting Tilt, use a disposable PostgreSQL database:
 3. Start two runs and confirm both cards retain their own status and results.
 4. Leave the tab during a run and confirm status requests stop. A missing run ID
    should pause status checks with a clear error rather than resubmit a benchmark.
+
+For Sysbench, prepare a small fresh dataset, then repeat with preparation off
+and matching table settings. Preparing the same tables again should fail clearly.
 
 ## Releasing
 
@@ -384,9 +388,8 @@ spec.md                      MVP requirements
 
 ## Current limitations
 
-The UI targets PostgreSQL instances managed by OpenEverest; MySQL Sysbench runs
-are available through the backend API with an explicitly enabled driver and a
-usable runner image. Additional workloads and MongoDB support remain future work.
+The UI supports the providers listed above; MySQL requires an enabled Sysbench
+driver and a usable image. Additional workloads and MongoDB remain future work.
 Run records, including output and metrics, are held in backend memory and are
 lost on restart.
 Completed records become unavailable one hour after completion; running records
