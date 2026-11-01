@@ -250,7 +250,7 @@ func TestInvalidDriverPreparationCannotAdmitRun(t *testing.T) {
 					called.Store(true)
 					return coordinator.Result{}, nil
 				}),
-				NewRunStore(), context.Background(), coordinator.Resources{}, registry)
+				NewRunStore(), context.Background(), coordinator.Resources{}, registry, nil)
 			w := submitRun(a, strings.Replace(modernRunBody, `"pgbench"`, `"fake-tool"`, 1))
 			if w.Code != http.StatusInternalServerError || called.Load() || len(a.store.runs) != 0 || len(a.runSlots) != 0 || strings.Contains(w.Body.String(), "credential-sentinel") {
 				t.Fatalf("invalid preparation caused admission or unsafe error: %d %s", w.Code, w.Body.String())
@@ -347,7 +347,7 @@ func testPreparedDriverExecution(t *testing.T, message string, wantMetrics []run
 			t.Error("metrics lookup did not authorize the stored target")
 		}
 		return nil
-	}, runner, NewRunStore(), context.Background(), defaults, registry)
+	}, runner, NewRunStore(), context.Background(), defaults, registry, nil)
 	body := strings.Replace(modernRunBody, `"pgbench"`, `"fake-tool"`, 1)
 	run := awaitAcceptedRun(t, a, submitRun(a, body))
 	if run.Status != RunStatusSucceeded || run.Snapshot.Driver != "fake-tool" || run.Snapshot.RunnerImage != image || image != "example.com/arbitrary-tool:v2" || run.Output != "fake logs" {

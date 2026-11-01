@@ -20,6 +20,8 @@ spec:
       {{- toYaml .Values.plugin.extensionPoints | nindent 6 }}
   permissions:
     - verb: read
+      resource: namespaces
+    - verb: read
       resource: database-clusters
     - verb: read
       resource: database-cluster-connection-details
