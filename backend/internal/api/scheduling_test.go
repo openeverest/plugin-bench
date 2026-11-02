@@ -27,7 +27,7 @@ func TestExecuteRunHidesSchedulingDiagnostics(t *testing.T) {
 	for _, scenario := range []string{"generic", "scheduling", "timeout with scheduling"} {
 		t.Run(scenario, func(t *testing.T) {
 			store := NewRunStore()
-			if _, err := store.Create("run", Target{Instance: "postgres"}, RunSnapshot{}, coordinator.Resources{}, nil); err != nil {
+			if _, err := store.Create(context.Background(), "run", Target{Instance: "postgres"}, RunSnapshot{}, coordinator.Resources{}, nil); err != nil {
 				t.Fatal(err)
 			}
 			var runErr error = errors.New("private backend failure: secret-password")
@@ -148,7 +148,7 @@ func TestUnschedulableRunsReleaseCapacity(t *testing.T) {
 		time.Sleep(time.Minute)
 		synctest.Wait()
 		for _, id := range ids {
-			run, err := store.Get(id)
+			run, err := store.Get(context.Background(), id)
 			if err != nil || run.Status != RunStatusFailed || run.Error != unschedulableRunMessage {
 				t.Fatalf("unexpected failed run: %+v, %v", run, err)
 			}

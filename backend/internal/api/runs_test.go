@@ -171,7 +171,7 @@ func TestCreateRunResourceOverridesAndStatusSnapshot(t *testing.T) {
 			}
 			deadline := time.Now().Add(time.Second)
 			for {
-				run, err := store.Get(accepted.ID)
+				run, err := store.Get(context.Background(), accepted.ID)
 				if err == nil && run.Status == wantStatus {
 					if run.Resources != test.resolved {
 						t.Fatalf("stored resources=%+v; want %+v", run.Resources, test.resolved)
@@ -296,14 +296,14 @@ func TestCreateRunStoresAndExecutesAsynchronously(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runner was not started")
 	}
-	run, err := store.Get(accepted.ID)
+	run, err := store.Get(context.Background(), accepted.ID)
 	if err != nil || run.Status != RunStatusRunning {
 		t.Fatalf("run should be retained as running while runner is blocked: run=%+v err=%v", run, err)
 	}
 	close(release)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		run, err = store.Get(accepted.ID)
+		run, err = store.Get(context.Background(), accepted.ID)
 		if err == nil && run.Status == RunStatusSucceeded {
 			break
 		}
@@ -348,7 +348,7 @@ func TestCreateRunDefaultsToInstanceDatabase(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &accepted); err != nil {
 		t.Fatal(err)
 	}
-	run, err := store.Get(accepted.ID)
+	run, err := store.Get(context.Background(), accepted.ID)
 	if err != nil || run.Snapshot.Database != "app" {
 		t.Fatalf("resolved database was not stored: run=%+v err=%v", run, err)
 	}
@@ -475,12 +475,12 @@ func TestGetRun(t *testing.T) {
 			snapshot := coordinator.Resources{CPURequest: "250m", CPULimit: "1", MemoryRequest: "128Mi", MemoryLimit: "512Mi"}
 			if test.exists {
 				affinity := testNodeAffinity()
-				run, err := store.Create("run-123", Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"}, RunSnapshot{Database: "app"}, snapshot, affinity)
+				run, err := store.Create(context.Background(), "run-123", Target{K8sCluster: "local", Namespace: "databases", Instance: "postgres-1"}, RunSnapshot{Database: "app"}, snapshot, affinity)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if test.status == RunStatusSucceeded || test.status == RunStatusFailed {
-					if err := store.Complete(run.ID, test.status, test.result, test.runErr); err != nil {
+					if err := store.Complete(context.Background(), run.ID, test.status, test.result, test.runErr); err != nil {
 						t.Fatal(err)
 					}
 				}

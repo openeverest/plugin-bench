@@ -95,7 +95,7 @@ func TestCreateRunPreparesNodeAffinityAndKeepsStoredSnapshot(t *testing.T) {
 				// A runner may mutate its own options. That must not alter history.
 				mutateTestNodeAffinity(options.NodeAffinity)
 			}
-			run, err := store.Get(accepted["id"])
+			run, err := store.Get(context.Background(), accepted["id"])
 			if err != nil || run.Status != RunStatusRunning || !reflect.DeepEqual(run.NodeAffinity, wantSnapshot) {
 				t.Fatalf("stored snapshots changed: run=%+v err=%v", run, err)
 			}
@@ -173,7 +173,7 @@ func TestGetRunReturnsStoredNodeAffinityForEveryStatus(t *testing.T) {
 					// affinity differs from it.
 					request.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 5
 				}
-				_, err := store.Create("run-1", request.Target, RunSnapshot{}, coordinator.Resources{}, input)
+				_, err := store.Create(context.Background(), "run-1", request.Target, RunSnapshot{}, coordinator.Resources{}, input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -182,7 +182,7 @@ func TestGetRunReturnsStoredNodeAffinityForEveryStatus(t *testing.T) {
 					if status == RunStatusFailed {
 						message = "benchmark failed"
 					}
-					if err := store.Complete("run-1", status, coordinator.Result{}, message); err != nil {
+					if err := store.Complete(context.Background(), "run-1", status, coordinator.Result{}, message); err != nil {
 						t.Fatal(err)
 					}
 				}

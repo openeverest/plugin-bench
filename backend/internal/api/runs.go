@@ -20,6 +20,12 @@ const maxCreateRunRequestBytes = 16 << 10
 const maxConcurrentRuns = 2
 
 const (
+	runStoreWriteTimeout    = 5 * time.Second
+	runCompletionAttempts   = 3
+	runCompletionRetryDelay = time.Second
+)
+
+const (
 	unschedulableRunMessage        = "benchmark runner could not be scheduled: no node satisfies the placement rules and resource requests"
 	unschedulableRunTimeoutMessage = "benchmark execution timed out before the runner could be scheduled: no node satisfies the placement rules and resource requests"
 )
@@ -175,10 +181,11 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
-	run, err := a.store.Create(runID, request.Target, prepared.Snapshot, resolvedResources, prepared.Input.NodeAffinity)
+	run, err := a.store.Create(r.Context(), runID, request.Target, prepared.Snapshot, resolvedResources, prepared.Input.NodeAffinity)
 	if err != nil {
 		<-a.runSlots
 		a.runs.Done()
+		log.Printf("benchmark run could not be stored: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
@@ -222,10 +229,29 @@ func (a *API) executeRun(ctx context.Context, cancel context.CancelFunc, id stri
 			id, sanitizeRunnerOutput(err.Error(), prepared.SensitiveValues...), result.JobName, len(result.Output), result.OutputTruncated,
 		)
 	}
-	if err := a.store.Complete(id, status, result, message); err != nil {
+	if err := a.completeRun(ctx, id, status, result, message); err != nil {
 		log.Printf("benchmark run %q result could not be stored: %v", id, err)
 		return
 	}
+}
+
+// completeRun records the result even after shutdown cancels the run, and
+// retries briefly so a transient storage outage does not strand the record.
+func (a *API) completeRun(ctx context.Context, id string, status RunStatus, result coordinator.Result, message string) error {
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	for attempt := range runCompletionAttempts {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * runCompletionRetryDelay)
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, runStoreWriteTimeout)
+		err = a.store.Complete(attemptCtx, id, status, result, message)
+		cancel()
+		if err == nil || errors.Is(err, ErrRunNotFound) || errors.Is(err, ErrRunAlreadyCompleted) {
+			return err
+		}
+	}
+	return err
 }
 
 func credentialLookupError(err error) (int, string) {
@@ -266,7 +292,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	run, err := a.store.Get(r.PathValue("id"))
+	run, err := a.store.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, ErrRunNotFound) {
 		writeError(w, http.StatusNotFound, "benchmark run not found")
 		return
