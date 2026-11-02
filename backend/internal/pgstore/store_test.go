@@ -14,6 +14,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/api"
 	"github.com/openeverest/plugin-bench/backend/internal/api/storetest"
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
+	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 )
 
 // Integration tests need a disposable PostgreSQL server; each test uses its
@@ -161,4 +162,31 @@ func TestDatabaseBelongsToOneInstallation(t *testing.T) {
 		t.Fatalf("second installation error = %v; want refusal naming the owner", err)
 	}
 	openStore(t, config)
+}
+
+// Metrics are rows rather than a JSON document so history can be compared
+// and charted with SQL across runs and engines.
+func TestMetricsAreQueryableRows(t *testing.T) {
+	store := openStore(t, isolatedConfig(t))
+	ctx := context.Background()
+	target := api.Target{K8sCluster: "main", Namespace: "db", Instance: "pg"}
+	for i, tps := range []float64{120, 150} {
+		id := []string{"first", "second"}[i]
+		if _, err := store.Create(ctx, id, target, api.RunSnapshot{DatabaseType: "postgresql", Driver: "pgbench"}, coordinator.Resources{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		metrics := []runnerresult.Metric{{Name: "tps", Unit: "tx/s", Value: tps}, {Name: "latency_avg", Unit: "ms", Value: 1}}
+		if err := store.Complete(ctx, id, api.RunStatusSucceeded, coordinator.Result{Metrics: metrics}, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var average float64
+	if err := store.pool.QueryRow(ctx, `
+		SELECT avg(m.value) FROM benchmark_run_metrics m JOIN benchmark_runs r ON r.id = m.run_id
+		WHERE r.database_type = 'postgresql' AND m.name = 'tps' AND m.unit = 'tx/s'`).Scan(&average); err != nil {
+		t.Fatal(err)
+	}
+	if average != 135 {
+		t.Fatalf("average tps = %v, want 135", average)
+	}
 }

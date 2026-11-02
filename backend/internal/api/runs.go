@@ -59,10 +59,13 @@ type RunStatus string
 
 // RunSnapshot records effective, safe configuration after driver preparation.
 type RunSnapshot struct {
-	Driver      string          `json:"driver"`
-	RunnerImage string          `json:"runnerImage"`
-	Database    string          `json:"database"`
-	Options     json.RawMessage `json:"options"`
+	// DatabaseType is the engine OpenEverest reported for the target, such as
+	// "postgresql" or "mysql". One driver can serve several engines.
+	DatabaseType string          `json:"databaseType"`
+	Driver       string          `json:"driver"`
+	RunnerImage  string          `json:"runnerImage"`
+	Database     string          `json:"database"`
+	Options      json.RawMessage `json:"options"`
 }
 
 // Run is the record retained for status and result retrieval.
@@ -83,6 +86,7 @@ type Run struct {
 }
 
 type RunStatusResponse struct {
+	DatabaseType    string                `json:"databaseType,omitempty"`
 	Driver          string                `json:"driver"`
 	RunnerImage     string                `json:"runnerImage"`
 	Options         json.RawMessage       `json:"options"`
@@ -332,6 +336,7 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := RunStatusResponse{
+		DatabaseType:    run.Snapshot.DatabaseType,
 		Driver:          run.Snapshot.Driver,
 		RunnerImage:     run.Snapshot.RunnerImage,
 		Options:         run.Snapshot.Options,

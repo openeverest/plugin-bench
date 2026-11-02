@@ -41,10 +41,11 @@ func target(instance string) api.Target {
 func snapshot() api.RunSnapshot {
 	// Key order and spacing differ from Go's encoding to catch normalization.
 	return api.RunSnapshot{
-		Driver:      "pgbench",
-		RunnerImage: "ghcr.io/openeverest/plugin-bench-pgbench:test",
-		Database:    "bench",
-		Options:     []byte(`{"durationSeconds":30, "clients":4,"threads":2,"scale":1,"initialize":true}`),
+		DatabaseType: "postgresql",
+		Driver:       "pgbench",
+		RunnerImage:  "ghcr.io/openeverest/plugin-bench-pgbench:test",
+		Database:     "bench",
+		Options:      []byte(`{"durationSeconds":30, "clients":4,"threads":2,"scale":1,"initialize":true}`),
 	}
 }
 
@@ -236,7 +237,12 @@ func testListByTarget(t *testing.T, store api.RunStore) {
 	}
 	mustCreate(t, store, "other-instance", target("other"))
 	mustCreate(t, store, "other-namespace", api.Target{K8sCluster: "main", Namespace: "elsewhere", Instance: "pg"})
-	if err := store.Complete(ctx, "pg-1", api.RunStatusSucceeded, coordinator.Result{Output: "large output"}, ""); err != nil {
+	pg1Metrics := []runnerresult.Metric{{Name: "tps", Unit: "tx/s", Value: 100}, {Name: "latency_avg", Unit: "ms", Value: 2.5}}
+	if err := store.Complete(ctx, "pg-1", api.RunStatusSucceeded, coordinator.Result{Output: "large output", Metrics: pg1Metrics}, ""); err != nil {
+		t.Fatal(err)
+	}
+	pg2Metrics := []runnerresult.Metric{{Name: "ops", Unit: "op/s", Value: 7}}
+	if err := store.Complete(ctx, "pg-2", api.RunStatusFailed, coordinator.Result{Metrics: pg2Metrics}, "failed"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -255,6 +261,9 @@ func testListByTarget(t *testing.T, store api.RunStore) {
 	if completed.Status != api.RunStatusSucceeded || completed.Output != "" || completed.CompletedAt == nil ||
 		!reflect.DeepEqual(completed.Snapshot, snapshot()) || completed.Resources != resources {
 		t.Fatalf("listed record = %+v; want metadata without output", completed)
+	}
+	if got[0].Metrics != nil || !reflect.DeepEqual(got[1].Metrics, pg2Metrics) || !reflect.DeepEqual(got[2].Metrics, pg1Metrics) {
+		t.Fatalf("listed metrics = %v, %v, %v; want each run's own metrics in reported order", got[0].Metrics, got[1].Metrics, got[2].Metrics)
 	}
 }
 

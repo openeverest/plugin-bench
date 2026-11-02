@@ -21,6 +21,7 @@ const defaultRunListLimit = 20
 type RunSummaryResponse struct {
 	ID              string                `json:"id"`
 	Status          RunStatus             `json:"status"`
+	DatabaseType    string                `json:"databaseType,omitempty"`
 	Driver          string                `json:"driver"`
 	RunnerImage     string                `json:"runnerImage"`
 	Database        string                `json:"database,omitempty"`
@@ -69,7 +70,7 @@ func (a *API) listRuns(w http.ResponseWriter, r *http.Request) {
 	summaries := make([]RunSummaryResponse, 0, len(runs))
 	for _, run := range runs {
 		summaries = append(summaries, RunSummaryResponse{
-			ID: run.ID, Status: run.Status, Driver: run.Snapshot.Driver, RunnerImage: run.Snapshot.RunnerImage,
+			ID: run.ID, Status: run.Status, DatabaseType: run.Snapshot.DatabaseType, Driver: run.Snapshot.Driver, RunnerImage: run.Snapshot.RunnerImage,
 			Database: run.Snapshot.Database, Options: run.Snapshot.Options, Resources: run.Resources,
 			CreatedAt: run.CreatedAt, CompletedAt: run.CompletedAt, OutputTruncated: run.OutputTruncated,
 			Metrics: run.Metrics, Error: run.Error,

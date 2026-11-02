@@ -166,3 +166,25 @@ func TestListRunsHidesStoreErrors(t *testing.T) {
 		t.Fatalf("GET = %d %s; want a generic 500", w.Code, w.Body.String())
 	}
 }
+
+func TestRunsRecordNormalizedDatabaseType(t *testing.T) {
+	store := NewRunStore()
+	credentials := testCredentials()
+	credentials.Type = " PostgreSQL "
+	a := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+		return credentials, nil
+	}, func(context.Context, string, string, string, string) error { return nil }, testRunner{}, store, context.Background(), coordinator.Resources{})
+	run := awaitAcceptedRun(t, a, submitRun(a, modernRunBody))
+	if run.Snapshot.DatabaseType != "postgresql" {
+		t.Fatalf("stored database type = %q, want normalized postgresql", run.Snapshot.DatabaseType)
+	}
+
+	mux := http.NewServeMux()
+	a.RegisterRoutes(mux)
+	for _, path := range []string{"/api/runs/" + run.ID, "/api/runs?k8sCluster=local&namespace=dbs&instance=postgres-1"} {
+		w := getHistory(mux, path)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"databaseType":"postgresql"`) {
+			t.Fatalf("GET %s = %d %s; want the database type", path, w.Code, w.Body.String())
+		}
+	}
+}

@@ -45,7 +45,8 @@ effective settings and metrics.
 newest first. `limit` is optional (default 20, maximum 100). The caller's access
 to the instance is verified through OpenEverest before history is read. Entries
 contain status, timestamps, effective settings, metrics, and errors but omit
-runner output; fetch a single run for its logs.
+runner output; fetch a single run for its logs. Both run responses include the
+target's `databaseType` as reported by OpenEverest.
 
 `GET /api/status` returns generic backend readiness with `status`, `runnerReady`,
 `storage` (`ephemeral` for in-memory history, `postgresql` when persistent),
@@ -238,15 +239,19 @@ PostgreSQL database, for example one provisioned with OpenEverest:
    ```
 
 On startup, the backend applies its own schema migrations (the
-`benchmark_runs`, `plugin_bench_installation`, and
+`benchmark_runs`, `benchmark_run_metrics`, `plugin_bench_installation`, and
 `plugin_bench_schema_migrations` tables) under an advisory lock and refuses to
 start against a schema created by a newer release. A database belongs to one
 plugin installation, identified by its Helm release name: a second installation
 pointed at the same database refuses to start, so give each installation its
 own database or schema (for example, with `search_path=<schema>` in the URI). An
 unreachable database or an invalid URI stops startup rather than falling back
-to memory. Records hold effective settings, results, and redacted logs; they
-never contain target database credentials. PostgreSQL history is kept until
+to memory. Each run records its target, database type (for example
+`postgresql` or `mysql`), driver, effective options, resources, status,
+timestamps, and redacted logs; it never contains target database credentials.
+Metrics are stored one row per name and unit in `benchmark_run_metrics`, so any
+benchmark tool can report its own metrics and results can be compared across
+runs with SQL. PostgreSQL history is kept until
 you delete it; there is no automatic retention yet.
 
 Avoid benchmarking the database that stores history: the benchmark load skews

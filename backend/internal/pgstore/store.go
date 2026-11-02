@@ -126,12 +126,12 @@ func (s *Store) Create(ctx context.Context, id string, target api.Target, snapsh
 	}
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO benchmark_runs (
-			id, k8s_cluster, namespace, instance, driver, runner_image, database_name,
+			id, k8s_cluster, namespace, instance, database_type, driver, runner_image, database_name,
 			options, resources, node_affinity, status, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO NOTHING`,
 		run.ID, target.K8sCluster, target.Namespace, target.Instance,
-		snapshot.Driver, snapshot.RunnerImage, snapshot.Database,
+		snapshot.DatabaseType, snapshot.Driver, snapshot.RunnerImage, snapshot.Database,
 		nullableJSON(run.Snapshot.Options), resourcesJSON, affinityJSON,
 		string(run.Status), run.CreatedAt,
 	)
@@ -144,17 +144,29 @@ func (s *Store) Create(ctx context.Context, id string, target api.Target, snapsh
 	return run, nil
 }
 
-const runColumns = `id, k8s_cluster, namespace, instance, driver, runner_image, database_name,
-	options, resources, node_affinity, status, created_at, completed_at,
-	job_name, output_truncated, metrics, error`
+const runColumns = `id, k8s_cluster, namespace, instance, database_type, driver, runner_image,
+	database_name, options, resources, node_affinity, status, created_at, completed_at,
+	job_name, output_truncated, error`
+
+// snapshotRead reads a run and its metrics from one consistent snapshot, so a
+// concurrent completion cannot pair a running record with final metrics.
+var snapshotRead = pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
 
 func (s *Store) Get(ctx context.Context, id string) (api.Run, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+runColumns+`, output FROM benchmark_runs WHERE id = $1`, id)
-	if err != nil {
-		return api.Run{}, fmt.Errorf("query run: %w", err)
-	}
-	run, err := pgx.CollectExactlyOneRow(rows, func(row pgx.CollectableRow) (api.Run, error) {
-		return scanRun(row, true)
+	var run api.Run
+	err := pgx.BeginTxFunc(ctx, s.pool, snapshotRead, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT `+runColumns+`, output FROM benchmark_runs WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+		if run, err = pgx.CollectExactlyOneRow(rows, func(row pgx.CollectableRow) (api.Run, error) {
+			return scanRun(row, true)
+		}); err != nil {
+			return err
+		}
+		metrics, err := loadMetrics(ctx, tx, []string{id})
+		run.Metrics = metrics[id]
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return api.Run{}, api.ErrRunNotFound
@@ -169,25 +181,26 @@ func (s *Store) Complete(ctx context.Context, id string, status api.RunStatus, r
 	if err := api.ValidateCompletion(status, message); err != nil {
 		return err
 	}
-	var metricsJSON []byte
-	if result.Metrics != nil {
-		var err error
-		if metricsJSON, err = json.Marshal(result.Metrics); err != nil {
-			return fmt.Errorf("encode metrics: %w", err)
+	completed := false
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE benchmark_runs
+			SET status = $2, completed_at = $3, job_name = $4, output = $5,
+				output_truncated = $6, error = $7
+			WHERE id = $1 AND status = 'running'`,
+			id, string(status), s.timestamp(), result.JobName, storableText(result.Output),
+			result.OutputTruncated, storableText(message),
+		)
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
 		}
-	}
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE benchmark_runs
-		SET status = $2, completed_at = $3, job_name = $4, output = $5,
-			output_truncated = $6, metrics = $7, error = $8
-		WHERE id = $1 AND status = 'running'`,
-		id, string(status), s.timestamp(), result.JobName, storableText(result.Output),
-		result.OutputTruncated, nullableJSON(metricsJSON), storableText(message),
-	)
+		completed = true
+		return insertMetrics(ctx, tx, id, result.Metrics)
+	})
 	if err != nil {
 		return fmt.Errorf("complete run: %w", err)
 	}
-	if tag.RowsAffected() == 1 {
+	if completed {
 		return nil
 	}
 	var exists bool
@@ -204,18 +217,32 @@ func (s *Store) ListByTarget(ctx context.Context, target api.Target, limit int) 
 	if err := api.ValidateListLimit(limit); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+runColumns+` FROM benchmark_runs
-		WHERE k8s_cluster = $1 AND namespace = $2 AND instance = $3
-		ORDER BY created_at DESC, id
-		LIMIT $4`,
-		target.K8sCluster, target.Namespace, target.Instance, limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query runs: %w", err)
-	}
-	runs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (api.Run, error) {
-		return scanRun(row, false)
+	var runs []api.Run
+	err := pgx.BeginTxFunc(ctx, s.pool, snapshotRead, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT `+runColumns+` FROM benchmark_runs
+			WHERE k8s_cluster = $1 AND namespace = $2 AND instance = $3
+			ORDER BY created_at DESC, id
+			LIMIT $4`,
+			target.K8sCluster, target.Namespace, target.Instance, limit,
+		)
+		if err != nil {
+			return err
+		}
+		if runs, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (api.Run, error) {
+			return scanRun(row, false)
+		}); err != nil {
+			return err
+		}
+		ids := make([]string, len(runs))
+		for i, run := range runs {
+			ids[i] = run.ID
+		}
+		metrics, err := loadMetrics(ctx, tx, ids)
+		for i := range runs {
+			runs[i].Metrics = metrics[runs[i].ID]
+		}
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read runs: %w", err)
@@ -224,6 +251,50 @@ func (s *Store) ListByTarget(ctx context.Context, target api.Target, limit int) 
 		runs = make([]api.Run, 0)
 	}
 	return runs, nil
+}
+
+func insertMetrics(ctx context.Context, tx pgx.Tx, runID string, metrics []runnerresult.Metric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	names := make([]string, len(metrics))
+	units := make([]string, len(metrics))
+	values := make([]float64, len(metrics))
+	for i, metric := range metrics {
+		names[i], units[i], values[i] = storableText(metric.Name), storableText(metric.Unit), metric.Value
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO benchmark_run_metrics (run_id, position, name, unit, value)
+		SELECT $1, m.position - 1, m.name, m.unit, m.value
+		FROM unnest($2::text[], $3::text[], $4::double precision[]) WITH ORDINALITY AS m(name, unit, value, position)`,
+		runID, names, units, values,
+	)
+	return err
+}
+
+// loadMetrics returns each run's metrics in the order the runner reported.
+// Runs without metrics are absent from the map.
+func loadMetrics(ctx context.Context, tx pgx.Tx, runIDs []string) (map[string][]runnerresult.Metric, error) {
+	metrics := make(map[string][]runnerresult.Metric)
+	if len(runIDs) == 0 {
+		return metrics, nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT run_id, name, unit, value FROM benchmark_run_metrics
+		WHERE run_id = ANY($1)
+		ORDER BY run_id, position`, runIDs)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		runID  string
+		metric runnerresult.Metric
+	)
+	_, err = pgx.ForEachRow(rows, []any{&runID, &metric.Name, &metric.Unit, &metric.Value}, func() error {
+		metrics[runID] = append(metrics[runID], metric)
+		return nil
+	})
+	return metrics, err
 }
 
 func (s *Store) FailRunning(ctx context.Context, message string) ([]string, error) {
@@ -252,15 +323,15 @@ func (s *Store) FailRunning(ctx context.Context, message string) ([]string, erro
 
 func scanRun(row pgx.CollectableRow, withOutput bool) (api.Run, error) {
 	var (
-		run                                       api.Run
-		status                                    string
-		options, resources, affinity, metricsJSON []byte
+		run                          api.Run
+		status                       string
+		options, resources, affinity []byte
 	)
 	destinations := []any{
 		&run.ID, &run.Target.K8sCluster, &run.Target.Namespace, &run.Target.Instance,
-		&run.Snapshot.Driver, &run.Snapshot.RunnerImage, &run.Snapshot.Database,
+		&run.Snapshot.DatabaseType, &run.Snapshot.Driver, &run.Snapshot.RunnerImage, &run.Snapshot.Database,
 		&options, &resources, &affinity, &status, &run.CreatedAt, &run.CompletedAt,
-		&run.JobName, &run.OutputTruncated, &metricsJSON, &run.Error,
+		&run.JobName, &run.OutputTruncated, &run.Error,
 	}
 	if withOutput {
 		destinations = append(destinations, &run.Output)
@@ -280,13 +351,6 @@ func scanRun(row pgx.CollectableRow, withOutput bool) (api.Run, error) {
 	}
 	if err := json.Unmarshal(affinity, &run.NodeAffinity); err != nil {
 		return api.Run{}, fmt.Errorf("decode node affinity for run %q: %w", run.ID, err)
-	}
-	if metricsJSON != nil {
-		var metrics []runnerresult.Metric
-		if err := json.Unmarshal(metricsJSON, &metrics); err != nil {
-			return api.Run{}, fmt.Errorf("decode metrics for run %q: %w", run.ID, err)
-		}
-		run.Metrics = metrics
 	}
 	return run, nil
 }
