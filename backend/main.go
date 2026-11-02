@@ -62,12 +62,12 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func handleStatus(registry *driver.Registry) http.HandlerFunc {
+func handleStatus(registry *driver.Registry, storage string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":      "ready",
 			"runnerReady": true,
-			"storage":     "ephemeral",
+			"storage":     storage,
 			"message":     "Benchmark runs execute as Kubernetes Jobs.",
 			"drivers":     registry.IDs(),
 		})
@@ -170,13 +170,21 @@ func run() error {
 
 	lifecycleCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, api.NewRunStore(), lifecycleCtx, config.Resources, registry, everest.ListInstances)
+	store, storage, closeStore, err := runStoreFromEnv(lifecycleCtx)
+	if err != nil {
+		return fmt.Errorf("initialize run storage: %w", err)
+	}
+	defer closeStore()
+	if err := recoverInterruptedRuns(lifecycleCtx, store, benchmarkCoordinator); err != nil {
+		return err
+	}
+	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, store, lifecycleCtx, config.Resources, registry, everest.ListInstances)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /main.js", handleBundle)
 	mux.HandleFunc("GET /icon.png", handleIcon)
 	mux.HandleFunc("GET /healthz", handleHealth)
-	mux.HandleFunc("GET /api/status", handleStatus(registry))
+	mux.HandleFunc("GET /api/status", handleStatus(registry, storage))
 	benchmarkAPI.RegisterRoutes(mux)
 
 	port := envOrDefault("PORT", "8080")

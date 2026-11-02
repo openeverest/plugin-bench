@@ -21,7 +21,7 @@ func TestHandleStatusReportsGenericReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	handleStatus(registry)(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	handleStatus(registry, statusStorageEphemeral)(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
 	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("unexpected status response: %d %s", w.Code, w.Header().Get("Content-Type"))
 	}
@@ -69,7 +69,7 @@ func TestHandleStatusReportsOnlyEnabledDrivers(t *testing.T) {
 				t.Fatal(err)
 			}
 			mux := http.NewServeMux()
-			mux.HandleFunc("GET /api/status", handleStatus(registry))
+			mux.HandleFunc("GET /api/status", handleStatus(registry, statusStorageEphemeral))
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/status", nil))
 			var response struct {

@@ -213,6 +213,80 @@ plugin_resource_deps = ['plugin-bench-frontend']
 if install_openeverest:
     plugin_resource_deps = plugin_resource_deps + ['openeverest']
 
+# ===========================
+# Plugin: run history storage
+# ===========================
+# BENCH_STORAGE=postgresql deploys a disposable PostgreSQL for run history so
+# persistence and restart recovery can be exercised locally. Its data is lost
+# when the Pod is replaced; production installs reference their own Secret.
+bench_storage = os.getenv('BENCH_STORAGE', 'memory')
+if bench_storage == 'postgresql':
+    history_db_manifest = '''
+apiVersion: v1
+kind: Secret
+metadata:
+  name: plugin-bench-history
+  namespace: {0}
+stringData:
+  uri: postgresql://bench:bench@plugin-bench-history-db.{0}.svc:5432/history?sslmode=disable
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plugin-bench-history-db
+  namespace: {0}
+spec:
+  selector:
+    app: plugin-bench-history-db
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plugin-bench-history-db
+  namespace: {0}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: plugin-bench-history-db
+  template:
+    metadata:
+      labels:
+        app: plugin-bench-history-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - name: POSTGRES_USER
+              value: bench
+            - name: POSTGRES_PASSWORD
+              value: bench
+            - name: POSTGRES_DB
+              value: history
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bench", "-d", "history"]
+            periodSeconds: 5
+'''.format(plugin_namespace)
+    k8s_yaml(blob(history_db_manifest))
+    k8s_resource(
+        'plugin-bench-history-db',
+        objects=['plugin-bench-history:secret'],
+        labels=['plugin-bench'],
+    )
+    plugin_flags = plugin_flags + [
+        '--set', 'storage.type=postgresql',
+        '--set', 'storage.postgresql.existingSecret=plugin-bench-history',
+    ]
+    plugin_resource_deps = plugin_resource_deps + ['plugin-bench-history-db']
+elif bench_storage != 'memory':
+    fail('BENCH_STORAGE must be memory or postgresql')
+
 helm_resource(
     'plugin-bench',
     chart_dir,
