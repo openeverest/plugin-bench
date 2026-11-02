@@ -18,6 +18,9 @@ const failureLogTimeout = 10 * time.Second
 // RunInput describes a prepared workload. It contains credentials and must not
 // be logged or persisted. Tool-specific preparation belongs to the caller.
 type RunInput struct {
+	// RunID labels the runner's Kubernetes resources so they can be traced
+	// back to the run record. It is not secret.
+	RunID        string
 	Runner       driver.RunnerConfig
 	Spec         driver.RunnerSpec
 	NodeAffinity *corev1.NodeAffinity
@@ -27,6 +30,9 @@ type RunInput struct {
 // Validate checks the generic execution contract. Resource inheritance and
 // affinity are checked before the first Kubernetes write.
 func (input RunInput) Validate() error {
+	if input.RunID != "" && len(validation.IsValidLabelValue(input.RunID)) != 0 {
+		return errors.New("run ID must be a valid Kubernetes label value")
+	}
 	if err := input.Runner.Validate(); err != nil {
 		return err
 	}
@@ -100,7 +106,7 @@ func (c *Coordinator) Run(ctx context.Context, input RunInput) (result Result, r
 	ctx, cancelExecution := context.WithTimeout(ctx, c.config.ExecutionTimeout)
 	defer cancelExecution()
 
-	resources, err := c.createBenchmarkResources(ctx, input, nil)
+	resources, err := c.createBenchmarkResources(ctx, input, runLabels(input.RunID))
 	if err != nil {
 		return result, err
 	}

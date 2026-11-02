@@ -565,3 +565,17 @@ func TestGetRun(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateRunPassesRunIDToCoordinator(t *testing.T) {
+	var received string
+	a := newTestAPI(func(context.Context, string, string, string, string) (*everest.Credentials, error) {
+		return testCredentials(), nil
+	}, nil, testRunnerFunc(func(_ context.Context, input coordinator.RunInput) (coordinator.Result, error) {
+		received = input.RunID
+		return coordinator.Result{}, nil
+	}), NewRunStore(), context.Background(), coordinator.Resources{})
+	run := awaitAcceptedRun(t, a, submitRun(a, modernRunBody))
+	if received == "" || received != run.ID {
+		t.Fatalf("coordinator received run ID %q, want stored ID %q", received, run.ID)
+	}
+}

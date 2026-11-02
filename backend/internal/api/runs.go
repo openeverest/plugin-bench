@@ -189,6 +189,7 @@ func (a *API) createRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create benchmark run")
 		return
 	}
+	prepared.Input.RunID = run.ID
 	runCtx, cancel := context.WithCancel(a.lifecycleCtx)
 	go a.executeRun(runCtx, cancel, run.ID, prepared)
 
