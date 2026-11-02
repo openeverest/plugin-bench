@@ -63,6 +63,7 @@ func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessC
 func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/instances", a.listInstances)
 	mux.HandleFunc("POST /api/runs", a.createRun)
+	mux.HandleFunc("GET /api/runs", a.listRuns)
 	mux.HandleFunc("GET /api/runs/{id}", a.getRun)
 }
 
