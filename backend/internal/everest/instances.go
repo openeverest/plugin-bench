@@ -9,10 +9,14 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
-const instanceDiscoveryTimeout = 20 * time.Second
+const (
+	instanceDiscoveryTimeout     = 20 * time.Second
+	instanceDiscoveryConcurrency = 4
+)
 
 // InstanceSummary is the metadata needed to navigate to an instance. It never
 // contains credentials or the full upstream Instance object.
@@ -56,32 +60,17 @@ func ListInstances(ctx context.Context, token, k8sCluster string) ([]InstanceSum
 		return nil, &InvalidResponseError{Err: errors.New("namespace list must be a JSON array")}
 	}
 
+	namespaces = uniqueNamespaces(namespaces)
+	listed, err := listNamespaceInstances(ctx, token, basePath, namespaces)
+	if err != nil {
+		return nil, err
+	}
+
 	instances := make([]InstanceSummary, 0)
-	seenNamespaces := make(map[string]struct{}, len(namespaces))
 	type targetKey struct{ cluster, namespace, name string }
 	seenTargets := make(map[targetKey]struct{})
-	for _, namespace := range namespaces {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(namespace) == "" {
-			continue
-		}
-		if _, seen := seenNamespaces[namespace]; seen {
-			continue
-		}
-		seenNamespaces[namespace] = struct{}{}
-		var listed struct {
-			Items *[]discoveryInstance `json:"items"`
-		}
-		path := basePath + "/" + url.PathEscape(namespace) + "/instances"
-		if err := getDiscoveryJSON(ctx, token, path, &listed); err != nil {
-			return nil, err
-		}
-		if listed.Items == nil {
-			return nil, &InvalidResponseError{Err: errors.New("instance list must contain an items array")}
-		}
-		for _, instance := range *listed.Items {
+	for i, namespace := range namespaces {
+		for _, instance := range listed[i] {
 			name, provider := instance.Metadata.Name, instance.Spec.ProviderRef.Name
 			if strings.TrimSpace(name) == "" || strings.TrimSpace(provider) == "" {
 				continue
@@ -109,6 +98,79 @@ func ListInstances(ctx context.Context, token, k8sCluster string) ([]InstanceSum
 		return strings.Compare(a.Name, b.Name)
 	})
 	return instances, nil
+}
+
+func uniqueNamespaces(namespaces []string) []string {
+	unique := make([]string, 0, len(namespaces))
+	seen := make(map[string]struct{}, len(namespaces))
+	for _, namespace := range namespaces {
+		if strings.TrimSpace(namespace) == "" {
+			continue
+		}
+		if _, exists := seen[namespace]; exists {
+			continue
+		}
+		seen[namespace] = struct{}{}
+		unique = append(unique, namespace)
+	}
+	return unique
+}
+
+// listNamespaceInstances fetches namespaces with bounded concurrency so large
+// clusters do not serialize discovery behind one shared deadline. The first
+// failure cancels outstanding requests and is the error reported.
+func listNamespaceInstances(ctx context.Context, token, basePath string, namespaces []string) ([][]discoveryInstance, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	results := make([][]discoveryInstance, len(namespaces))
+	slots := make(chan struct{}, instanceDiscoveryConcurrency)
+	var (
+		wg       sync.WaitGroup
+		failOnce sync.Once
+		firstErr error
+	)
+	for i, namespace := range namespaces {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		go func() {
+			defer func() {
+				<-slots
+				wg.Done()
+			}()
+			var listed struct {
+				Items *[]discoveryInstance `json:"items"`
+			}
+			path := basePath + "/" + url.PathEscape(namespace) + "/instances"
+			err := getDiscoveryJSON(ctx, token, path, &listed)
+			if err == nil && listed.Items == nil {
+				err = &InvalidResponseError{Err: errors.New("instance list must contain an items array")}
+			}
+			if err != nil {
+				// Cancel before releasing the slot so no queued namespace starts.
+				failOnce.Do(func() {
+					firstErr = err
+					cancel(err)
+				})
+				return
+			}
+			results[i] = *listed.Items
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func getDiscoveryJSON(ctx context.Context, token, path string, target any) error {

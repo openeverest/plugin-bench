@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/iotest"
 	"time"
@@ -239,6 +242,7 @@ func TestListInstancesStopsOnCancellationAndTimeout(t *testing.T) {
 			everestHTTPClient = &http.Client{Timeout: 2 * time.Second}
 			t.Cleanup(func() { everestHTTPClient = original })
 			want := error(context.DeadlineExceeded)
+			var requested atomic.Int32
 			if mode == "context timeout" {
 				var stop context.CancelFunc
 				ctx, stop = context.WithTimeout(ctx, 100*time.Millisecond)
@@ -250,11 +254,11 @@ func TestListInstancesStopsOnCancellationAndTimeout(t *testing.T) {
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/namespaces") {
-					io.WriteString(w, `["first","must-not-be-requested"]`)
+					json.NewEncoder(w).Encode(namespaceNames(2 * instanceDiscoveryConcurrency))
 					return
 				}
-				if strings.Contains(r.URL.Path, "must-not-be-requested") {
-					t.Error("continued discovery after cancellation")
+				if requested.Add(1) > instanceDiscoveryConcurrency {
+					t.Error("started another namespace after discovery was stopped")
 				}
 				if mode == "cancellation" {
 					cancel()
@@ -268,6 +272,64 @@ func TestListInstancesStopsOnCancellationAndTimeout(t *testing.T) {
 				t.Fatalf("instances = %#v, error = %v; want %v", got, err, want)
 			}
 		})
+	}
+}
+
+func namespaceNames(count int) []string {
+	names := make([]string, count)
+	for i := range names {
+		names[i] = fmt.Sprintf("ns-%02d", i)
+	}
+	return names
+}
+
+func TestListInstancesFetchesNamespacesConcurrently(t *testing.T) {
+	var inFlight, peak atomic.Int32
+	allStarted := make(chan struct{})
+	var startedOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/namespaces") {
+			json.NewEncoder(w).Encode(namespaceNames(3 * instanceDiscoveryConcurrency))
+			return
+		}
+		current := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			observed := peak.Load()
+			if current <= observed || peak.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		if current == instanceDiscoveryConcurrency {
+			startedOnce.Do(func() { close(allStarted) })
+		}
+		// Sequential discovery never fills every slot and fails here.
+		select {
+		case <-allStarted:
+		case <-time.After(2 * time.Second):
+			t.Error("namespaces were not fetched concurrently")
+		}
+		namespace := strings.Split(r.URL.Path, "/")[5]
+		fmt.Fprintf(w, `{"items":[{"metadata":{"name":"db"},"spec":{"providerRef":{"name":%q}}}]}`, namespace)
+	}))
+	defer server.Close()
+	t.Setenv("EVEREST_API_URL", server.URL)
+
+	got, err := ListInstances(context.Background(), "token", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peak.Load() != instanceDiscoveryConcurrency {
+		t.Fatalf("peak concurrent requests = %d, want %d", peak.Load(), instanceDiscoveryConcurrency)
+	}
+	names := namespaceNames(3 * instanceDiscoveryConcurrency)
+	if len(got) != len(names) {
+		t.Fatalf("got %d instances, want %d", len(got), len(names))
+	}
+	for i, instance := range got {
+		if instance.Namespace != names[i] || instance.Provider != names[i] {
+			t.Fatalf("instance %d = %+v; results must stay attached to their namespace", i, instance)
+		}
 	}
 }
 
