@@ -14,24 +14,14 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
-import type { BenchmarkRun, BenchmarkRunStatus } from './benchmarkApi';
+import type { BenchmarkRun } from './benchmarkApi';
 import type { PollingFeedback } from './benchmarkRunPolling';
 import { BenchmarkNodeAffinitySummary } from './BenchmarkNodeAffinitySummary.js';
 import { BenchmarkRunMetrics } from './BenchmarkRunMetrics.js';
 import { BenchmarkRunOptions } from './BenchmarkRunOptions.js';
+import { STATUS_COLORS, STATUS_LABELS } from './benchmarkRunStatus.js';
 import { describeRunOptions } from './drivers/index.js';
 
-const STATUS_LABELS: Record<BenchmarkRunStatus, string> = {
-  running: 'Running',
-  succeeded: 'Succeeded',
-  failed: 'Failed',
-};
-
-const STATUS_COLORS: Record<BenchmarkRunStatus, 'info' | 'success' | 'error'> = {
-  running: 'info',
-  succeeded: 'success',
-  failed: 'error',
-};
 
 interface BenchmarkRunResultProps {
   id: string;

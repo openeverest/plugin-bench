@@ -49,6 +49,8 @@ type BenchmarkRunCore = {
 };
 
 export type BenchmarkRun = BenchmarkRunCore & {
+  /** Engine reported by OpenEverest, e.g. "postgresql"; absent on older backends. */
+  databaseType?: string;
   /** Optional for runs created before driver snapshots were available. */
   driver?: string;
   runnerImage?: string;
@@ -108,12 +110,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isBenchmarkRunCore(value: unknown, id: string): value is BenchmarkRunCore & Record<string, unknown> {
+// Without an expected ID (history entries), any nonblank ID is accepted.
+function isBenchmarkRunCore(value: unknown, id?: string): value is BenchmarkRunCore & Record<string, unknown> {
   if (!isRecord(value)) return false;
   const run = value;
   const timestamp = (value: unknown) => typeof value === 'string' &&
     value.trim() !== '' && Number.isFinite(Date.parse(value));
-  return run.id === id &&
+  return (id === undefined ? typeof run.id === 'string' && run.id.trim() !== '' : run.id === id) &&
     (run.status === 'running' || run.status === 'succeeded' || run.status === 'failed') &&
     timestamp(run.createdAt) && typeof run.outputTruncated === 'boolean' &&
     (run.nodeAffinity === undefined || isNodeAffinity(run.nodeAffinity)) &&
@@ -124,7 +127,7 @@ function isBenchmarkRunCore(value: unknown, id: string): value is BenchmarkRunCo
     (run.status !== 'failed' || (typeof run.error === 'string' && run.error.trim() !== ''));
 }
 
-function parseBenchmarkRun(value: unknown, id: string): BenchmarkRun | undefined {
+export function parseBenchmarkRun(value: unknown, id?: string): BenchmarkRun | undefined {
   if (!isBenchmarkRunCore(value, id)) return undefined;
   // Construct the known fields explicitly: optional metadata must be checked
   // before reaching result components, even when the core run is valid.
@@ -139,7 +142,7 @@ function parseBenchmarkRun(value: unknown, id: string): BenchmarkRun | undefined
   }
   if (value.resources !== undefined) run.resources = value.resources;
   if (value.nodeAffinity !== undefined) run.nodeAffinity = value.nodeAffinity;
-  for (const key of ['driver', 'runnerImage'] as const) {
+  for (const key of ['databaseType', 'driver', 'runnerImage'] as const) {
     const field = value[key];
     if (typeof field === 'string' && field.trim() !== '') run[key] = field;
   }

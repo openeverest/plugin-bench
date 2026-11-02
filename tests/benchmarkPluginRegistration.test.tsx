@@ -28,6 +28,7 @@ function setup() {
     async fetch(path, init) {
       requests.push({ context: this, path, init });
       if (path.startsWith('/api/instances?')) return new Response(JSON.stringify({ instances: [] }));
+      if (path.startsWith('/api/runs?')) return new Response(JSON.stringify({ runs: [] }));
       if (path === '/api/status') {
         return new Response(JSON.stringify({ drivers: ['pgbench', 'sysbench'] }), { status: 200 });
       }
@@ -85,12 +86,14 @@ describe('benchmark plugin registration', () => {
     expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe('Sysbench');
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'sbtest' } });
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start benchmark' })); });
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(requests.every(request => request.context === api)).toBe(true);
-    expect(requests[0].path).toBe('/api/status');
-    expect(requests[1].path).toBe('/api/runs');
-    expect(requests[1].init?.method).toBe('POST');
-    expect(JSON.parse(String(requests[1].init?.body))).toMatchObject({
+    expect(requests.map(request => request.path).sort()).toEqual([
+      '/api/runs', '/api/runs?k8sCluster=secondary&namespace=dbs&instance=mysql-1&limit=20', '/api/status',
+    ]);
+    const submission = requests.find(request => request.path === '/api/runs');
+    expect(submission?.init?.method).toBe('POST');
+    expect(JSON.parse(String(submission?.init?.body))).toMatchObject({
       target: { k8sCluster: 'secondary', namespace: 'dbs', instance: 'mysql-1' },
       driver: 'sysbench', database: 'sbtest',
     });

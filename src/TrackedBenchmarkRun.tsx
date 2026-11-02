@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PluginApi } from '@openeverest/plugin-sdk';
 import { BenchmarkRunResult } from './BenchmarkRunResult';
 import type { BenchmarkRun } from './benchmarkApi';
@@ -9,9 +9,11 @@ interface TrackedBenchmarkRunProps {
   pluginFetch: PluginApi['fetch'];
   id: string;
   onDismiss: () => void;
+  /** Called once when the run is observed in a terminal status. */
+  onSettled?: () => void;
 }
 
-export function TrackedBenchmarkRun({ pluginFetch, id, onDismiss }: TrackedBenchmarkRunProps) {
+export function TrackedBenchmarkRun({ pluginFetch, id, onDismiss, onSettled }: TrackedBenchmarkRunProps) {
   const [run, setRun] = useState<BenchmarkRun | null>(null);
   const [feedback, setFeedback] = useState<PollingFeedback | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -24,6 +26,13 @@ export function TrackedBenchmarkRun({ pluginFetch, id, onDismiss }: TrackedBench
     });
     // Snapshots update this card without restarting its polling session.
   }, [pluginFetch, id, attempt]);
+
+  const settled = run !== null && run.status !== 'running';
+  const onSettledRef = useRef(onSettled);
+  onSettledRef.current = onSettled;
+  useEffect(() => {
+    if (settled) onSettledRef.current?.();
+  }, [settled]);
 
   return (
     <BenchmarkRunResult

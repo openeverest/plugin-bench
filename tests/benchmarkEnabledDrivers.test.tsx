@@ -6,9 +6,12 @@ import { getEnabledBenchmarkDrivers } from '../src/benchmarkDriversApi';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+// History requests are answered here so these tests observe only status calls.
+const withEmptyHistory = (fetch: PluginApi['fetch']): PluginApi['fetch'] => (path, init) =>
+  path.startsWith('/api/runs?') ? Promise.resolve(response({ runs: [] })) : fetch(path, init);
 const tab = (fetch: PluginApi['fetch'], provider = 'percona-server-mysql') => (
   <BenchmarkTab cluster={{ clusterName: 'main', spec: { providerRef: { name: provider } } }}
-    namespace="default" instanceName="instance-1" pluginFetch={fetch} />
+    namespace="default" instanceName="instance-1" pluginFetch={withEmptyHistory(fetch)} />
 );
 
 describe('backend-enabled benchmark drivers', () => {
