@@ -37,6 +37,17 @@ describe('benchmark sidebar page', () => {
     expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/instances?k8sCluster=main', '/api/status']);
   });
 
+  it('shows each row with its provider and enabled benchmark tool', async () => {
+    render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql])} basePath={basePath} />);
+    const table = await screen.findByRole('table');
+    const cells = (name: string) => within(screen.getByRole('link', { name }).closest('tr')!)
+      .getAllByRole('cell').map(cell => cell.textContent);
+    expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent))
+      .toEqual(['Name', 'Namespace', 'Provider', 'Benchmark tool', 'Action']);
+    expect(cells('postgres')).toEqual(['default', 'provider-percona-postgresql', 'pgbench', 'Benchmark']);
+    expect(cells('mysql')).toEqual(['default', 'percona-server-mysql', 'Sysbench', 'Benchmark']);
+  });
+
   it('hides instances whose driver is disabled', async () => {
     render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql], ['pgbench'])} basePath={basePath} />);
     await screen.findByRole('table');

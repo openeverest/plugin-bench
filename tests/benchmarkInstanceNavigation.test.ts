@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { benchmarkClusterFromBasePath, benchmarkInstanceHref, benchmarkInstanceKey, filterBenchmarkInstances } from '../src/benchmarkInstanceNavigation';
+import { benchmarkClusterFromBasePath, benchmarkInstanceHref, benchmarkInstanceKey, enabledDriversForInstance, filterBenchmarkInstances } from '../src/benchmarkInstanceNavigation';
 
 const pg = { k8sCluster: 'main', namespace: 'default', name: 'db', provider: 'provider-percona-postgresql' };
 const mysql = { ...pg, name: 'mysql', provider: 'percona-server-mysql' };
@@ -12,6 +12,12 @@ describe('instance filtering and identity', () => {
     expect(filterBenchmarkInstances(instances, ['sysbench'])).toEqual([mysql, pxc]);
     expect(filterBenchmarkInstances(instances, [])).toEqual([]);
     expect(filterBenchmarkInstances(instances, ['unknown'])).toEqual([]);
+  });
+
+  it('reports only the enabled drivers that support an instance provider', () => {
+    expect(enabledDriversForInstance(pg, ['pgbench', 'sysbench'])).toEqual(['pgbench']);
+    expect(enabledDriversForInstance(pxc, ['pgbench', 'sysbench'])).toEqual(['sysbench']);
+    expect(enabledDriversForInstance(pxc, ['pgbench'])).toEqual([]);
   });
 
   it('deduplicates full targets while preserving namespace and cluster distinctions', () => {

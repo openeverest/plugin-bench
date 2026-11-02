@@ -1,17 +1,23 @@
 import type { BenchmarkInstance } from './benchmarkInstancesApi';
 import { getBenchmarkDriversForProvider } from './drivers';
+import type { BenchmarkDriverId } from './drivers';
 
 export function benchmarkInstanceKey(instance: BenchmarkInstance): string {
   return JSON.stringify([instance.k8sCluster, instance.namespace, instance.name]);
 }
 
+export function enabledDriversForInstance(
+  instance: BenchmarkInstance, enabledDrivers: readonly string[],
+): BenchmarkDriverId[] {
+  return getBenchmarkDriversForProvider(instance.provider).filter(driver => enabledDrivers.includes(driver));
+}
+
 export function filterBenchmarkInstances(
   instances: readonly BenchmarkInstance[], enabledDrivers: readonly string[],
 ): BenchmarkInstance[] {
-  const enabled = new Set(enabledDrivers);
   const seen = new Set<string>();
   return instances.filter(instance => {
-    if (!getBenchmarkDriversForProvider(instance.provider).some(driver => enabled.has(driver))) return false;
+    if (enabledDriversForInstance(instance, enabledDrivers).length === 0) return false;
     const key = benchmarkInstanceKey(instance);
     if (seen.has(key)) return false;
     seen.add(key);

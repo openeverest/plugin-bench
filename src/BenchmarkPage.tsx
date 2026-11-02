@@ -10,7 +10,7 @@ import { benchmarkClusterFromBasePath, filterBenchmarkInstances } from './benchm
 
 type DiscoveryState =
   | { status: 'loading' }
-  | { status: 'ready'; instances: BenchmarkInstance[] }
+  | { status: 'ready'; instances: BenchmarkInstance[]; drivers: string[] }
   | { status: 'failed'; message: string };
 
 export function BenchmarkPage({ pluginFetch, basePath }: {
@@ -45,7 +45,7 @@ function InstanceDiscovery({ pluginFetch, cluster }: { pluginFetch: PluginApi['f
       getEnabledBenchmarkDrivers(pluginFetch, { signal: controller.signal }),
     ]).then(([instances, drivers]) => {
       if (!controller.signal.aborted) {
-        setState({ status: 'ready', instances: filterBenchmarkInstances(instances, drivers) });
+        setState({ status: 'ready', instances: filterBenchmarkInstances(instances, drivers), drivers });
       }
     }).catch(error => {
       if (controller.signal.aborted) return;
@@ -69,5 +69,5 @@ function InstanceDiscovery({ pluginFetch, cluster }: { pluginFetch: PluginApi['f
   if (state.instances.length === 0) {
     return <Alert severity="info">No accessible database instances are supported by the enabled benchmark drivers in this cluster.</Alert>;
   }
-  return <BenchmarkInstancesTable instances={state.instances} currentCluster={cluster} />;
+  return <BenchmarkInstancesTable instances={state.instances} enabledDrivers={state.drivers} currentCluster={cluster} />;
 }
