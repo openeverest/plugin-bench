@@ -82,20 +82,24 @@ func TestChartInstanceDiscoveryPermissions(t *testing.T) {
 	if err := json.Unmarshal(data, &plugin); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{
-		"namespaces":                          false,
-		"database-clusters":                   false,
-		"database-cluster-connection-details": false,
+	// Names must match OpenEverest RBAC: connection details are the
+	// read-connection action on instances, not a separate resource.
+	type permissionKey struct{ verb, resource string }
+	want := map[permissionKey]bool{
+		{"read", "namespaces"}:           false,
+		{"read", "instances"}:            false,
+		{"read-connection", "instances"}: false,
 	}
 	if plugin.Kind != "Plugin" || len(plugin.Spec.Permissions) != len(want) {
 		t.Fatalf("unexpected Plugin permission shape: %s", output)
 	}
 	for _, permission := range plugin.Spec.Permissions {
-		seen, exists := want[permission.Resource]
-		if !exists || seen || permission.Verb != "read" {
+		key := permissionKey{permission.Verb, permission.Resource}
+		seen, exists := want[key]
+		if !exists || seen {
 			t.Fatalf("unexpected or duplicate permission: %+v", permission)
 		}
-		want[permission.Resource] = true
+		want[key] = true
 	}
 }
 
