@@ -213,10 +213,13 @@ contain those values are dropped rather than renamed; accepted numeric values
 are preserved. If none remain, `metrics` is omitted. Raw termination messages are
 not logged or returned.
 
-History remains in backend memory. Restarts lose records, completed runs become
+With the default in-memory storage, restarts lose records, completed runs become
 unavailable after one hour, and running records do not expire. Expired completed
-records are removed from memory on subsequent creation. Durable storage,
-comparison charts, and a metric taxonomy are separate follow-up work.
+records are removed from memory on subsequent creation. With PostgreSQL storage,
+records persist until deleted; see the README's run history storage section.
+Either way, runs in progress when the backend restarts are marked failed on
+startup. `GET /api/runs` lists one target's history without runner output.
+Comparison charts and a metric taxonomy are separate follow-up work.
 
 ## Frontend display and compatibility
 
