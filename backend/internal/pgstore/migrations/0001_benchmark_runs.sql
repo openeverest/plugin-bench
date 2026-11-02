@@ -27,3 +27,11 @@ CREATE INDEX benchmark_runs_target_created_idx
 
 CREATE INDEX benchmark_runs_running_idx
     ON benchmark_runs (id) WHERE status = 'running';
+
+-- One plugin installation owns a database (or schema). Startup interrupts every
+-- running record and history is keyed by target names that can repeat across
+-- installations, so sharing would fail live runs and mix histories.
+CREATE TABLE plugin_bench_installation (
+    singleton       boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    installation_id text    NOT NULL
+);

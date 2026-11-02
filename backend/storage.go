@@ -27,7 +27,7 @@ const (
 
 // runStoreFromEnv selects storage explicitly, so a missing connection string
 // fails startup instead of silently falling back to memory.
-func runStoreFromEnv(ctx context.Context) (store api.RunStore, statusStorage string, closeStore func(), err error) {
+func runStoreFromEnv(ctx context.Context, installationID string) (store api.RunStore, statusStorage string, closeStore func(), err error) {
 	switch kind := envOrDefault("BENCHMARK_STORAGE", storageMemory); kind {
 	case storageMemory:
 		return api.NewRunStore(), statusStorageEphemeral, func() {}, nil
@@ -36,7 +36,7 @@ func runStoreFromEnv(ctx context.Context) (store api.RunStore, statusStorage str
 		if uri == "" {
 			return nil, "", nil, fmt.Errorf("BENCHMARK_STORAGE_POSTGRES_URI is required when BENCHMARK_STORAGE is %s", storagePostgreSQL)
 		}
-		pg, err := pgstore.Open(ctx, uri)
+		pg, err := pgstore.Open(ctx, uri, installationID)
 		if err != nil {
 			return nil, "", nil, err
 		}

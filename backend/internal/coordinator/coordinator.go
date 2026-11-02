@@ -7,6 +7,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -15,6 +16,10 @@ var ErrKubernetesClientRequired = errors.New("kubernetes client is required")
 
 // Config contains deployment-level settings shared by benchmark runs.
 type Config struct {
+	// InstallationID identifies this plugin installation (the Helm release).
+	// It scopes runner resource labels so restart cleanup never touches
+	// another installation's Jobs or Secrets in a shared namespace.
+	InstallationID       string
 	WorkloadNamespace    string
 	RunnerServiceAccount string
 	Resources            Resources
@@ -28,6 +33,9 @@ type Config struct {
 }
 
 func (c Config) Validate() error {
+	if c.InstallationID == "" || len(validation.IsValidLabelValue(c.InstallationID)) != 0 {
+		return errors.New("installation ID must be a nonempty Kubernetes label value")
+	}
 	if strings.TrimSpace(c.WorkloadNamespace) == "" {
 		return errors.New("workload namespace is required")
 	}

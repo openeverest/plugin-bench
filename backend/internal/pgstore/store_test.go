@@ -20,6 +20,8 @@ import (
 // own schema so tests stay isolated and leave nothing behind.
 const testURIVariable = "PLUGIN_BENCH_TEST_POSTGRES_URI"
 
+const testInstallation = "plugin-bench"
+
 func isolatedConfig(t *testing.T) *pgxpool.Config {
 	t.Helper()
 	uri := os.Getenv(testURIVariable)
@@ -60,7 +62,7 @@ func isolatedConfig(t *testing.T) *pgxpool.Config {
 
 func openStore(t *testing.T, config *pgxpool.Config) *Store {
 	t.Helper()
-	store, err := open(context.Background(), config.Copy())
+	store, err := open(context.Background(), config.Copy(), testInstallation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +101,7 @@ func TestMigrationsAreSerializedAndIdempotent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			store, err := open(context.Background(), config.Copy())
+			store, err := open(context.Background(), config.Copy(), testInstallation)
 			if err == nil {
 				store.Close()
 			}
@@ -134,7 +136,7 @@ func TestRefusesNewerSchema(t *testing.T) {
 	if _, err := store.pool.Exec(context.Background(), "INSERT INTO plugin_bench_schema_migrations (version) VALUES (9999)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := open(context.Background(), config.Copy()); err == nil || !strings.Contains(err.Error(), "newer than this release") {
+	if _, err := open(context.Background(), config.Copy(), testInstallation); err == nil || !strings.Contains(err.Error(), "newer than this release") {
 		t.Fatalf("open error = %v; want a newer-schema refusal", err)
 	}
 }
@@ -144,9 +146,19 @@ func TestOpenErrorsDoNotExposePassword(t *testing.T) {
 		"postgres://bench:password-sentinel@127.0.0.1:1/bench?connect_timeout=1",
 		"postgres://bench:password-sentinel@127.0.0.1:1/bench?sslmode=not-a-mode",
 	} {
-		_, err := Open(context.Background(), uri)
+		_, err := Open(context.Background(), uri, testInstallation)
 		if err == nil || strings.Contains(err.Error(), "password-sentinel") {
 			t.Fatalf("Open error = %v; want a failure without the password", err)
 		}
 	}
+}
+
+func TestDatabaseBelongsToOneInstallation(t *testing.T) {
+	config := isolatedConfig(t)
+	openStore(t, config).Close()
+	if _, err := open(context.Background(), config.Copy(), "plugin-bench-staging"); err == nil ||
+		!strings.Contains(err.Error(), `installation "plugin-bench"`) {
+		t.Fatalf("second installation error = %v; want refusal naming the owner", err)
+	}
+	openStore(t, config)
 }

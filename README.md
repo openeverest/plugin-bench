@@ -238,8 +238,12 @@ PostgreSQL database, for example one provisioned with OpenEverest:
    ```
 
 On startup, the backend applies its own schema migrations (the
-`benchmark_runs` and `plugin_bench_schema_migrations` tables) under an advisory
-lock and refuses to start against a schema created by a newer release. An
+`benchmark_runs`, `plugin_bench_installation`, and
+`plugin_bench_schema_migrations` tables) under an advisory lock and refuses to
+start against a schema created by a newer release. A database belongs to one
+plugin installation, identified by its Helm release name: a second installation
+pointed at the same database refuses to start, so give each installation its
+own database or schema (for example, with `search_path=<schema>` in the URI). An
 unreachable database or an invalid URI stops startup rather than falling back
 to memory. Records hold effective settings, results, and redacted logs; they
 never contain target database credentials. PostgreSQL history is kept until
@@ -254,11 +258,13 @@ A run cannot be resumed after the backend restarts, because redacting its logs
 requires target credentials that only existed in the previous process. Before
 accepting requests, the backend therefore marks runs left `running` as `failed`
 ("interrupted because the benchmark service restarted") and deletes the runner
-Jobs and credential Secrets labeled `app.kubernetes.io/managed-by=plugin-bench`
-in the workload namespace. In memory mode, the records are already gone, but
-leftover resources are still removed.
+Jobs and credential Secrets in the workload namespace labeled
+`app.kubernetes.io/managed-by=plugin-bench` and
+`app.kubernetes.io/instance=<release name>`. Other installations' resources are
+untouched. In memory mode, the records are already gone, but leftover resources
+are still removed.
 
-This cleanup assumes one backend owns the workload namespace. The chart uses the
+This cleanup assumes one backend per installation. The chart uses the
 `Recreate` Deployment strategy, so the old backend stops before the new one
 starts, and rejects `replicaCount` values other than 1.
 

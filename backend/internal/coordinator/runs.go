@@ -106,7 +106,7 @@ func (c *Coordinator) Run(ctx context.Context, input RunInput) (result Result, r
 	ctx, cancelExecution := context.WithTimeout(ctx, c.config.ExecutionTimeout)
 	defer cancelExecution()
 
-	resources, err := c.createBenchmarkResources(ctx, input, runLabels(input.RunID))
+	resources, err := c.createBenchmarkResources(ctx, input, c.runLabels(input.RunID))
 	if err != nil {
 		return result, err
 	}

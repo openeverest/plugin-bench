@@ -38,6 +38,10 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.service.port | quote }}
+            # The cluster-scoped Plugin CR is named after the release, so the
+            # release name uniquely identifies this installation.
+            - name: BENCHMARK_INSTALLATION_ID
+              value: {{ .Release.Name | quote }}
             - name: WORKLOAD_NAMESPACE
               value: {{ include "plugin-bench.workloadNamespace" . | quote }}
             - name: RUNNER_SERVICE_ACCOUNT_NAME

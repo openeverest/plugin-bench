@@ -107,7 +107,7 @@ func TestUnschedulableRunsReleaseCapacity(t *testing.T) {
 					Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, Message: "no nodes match required affinity"}}},
 			}}}, nil
 		})
-		runner, err := coordinator.New(coordinator.Config{WorkloadNamespace: "workloads",
+		runner, err := coordinator.New(coordinator.Config{InstallationID: "plugin-bench", WorkloadNamespace: "workloads",
 			RunnerServiceAccount: "runner", ExecutionTimeout: 5 * time.Minute,
 			SchedulingGracePeriod: time.Minute}, client)
 		if err != nil {

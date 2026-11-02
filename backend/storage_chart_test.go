@@ -31,6 +31,19 @@ func TestChartStorageDefaultsToMemoryWithRecreateStrategy(t *testing.T) {
 	}
 }
 
+func TestChartIdentifiesInstallationByReleaseName(t *testing.T) {
+	deployment := renderDriverDeployment(t, filepath.Join("..", "charts", "plugin-bench"))
+	for _, variable := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if variable.Name == "BENCHMARK_INSTALLATION_ID" {
+			if variable.Value != "driver-config-test" {
+				t.Fatalf("installation ID = %q, want the release name", variable.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("BENCHMARK_INSTALLATION_ID is not set")
+}
+
 func TestChartStorageReadsPostgreSQLURIFromSecret(t *testing.T) {
 	deployment := renderDriverDeployment(t, filepath.Join("..", "charts", "plugin-bench"),
 		"--set", "storage.type=postgresql", "--set", "storage.postgresql.existingSecret=bench-history",

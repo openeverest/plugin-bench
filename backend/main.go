@@ -98,6 +98,7 @@ func coordinatorConfigFromEnv() (coordinator.Config, error) {
 		return coordinator.Config{}, err
 	}
 	return coordinator.Config{
+		InstallationID:        os.Getenv("BENCHMARK_INSTALLATION_ID"),
 		WorkloadNamespace:     os.Getenv("WORKLOAD_NAMESPACE"),
 		RunnerServiceAccount:  os.Getenv("RUNNER_SERVICE_ACCOUNT_NAME"),
 		ExecutionTimeout:      executionTimeout,
@@ -170,7 +171,7 @@ func run() error {
 
 	lifecycleCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	store, storage, closeStore, err := runStoreFromEnv(lifecycleCtx)
+	store, storage, closeStore, err := runStoreFromEnv(lifecycleCtx, config.InstallationID)
 	if err != nil {
 		return fmt.Errorf("initialize run storage: %w", err)
 	}

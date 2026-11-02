@@ -41,7 +41,7 @@ func TestRunLabelsRunnerResourcesWithRunID(t *testing.T) {
 	if _, err := c.Run(context.Background(), input); !errors.Is(err, creationFailure) {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := map[string]string{managedByLabel: managedByValue, RunIDLabel: "0123456789abcdef"}
+	want := map[string]string{managedByLabel: managedByValue, instanceLabel: "plugin-bench", RunIDLabel: "0123456789abcdef"}
 	for name, got := range map[string]map[string]string{"Secret": secretLabels, "Job": jobLabels, "Pod template": podLabels} {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s labels = %v, want %v", name, got, want)
@@ -69,15 +69,22 @@ func managedObjectMeta(namespace, name string, labels map[string]string) metav1.
 	return metav1.ObjectMeta{Namespace: namespace, Name: name, UID: types.UID("uid-" + name), Labels: labels}
 }
 
-func TestCleanupOrphanedResourcesRemovesOnlyManagedWorkloadResources(t *testing.T) {
+func installationRunLabels(installation, runID string) map[string]string {
+	return map[string]string{managedByLabel: managedByValue, instanceLabel: installation, RunIDLabel: runID}
+}
+
+func TestCleanupOrphanedResourcesRemovesOnlyThisInstallationsResources(t *testing.T) {
 	namespace := validConfig().WorkloadNamespace
-	managed := runLabels("old-run")
+	managed := installationRunLabels(validConfig().InstallationID, "old-run")
+	otherInstallation := installationRunLabels("plugin-bench-staging", "active-run")
 	client := fake.NewSimpleClientset(
 		&batchv1.Job{ObjectMeta: managedObjectMeta(namespace, "orphan-job", managed)},
 		&batchv1.Job{ObjectMeta: managedObjectMeta(namespace, "unrelated-job", map[string]string{"app": "other"})},
+		&batchv1.Job{ObjectMeta: managedObjectMeta(namespace, "other-installation-job", otherInstallation)},
 		&batchv1.Job{ObjectMeta: managedObjectMeta("elsewhere", "other-namespace-job", managed)},
 		&corev1.Secret{ObjectMeta: managedObjectMeta(namespace, "orphan-secret", managed)},
 		&corev1.Secret{ObjectMeta: managedObjectMeta(namespace, "legacy-unlabeled-secret", nil)},
+		&corev1.Secret{ObjectMeta: managedObjectMeta(namespace, "other-installation-secret", otherInstallation)},
 		&corev1.Secret{ObjectMeta: managedObjectMeta("elsewhere", "other-namespace-secret", managed)},
 	)
 	c, err := New(validConfig(), client)
@@ -90,8 +97,8 @@ func TestCleanupOrphanedResourcesRemovesOnlyManagedWorkloadResources(t *testing.
 	}
 	remainingJobs := names(t, client, "jobs")
 	remainingSecrets := names(t, client, "secrets")
-	if !reflect.DeepEqual(remainingJobs, []string{"other-namespace-job", "unrelated-job"}) ||
-		!reflect.DeepEqual(remainingSecrets, []string{"legacy-unlabeled-secret", "other-namespace-secret"}) {
+	if !reflect.DeepEqual(remainingJobs, []string{"other-installation-job", "other-namespace-job", "unrelated-job"}) ||
+		!reflect.DeepEqual(remainingSecrets, []string{"legacy-unlabeled-secret", "other-installation-secret", "other-namespace-secret"}) {
 		t.Fatalf("remaining Jobs = %v, Secrets = %v", remainingJobs, remainingSecrets)
 	}
 	for _, action := range client.Actions() {
@@ -106,8 +113,8 @@ func TestCleanupOrphanedResourcesRemovesOnlyManagedWorkloadResources(t *testing.
 func TestCleanupOrphanedResourcesContinuesAfterFailures(t *testing.T) {
 	namespace := validConfig().WorkloadNamespace
 	client := fake.NewSimpleClientset(
-		&batchv1.Job{ObjectMeta: managedObjectMeta(namespace, "orphan-job", runLabels("run"))},
-		&corev1.Secret{ObjectMeta: managedObjectMeta(namespace, "orphan-secret", runLabels("run"))},
+		&batchv1.Job{ObjectMeta: managedObjectMeta(namespace, "orphan-job", installationRunLabels(validConfig().InstallationID, "run"))},
+		&corev1.Secret{ObjectMeta: managedObjectMeta(namespace, "orphan-secret", installationRunLabels(validConfig().InstallationID, "run"))},
 	)
 	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "jobs"}, "", errors.New("no list"))
 	client.PrependReactor("list", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {

@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/openeverest/plugin-bench/backend/internal/api"
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
@@ -25,7 +29,7 @@ func TestRunStoreFromEnvSelectsStorageExplicitly(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("BENCHMARK_STORAGE", test.storage)
 			t.Setenv("BENCHMARK_STORAGE_POSTGRES_URI", test.uri)
-			store, status, closeStore, err := runStoreFromEnv(context.Background())
+			store, status, closeStore, err := runStoreFromEnv(context.Background(), "plugin-bench")
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) || strings.Contains(err.Error(), "password-sentinel") {
 					t.Fatalf("error = %v; want %q without credentials", err, test.wantErr)
@@ -48,9 +52,24 @@ func TestRunStoreFromEnvOpensPostgreSQL(t *testing.T) {
 	if uri == "" {
 		t.Skip("set PLUGIN_BENCH_TEST_POSTGRES_URI to run PostgreSQL integration tests")
 	}
+	// An isolated schema keeps this test independent of other runs' state.
+	schema := "plugin_bench_main_test_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	admin, err := pgx.Connect(context.Background(), uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close(context.Background())
+	if _, err := admin.Exec(context.Background(), "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+	separator := "?"
+	if strings.Contains(uri, "?") {
+		separator = "&"
+	}
 	t.Setenv("BENCHMARK_STORAGE", "postgresql")
-	t.Setenv("BENCHMARK_STORAGE_POSTGRES_URI", uri)
-	_, status, closeStore, err := runStoreFromEnv(context.Background())
+	t.Setenv("BENCHMARK_STORAGE_POSTGRES_URI", uri+separator+"search_path="+schema)
+	_, status, closeStore, err := runStoreFromEnv(context.Background(), "plugin-bench")
 	if err != nil || status != storagePostgreSQL {
 		t.Fatalf("status = %q, err = %v", status, err)
 	}

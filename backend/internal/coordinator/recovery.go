@@ -13,12 +13,18 @@ import (
 const (
 	managedByLabel = "app.kubernetes.io/managed-by"
 	managedByValue = "plugin-bench"
+	instanceLabel  = "app.kubernetes.io/instance"
 	// RunIDLabel links runner Jobs, Pods, and Secrets to their run record.
 	RunIDLabel = "benchmark.openeverest.io/run-id"
 )
 
-func runLabels(runID string) map[string]string {
-	result := map[string]string{managedByLabel: managedByValue}
+// installationLabels identify every runner resource this installation owns.
+func (c *Coordinator) installationLabels() labels.Set {
+	return labels.Set{managedByLabel: managedByValue, instanceLabel: c.config.InstallationID}
+}
+
+func (c *Coordinator) runLabels(runID string) map[string]string {
+	result := c.installationLabels()
 	if runID != "" {
 		result[RunIDLabel] = runID
 	}
@@ -32,16 +38,17 @@ type OrphanCleanup struct {
 }
 
 // CleanupOrphanedResources deletes every runner Job and credential Secret
-// that a previous backend process left in the workload namespace. A crash
-// otherwise leaves Secrets holding target database passwords indefinitely.
-// Call it only before accepting runs: it also removes active resources, which
-// is safe only while one backend replica owns the workload namespace.
+// that a previous process of this installation left in the workload
+// namespace. A crash otherwise leaves Secrets holding target database
+// passwords indefinitely. Call it only before accepting runs: it also removes
+// this installation's active resources, which is safe only while one backend
+// replica runs per installation.
 func (c *Coordinator) CleanupOrphanedResources(ctx context.Context) (OrphanCleanup, error) {
 	var cleanup OrphanCleanup
 	if c == nil {
 		return cleanup, errors.New("coordinator is nil")
 	}
-	selector := labels.Set{managedByLabel: managedByValue}.String()
+	selector := c.installationLabels().String()
 	namespace := c.config.WorkloadNamespace
 	var cleanupErrors []error
 

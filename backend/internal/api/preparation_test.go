@@ -334,7 +334,7 @@ func testPreparedDriverExecution(t *testing.T, message string, wantMetrics []run
 		}}}, nil
 	})
 	defaults := coordinator.Resources{CPURequest: "0", MemoryLimit: "0"}
-	runner, err := coordinator.New(coordinator.Config{WorkloadNamespace: "workloads", RunnerServiceAccount: "runner", ExecutionTimeout: time.Minute, Resources: defaults}, client)
+	runner, err := coordinator.New(coordinator.Config{InstallationID: "plugin-bench", WorkloadNamespace: "workloads", RunnerServiceAccount: "runner", ExecutionTimeout: time.Minute, Resources: defaults}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
