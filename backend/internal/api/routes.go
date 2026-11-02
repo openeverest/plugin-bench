@@ -18,6 +18,9 @@ type CredentialLookup func(ctx context.Context, token, k8sCluster, namespace, in
 // InstanceAccessCheck verifies that the caller can read a target instance.
 type InstanceAccessCheck func(ctx context.Context, token, k8sCluster, namespace, instance string) error
 
+// InstanceLookup discovers instance metadata using the caller's authorization.
+type InstanceLookup func(ctx context.Context, token, k8sCluster string) ([]everest.InstanceSummary, error)
+
 type BenchmarkRunner interface {
 	Run(ctx context.Context, input coordinator.RunInput) (coordinator.Result, error)
 }
@@ -25,6 +28,7 @@ type BenchmarkRunner interface {
 type API struct {
 	getCredentials      CredentialLookup
 	checkInstanceAccess InstanceAccessCheck
+	lookupInstances     InstanceLookup
 	runner              BenchmarkRunner
 	registry            *driver.Registry
 	resourceDefaults    coordinator.Resources
@@ -36,7 +40,7 @@ type API struct {
 	closing             bool
 }
 
-func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, registry *driver.Registry) *API {
+func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, registry *driver.Registry, lookupInstances InstanceLookup) *API {
 	if store == nil {
 		store = NewRunStore()
 	}
@@ -46,6 +50,7 @@ func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessC
 	return &API{
 		getCredentials:      getCredentials,
 		checkInstanceAccess: checkInstanceAccess,
+		lookupInstances:     lookupInstances,
 		runner:              runner,
 		registry:            registry,
 		resourceDefaults:    resourceDefaults,
@@ -56,6 +61,7 @@ func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessC
 }
 
 func (a *API) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/instances", a.listInstances)
 	mux.HandleFunc("POST /api/runs", a.createRun)
 	mux.HandleFunc("GET /api/runs/{id}", a.getRun)
 }

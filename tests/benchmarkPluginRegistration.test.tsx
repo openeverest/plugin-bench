@@ -27,6 +27,7 @@ function setup() {
     registerExtension: extension => { extensions.push(extension); },
     async fetch(path, init) {
       requests.push({ context: this, path, init });
+      if (path.startsWith('/api/instances?')) return new Response(JSON.stringify({ instances: [] }));
       if (path === '/api/status') {
         return new Response(JSON.stringify({ drivers: ['pgbench', 'sysbench'] }), { status: 200 });
       }
@@ -46,6 +47,19 @@ describe('benchmark plugin registration', () => {
     expect(tabs).toHaveLength(1);
     expect(tabs[0].providers).toEqual(expect.any(Array));
     expect([...(tabs[0].providers ?? [])].sort()).toEqual([...benchmarkProviderNames].sort());
+  });
+
+  it('passes host cluster context, nonce, and bound fetch to the sidebar', async () => {
+    const { api, extensions, requests } = setup();
+    api.basePath = '/v1/clusters/team%2Fa/plugins/plugin-bench';
+    const route = extensions.find(extension => extension.type === 'route');
+    if (!route) throw new Error('Sidebar route was not registered');
+    const Component = route.component;
+    render(<Component />);
+    await screen.findByText(/No accessible database instances/);
+    expect(requests.map(request => request.path)).toEqual(['/api/instances?k8sCluster=team%2Fa', '/api/status']);
+    expect(requests.every(request => request.context === api)).toBe(true);
+    expect(screen.getByTestId('plugin-root').getAttribute('data-nonce')).toBe('test-nonce');
   });
 
   it('exposes the benchmark tab for the providers in the driver registry', () => {

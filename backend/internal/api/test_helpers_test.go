@@ -29,7 +29,7 @@ func testRegistry() *driver.Registry {
 }
 
 func newTestAPI(get CredentialLookup, access InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, ctx context.Context, defaults coordinator.Resources) *API {
-	return NewAPI(get, access, runner, store, ctx, defaults, testRegistry())
+	return NewAPI(get, access, runner, store, ctx, defaults, testRegistry(), nil)
 }
 
 func testCredentials() *everest.Credentials {

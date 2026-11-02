@@ -51,7 +51,7 @@ func newSysbenchAPI(t *testing.T, credentials *everest.Credentials, runner Bench
 	}, func(_ context.Context, token, cluster, namespace, instance string) error {
 		checkTarget(token, cluster, namespace, instance)
 		return nil
-	}, runner, NewRunStore(), context.Background(), defaults, registry)
+	}, runner, NewRunStore(), context.Background(), defaults, registry, nil)
 }
 
 func getSysbenchRun(a *API, id, authorization string) *httptest.ResponseRecorder {
