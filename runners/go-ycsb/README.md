@@ -1,8 +1,7 @@
 # go-ycsb runner qualification
 
-Configuration validation and fixed-workload execution are implemented; image
-packaging follows in a later step. This records qualification of the unmodified
-upstream tool on 2026-11-03.
+The Dockerfile packages the runner, fixed workload and pinned upstream tool.
+This also records qualification of the unmodified upstream tool on 2026-11-03.
 
 **Only the `ycsb` database is supported.** `--table` selects the collection.
 A different URI database is ignored by this upstream version. Wrapper configuration
@@ -27,10 +26,26 @@ start with `system.`, contain `$`, control characters or empty dot segments, or
 produce a `ycsb.<collection>` namespace longer than 235 bytes.
 
 `workloads/workloada` fixes equal reads and updates, uniform key selection and
-ten 100-byte fields. Its intended image path is
+ten 100-byte fields. Its image path is
 `/etc/go-ycsb/workloads/workloada`; reporting is fixed to ten seconds. Dataset
-size and worker count are supplied separately. Image packaging will install
-the profile at that path.
+size and worker count are supplied separately.
+
+## Build the image
+
+From the repository root:
+
+```bash
+docker build -t plugin-bench-go-ycsb:dev runners/go-ycsb
+.github/scripts/test-go-ycsb-runner.sh plugin-bench-go-ycsb:dev
+```
+
+Both binaries are built with Go 1.25 and CGO disabled for the target architecture.
+The runtime includes CA certificates, upstream licenses and Workload A, and runs
+as UID/GID 10001 with writable `/tmp` for private credential files.
+The test script starts disposable MongoDB and checks loading, reuse, authentication,
+permissions, missing/incompatible data and rejected database paths. It verifies
+metrics, credential filtering and cleanup. All 12 cases passed against MongoDB
+8.0.34 on native amd64 and ARM64 under Docker emulation on an amd64 host.
 
 ## Pinned inputs
 
@@ -59,7 +74,8 @@ selected by installed libraries. Dependencies must be downloaded to build from
 source. Both upstream `LICENSE` and `YCSB-LICENSE` are Apache-2.0 and must be
 retained when packaging. This qualification used the official release binary,
 which links glibc/libpthread; do not assume it runs in an Alpine/musl image.
-A source build with our selected image toolchain remains part of image work.
+The Dockerfile builds from the checksum-verified source archive; the release
+executable details above describe the earlier qualification.
 
 MongoDB image digest used:
 `mongo@sha256:b9924c330a8bbc5800fe9c69f04a84e221eca7b28fd049a0354147d9908fa142`.
@@ -114,4 +130,4 @@ the original upstream property banner exposes the complete URI.
   metrics produce a warning without failing an otherwise successful run.
 - Filter both output streams before writing Pod logs.
 - This check demonstrates a fresh uniform workload, not all dataset sizes or
-  distributions. ARM64, TLS and replica-set behavior are not established here.
+  distributions. TLS and replica-set behavior are not established here.
