@@ -178,6 +178,35 @@ func run(ctx context.Context, c config,
 	return ctx.Err()
 }
 
+// runWithMetrics observes raw measured stdout while run sanitizes both log
+// streams. Metrics are published only after all workload checks succeed.
+func runWithMetrics(ctx context.Context, c config,
+	invoke func(context.Context, []string, io.Writer, io.Writer) error,
+	stdout, stderr io.Writer, terminationPath string,
+) error {
+	var collector summaryCollector
+	err := run(ctx, c, func(ctx context.Context, args []string, safeOut, safeErr io.Writer) error {
+		if len(args) > 0 && args[0] == "run" {
+			safeOut = io.MultiWriter(safeOut, &collector)
+		}
+		return invoke(ctx, args, safeOut, safeErr)
+	}, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	record, err := collector.result()
+	if err == nil {
+		err = writeTerminationResult(terminationPath, record)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "runner warning: structured metrics unavailable")
+	}
+	return nil
+}
+
 func runnerMain() int {
 	c, err := loadConfig(os.Getenv)
 	if err != nil {
@@ -192,9 +221,9 @@ func runnerMain() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	env := commandEnvironment(os.Environ())
-	err = run(ctx, c, func(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	err = runWithMetrics(ctx, c, func(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return execute(ctx, executable, args, env, stdout, stderr)
-	}, os.Stdout, os.Stderr)
+	}, os.Stdout, os.Stderr, terminationLogPath)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "runner cancelled")
 		return 1

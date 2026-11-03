@@ -109,8 +109,9 @@ the original upstream property banner exposes the complete URI.
 - Do not interpret exit code zero as proof of successful operations.
 - Parse final measurements after `Run finished, takes ...`; periodic rows use
   the same metric labels. Failed-only runs can have no successful `TOTAL` row.
-- Successful `TOTAL` rows expose `OPS` and `Avg(us)`; planned metrics use ops/s
-  and convert average latency to milliseconds.
+- Successful runs write `ops_per_second` (`ops/s`) and `latency_avg` (`ms`)
+  from the final `TOTAL` row to `/dev/termination-log`. Missing or invalid
+  metrics produce a warning without failing an otherwise successful run.
 - Filter both output streams before writing Pod logs.
 - This check demonstrates a fresh uniform workload, not all dataset sizes or
   distributions. ARM64, TLS and replica-set behavior are not established here.
