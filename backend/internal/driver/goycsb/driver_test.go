@@ -212,3 +212,24 @@ func containsString(values []string, target string) bool {
 	}
 	return false
 }
+
+func TestPrepareSuppliesTLSCertificateAuthorityThroughSecret(t *testing.T) {
+	ca := testCACertificate(t)
+	spec, err := New().Prepare(driver.PrepareInput{
+		Target:     driver.TargetInfo{DatabaseType: "mongodb"},
+		Connection: driver.ConnectionDetails{URI: "mongodb://mongo/admin?tls=true", CACertificate: ca},
+		Options:    json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("Prepare returned an invalid runner spec: %v", err)
+	}
+	if string(spec.SecretData["MONGODB_TLS_CA"]) != ca || spec.SecretEnv["MONGODB_TLS_CA"] != "MONGODB_TLS_CA" {
+		t.Fatal("the provider CA must reach the runner through the per-run Secret")
+	}
+	if _, exists := spec.Env["MONGODB_TLS_CA"]; exists || bytes.Contains(spec.Snapshot.Options, []byte("CERTIFICATE")) {
+		t.Fatal("the provider CA must stay out of literal settings and the saved snapshot")
+	}
+}

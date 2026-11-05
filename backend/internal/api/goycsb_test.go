@@ -3,9 +3,16 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"log"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -169,6 +176,7 @@ func TestGoYCSBPreparationErrorsRejectBeforeAdmission(t *testing.T) {
 		{"missing URI", goycsbRunBody, func(c *everest.Credentials) { c.URI = "" }, false, 502},
 		{"malformed URI", goycsbRunBody, func(c *everest.Credentials) { c.URI = "mongodb://user:credential-sentinel@host:99999" }, false, 502},
 		{"missing database type", goycsbRunBody, func(c *everest.Credentials) { c.Type = "" }, false, 502},
+		{"invalid TLS CA", goycsbRunBody, func(c *everest.Credentials) { c.CACertificate = "credential-sentinel" }, false, 502},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			credentials := goycsbCredentials()
@@ -299,5 +307,45 @@ func TestGoYCSBRunResultsRequireTargetAccess(t *testing.T) {
 				t.Fatalf("unauthorized GET exposed run details: %d %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func testCACertificate(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+func TestGoYCSBRunSuppliesProviderCACertificate(t *testing.T) {
+	credentials := goycsbCredentials()
+	credentials.URI = strings.Replace(credentials.URI, "ssl=false", "tls=true", 1)
+	credentials.CACertificate = testCACertificate(t)
+	calls := make(chan coordinator.RunInput, 1)
+	a := newGoYCSBAPI(t, credentials, testRunnerFunc(func(_ context.Context, input coordinator.RunInput) (coordinator.Result, error) {
+		calls <- input
+		return coordinator.Result{}, nil
+	}), coordinator.Resources{})
+	awaitAcceptedRun(t, a, submitRun(a, goycsbRunBody))
+	var input coordinator.RunInput
+	select {
+	case input = <-calls:
+	default:
+		t.Fatal("accepted go-ycsb run never reached execution")
+	}
+	if string(input.Spec.SecretData["MONGODB_TLS_CA"]) != credentials.CACertificate ||
+		input.Spec.SecretEnv["MONGODB_TLS_CA"] != "MONGODB_TLS_CA" {
+		t.Fatal("execution did not receive the provider CA through the per-run Secret")
 	}
 }

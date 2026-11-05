@@ -90,7 +90,9 @@ The target must report type `mongodb` and supply a `mongodb://` URI. Only the
 `ycsb` database is supported by the pinned upstream tool: omit `database` or
 set it to `ycsb`; other names are rejected. The backend preserves authentication,
 including provider URIs using `/admin`, while targeting `ycsb`. The supplied
-account needs read/write access to `ycsb`.
+account needs read/write access to `ycsb`. For TLS instances, a provider CA
+published as `ca.crt` in the connection details is passed to the runner to
+verify the server certificate.
 
 Workload A uses equal reads and updates. Set `initialize=true` to load a fresh,
 disposable collection; reloading existing keys fails. To reuse it, set
@@ -355,7 +357,8 @@ benchmark settings use environment values. See the
 [Sysbench configuration reference](runners/sysbench/README.md#configuration)
 for defaults and credential-file encoding rules.
 
-The go-ycsb runner receives `MONGODB_URI` through a Secret reference and ordinary
+The go-ycsb runner receives `MONGODB_URI` and, when the provider publishes one,
+`MONGODB_TLS_CA` through Secret references and ordinary
 `BENCH_*` options through environment values. See its
 [configuration reference](runners/go-ycsb/README.md#runner-configuration).
 

@@ -58,6 +58,10 @@ func prepareRunner(connection resolvedConnection, options Options) (driver.Runne
 		SecretEnv:  map[string]string{"MONGODB_URI": "MONGODB_URI"},
 		Snapshot:   driver.OptionSnapshot{Database: connection.Database, Options: snapshot},
 	}
+	if connection.CACertificate != "" {
+		spec.SecretData["MONGODB_TLS_CA"] = []byte(connection.CACertificate)
+		spec.SecretEnv["MONGODB_TLS_CA"] = "MONGODB_TLS_CA"
+	}
 	for _, sensitive := range []string{connection.OriginalURI, connection.Password} {
 		if sensitive != "" {
 			spec.SensitiveValues = append(spec.SensitiveValues, sensitive)

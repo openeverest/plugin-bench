@@ -1,6 +1,7 @@
 package goycsb
 
 import (
+	"crypto/x509"
 	"net/url"
 	"strings"
 	"unicode"
@@ -14,6 +15,7 @@ import (
 // Never log it or include it in a run snapshot.
 type resolvedConnection struct {
 	Database, URI, OriginalURI, Password string
+	CACertificate                        string
 }
 
 func resolveConnection(requestedDatabase string, details driver.ConnectionDetails) (resolvedConnection, error) {
@@ -56,8 +58,12 @@ func resolveConnection(requestedDatabase string, details driver.ConnectionDetail
 	if err := validateConnectionEncoding(effectiveURI); err != nil {
 		return resolvedConnection{}, err
 	}
+	if details.CACertificate != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(details.CACertificate)) {
+		return resolvedConnection{}, invalidCredentials("MongoDB TLS CA certificate is invalid")
+	}
 	return resolvedConnection{
 		Database: benchmarkDatabase, URI: effectiveURI, OriginalURI: details.URI, Password: original.Password,
+		CACertificate: details.CACertificate,
 	}, nil
 }
 
