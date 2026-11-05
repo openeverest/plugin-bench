@@ -1,8 +1,7 @@
 # OpenEverest Plugin Bench
 
-OpenEverest Plugin Bench runs PostgreSQL (pgbench) and MySQL (Sysbench)
+OpenEverest Plugin Bench runs PostgreSQL (pgbench), MySQL (Sysbench), and MongoDB (go-ycsb)
 benchmarks as temporary Kubernetes Jobs from the database cluster tab or backend API.
-The backend also supports MongoDB benchmarks through go-ycsb.
 All three drivers are enabled by default in the Helm chart.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
@@ -44,7 +43,7 @@ effective settings and metrics.
 
 `GET /api/status` returns generic backend readiness with `status`, `runnerReady`,
 `storage`, `message`, and a sorted `drivers` array of enabled driver IDs, such as
-`["pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
+`["go-ycsb", "pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
 `database` field has been removed. This endpoint does not test database
 connectivity or runner-image availability.
 
@@ -100,7 +99,7 @@ disposable collection; reloading existing keys fails. To reuse it, set
 leaves the data in MongoDB; drop the collection separately when finished.
 Poll `GET /api/runs/{id}` for logs and optional `ops_per_second` (`ops/s`) and
 `latency_avg` (`ms`). See the [runner reference](runners/go-ycsb/README.md)
-for defaults. MongoDB UI support is tracked separately.
+for defaults.
 
 ### Using the benchmark tab
 
@@ -117,13 +116,14 @@ which driver is offered:
 | --- | --- |
 | `provider-cloudnative-pg`, `provider-percona-postgresql` | pgbench |
 | `percona-server-mysql`, `percona-xtradb-cluster` | Sysbench |
+| `percona-server-mongodb` | go-ycsb |
 
 The tab checks `/api/status` and only offers drivers enabled on the backend.
 If none are enabled for the provider, run lookup remains available.
 
-Database, **Job resources**, and **Job placement** are shared settings. A blank
-database uses the instance default when available; otherwise enter an existing
-database name. Use a disposable benchmark database.
+Database, **Job resources**, and **Job placement** are shared settings. For SQL
+drivers, a blank database uses the instance default when available; otherwise
+enter an existing database name. Use a disposable benchmark database.
 For both `percona-server-mysql` and PXC (`percona-xtradb-cluster`), a database name
 is required because neither provider supplies a default. Create the database
 before starting the benchmark; table preparation does not create it.
@@ -138,6 +138,15 @@ a fresh dataset; existing table names cause preparation to fail. To reuse
 tables, turn preparation off and match **Tables** and **Rows per table** to the
 existing dataset. Tables remain after Job cleanup. Sysbench must be enabled with
 an accessible runner image; see [Driver configuration](#driver-configuration).
+
+**go-ycsb** fixes Database to the read-only value `ycsb`. It starts with collection
+`usertable`, 10,000 records, 20,000 operations, one thread, and **Load benchmark data**
+checked. Workload A performs equal reads and updates. Use a fresh disposable
+collection for loading; to reuse it, turn loading off and keep Collection and
+Records matched to the dataset. Operations controls work performed, subject to
+the overall execution timeout. The account needs read/write access to `ycsb`;
+MongoDB can create the database/collection during loading, and Job cleanup leaves
+the data intact.
 
 Each accepted run has its own card and polls for status every two seconds until
 completion. Completed cards show the driver, configured runner image, effective
@@ -388,8 +397,7 @@ bundle. Component tests include the complete submission/polling/results and run
 lookup workflows with mocked API responses, including concurrent cards and
 cancellation on unmount or target changes.
 
-For a live check after starting Tilt, use a disposable PostgreSQL or supported
-MySQL database:
+For a live check after starting Tilt, use a disposable supported database:
 
 1. Start a short run and confirm the POST contains `driver` and nested `options`.
 2. Confirm polling reaches a terminal status and stops. Check effective options,
@@ -400,6 +408,8 @@ MySQL database:
 
 For Sysbench, prepare a small fresh dataset, then repeat with preparation off
 and matching table settings. Preparing the same tables again should fail clearly.
+For go-ycsb, load a fresh collection, then repeat with loading off and the same
+collection and record count.
 
 ## Releasing
 
@@ -440,7 +450,8 @@ spec.md                      MVP requirements
 ## Current limitations
 
 The UI supports the providers listed above; MySQL requires an enabled Sysbench
-driver and a usable image. Additional workloads and MongoDB UI support remain future work.
+driver and a usable image. MongoDB is limited to the `ycsb` database and Workload A;
+additional workloads remain future work.
 Run records, including output and metrics, are held in backend memory and are
 lost on restart.
 Completed records become unavailable one hour after completion; running records

@@ -5,8 +5,9 @@ import { BenchmarkPage } from '../src/BenchmarkPage';
 const basePath = '/v1/clusters/main/plugins/plugin-bench';
 const pg = { k8sCluster: 'main', namespace: 'default', name: 'postgres', provider: 'provider-percona-postgresql' };
 const mysql = { ...pg, name: 'mysql', provider: 'percona-server-mysql' };
+const mongo = { ...pg, name: 'mongodb', provider: 'percona-server-mongodb' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-function fetchFor(instances: unknown[] = [pg], drivers = ['pgbench', 'sysbench']) {
+function fetchFor(instances: unknown[] = [pg], drivers = ['pgbench', 'sysbench', 'go-ycsb']) {
   return vi.fn(async (path: string) => response(path === '/api/status' ? { drivers } : { instances }));
 }
 afterEach(cleanup);
@@ -24,21 +25,23 @@ describe('benchmark sidebar page', () => {
   });
 
   it('shows supported providers, deduplicates targets, and links to their benchmark tabs', async () => {
-    const fetch = fetchFor([pg, mysql, { ...mysql, name: 'pxc', provider: 'percona-xtradb-cluster' },
+    const fetch = fetchFor([pg, mysql, mongo, { ...mysql, name: 'pxc', provider: 'percona-xtradb-cluster' },
       { ...pg, namespace: 'other' }, { ...pg }, { ...pg, name: 'mongo', provider: 'unknown' }]);
     render(<BenchmarkPage pluginFetch={fetch} basePath={basePath} />);
     const table = await screen.findByRole('table');
-    expect(within(table).getAllByRole('row')).toHaveLength(5);
+    expect(within(table).getAllByRole('row')).toHaveLength(6);
     expect(screen.queryByText('mongo')).toBeNull();
     expect(screen.getByRole('link', { name: 'Benchmark other/postgres' }).getAttribute('href'))
       .toBe('/databases/other/postgres/performance-benchmark');
     expect(screen.getByRole('link', { name: 'mysql' }).getAttribute('href'))
       .toBe('/databases/default/mysql/performance-benchmark');
+    expect(screen.getByRole('link', { name: 'Benchmark default/mongodb' }).getAttribute('href'))
+      .toBe('/databases/default/mongodb/performance-benchmark');
     expect(fetch.mock.calls.map(([path]) => path)).toEqual(['/api/instances?k8sCluster=main', '/api/status']);
   });
 
   it('shows each row with its provider and enabled benchmark tool', async () => {
-    render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql])} basePath={basePath} />);
+    render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql, mongo])} basePath={basePath} />);
     const table = await screen.findByRole('table');
     const cells = (name: string) => within(screen.getByRole('link', { name }).closest('tr')!)
       .getAllByRole('cell').map(cell => cell.textContent);
@@ -46,15 +49,17 @@ describe('benchmark sidebar page', () => {
       .toEqual(['Name', 'Namespace', 'Provider', 'Benchmark tool', 'Action']);
     expect(cells('postgres')).toEqual(['default', 'provider-percona-postgresql', 'pgbench', 'Benchmark']);
     expect(cells('mysql')).toEqual(['default', 'percona-server-mysql', 'Sysbench', 'Benchmark']);
+    expect(cells('mongodb')).toEqual(['default', 'percona-server-mongodb', 'go-ycsb', 'Benchmark']);
   });
 
   it('hides instances whose driver is disabled', async () => {
-    render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql], ['pgbench'])} basePath={basePath} />);
+    render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql, mongo], ['pgbench'])} basePath={basePath} />);
     await screen.findByRole('table');
     expect(screen.queryByRole('link', { name: 'mysql' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'mongodb' })).toBeNull();
   });
 
-  it.each([{ instances: [] }, { instances: [mysql] }])('shows an empty state when no supported enabled targets remain', async ({ instances }) => {
+  it.each([{ instances: [] }, { instances: [mysql] }, { instances: [mongo] }])('shows an empty state when no supported enabled targets remain', async ({ instances }) => {
     render(<BenchmarkPage pluginFetch={fetchFor(instances, ['pgbench'])} basePath={basePath} />);
     expect(await screen.findByText(/No accessible database instances/)).toBeTruthy();
     expect(screen.queryByRole('table')).toBeNull();
