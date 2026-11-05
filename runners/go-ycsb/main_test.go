@@ -102,6 +102,21 @@ func TestLoadConfigRejectsOtherDatabase(t *testing.T) {
 	}
 }
 
+func TestLoadConfigTLSCA(t *testing.T) {
+	env := validEnvironment()
+	env["MONGODB_TLS_CA"] = testCAPEM(t)
+	got, err := configFromEnvironment(env)
+	if err != nil || got.tlsCA != env["MONGODB_TLS_CA"] {
+		t.Fatal("a PEM CA certificate must be accepted unchanged")
+	}
+	for _, invalid := range []string{"not a certificate", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"} {
+		env["MONGODB_TLS_CA"] = invalid
+		if _, err := configFromEnvironment(env); err == nil || err.Error() != "MONGODB_TLS_CA must contain a PEM-encoded CA certificate" {
+			t.Fatal("an invalid CA certificate must be rejected")
+		}
+	}
+}
+
 func TestLoadConfigDefaults(t *testing.T) {
 	env := validEnvironment()
 	got, err := configFromEnvironment(env)
@@ -212,6 +227,7 @@ func TestRunPhaseArgumentsAndCleanup(t *testing.T) {
 				}
 				want := []string{args[0], "mongodb", "-P", workloadPath, "-P", connectionPath,
 					"-p", "recordcount=10000", "-p", "operationcount=20000",
+					"-p", "debug.pprof=127.0.0.1:6060",
 					"--threads", threads, "--table", "bench.records", "--interval", "10"}
 				if !reflect.DeepEqual(args, want) || strings.Contains(strings.Join(args, " "), c.uri) {
 					t.Fatal("phase arguments must use the profile, connection-file path and validated settings without credentials")

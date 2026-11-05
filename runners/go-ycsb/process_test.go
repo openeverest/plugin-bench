@@ -40,13 +40,13 @@ func TestProcessChild(t *testing.T) {
 }
 
 func TestCommandEnvironmentRemovesURIAndForcesStableLocale(t *testing.T) {
-	env := []string{"MONGODB_URI=mongodb://user:secret@host/ycsb", "LC_ALL=fr_FR.UTF-8", "PATH=/bin", "LC_ALL=de_DE.UTF-8"}
+	env := []string{"MONGODB_URI=mongodb://user:secret@host/ycsb", "MONGODB_TLS_CA=-----BEGIN CERTIFICATE-----", "LC_ALL=fr_FR.UTF-8", "PATH=/bin", "LC_ALL=de_DE.UTF-8"}
 	before := append([]string(nil), env...)
 	got := commandEnvironment(env)
 	var locales []string
 	for _, entry := range got {
-		if strings.HasPrefix(entry, "MONGODB_URI=") {
-			t.Fatal("child must read credentials from the private file, not its environment")
+		if strings.HasPrefix(entry, "MONGODB_URI=") || strings.HasPrefix(entry, "MONGODB_TLS_CA=") {
+			t.Fatal("child must read connection settings from private files, not its environment")
 		}
 		if strings.HasPrefix(entry, "LC_ALL=") {
 			locales = append(locales, entry)

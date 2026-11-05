@@ -13,6 +13,7 @@ load/run operation-error detection to report inaccessible targets.
 | Environment variable | Default |
 | --- | --- |
 | `MONGODB_URI` | Required; `mongodb://` with no database path or `/ycsb` |
+| `MONGODB_TLS_CA` | Optional PEM CA that verifies the server when the URI enables TLS |
 | `BENCH_COLLECTION` | `usertable` |
 | `BENCH_RECORD_COUNT` | `10000` |
 | `BENCH_OPERATION_COUNT` | `20000` |
@@ -24,6 +25,12 @@ positive integers up to 2147483647; threads cannot exceed operation count.
 Initialization accepts only `true` or `false`. Collection names cannot be blank,
 start with `system.`, contain `$`, control characters or empty dot segments, or
 produce a `ycsb.<collection>` namespace longer than 235 bytes.
+
+The URI and CA are written to private files (mode 0600) passed to go-ycsb as
+`mongodb.url` and `mongodb.tls_ca_file`, and are removed from the child
+environment. Without a CA, TLS servers are verified against the system trust
+store. Upstream always serves an unauthenticated pprof endpoint; the runner
+binds it to `127.0.0.1:6060` so it is not reachable from outside the Pod.
 
 `workloads/workloada` fixes equal reads and updates, uniform key selection and
 ten 100-byte fields. Its image path is
@@ -42,10 +49,12 @@ docker build -t plugin-bench-go-ycsb:dev runners/go-ycsb
 Both binaries are built with Go 1.25 and CGO disabled for the target architecture.
 The runtime includes CA certificates, upstream licenses and Workload A, and runs
 as UID/GID 10001 with writable `/tmp` for private credential files.
-The test script starts disposable MongoDB and checks loading, reuse, authentication,
-permissions, missing/incompatible data and rejected database paths. It verifies
-metrics, credential filtering and cleanup. All 12 cases passed against MongoDB
-8.0.34 on native amd64 and ARM64 under Docker emulation on an amd64 host.
+The test script starts disposable MongoDB (TLS in `preferTLS` mode with a private
+test CA) and checks loading, reuse, authentication, TLS verification with and
+without the CA, permissions, missing/incompatible data and rejected database
+paths. It verifies metrics, credential filtering and cleanup. The original 12
+cases passed against MongoDB 8.0.34 on native amd64 and ARM64 under Docker
+emulation on an amd64 host; all 15 cases, including TLS, passed on native ARM64.
 
 ## Pinned inputs
 
@@ -130,4 +139,4 @@ the original upstream property banner exposes the complete URI.
   metrics produce a warning without failing an otherwise successful run.
 - Filter both output streams before writing Pod logs.
 - This check demonstrates a fresh uniform workload, not all dataset sizes or
-  distributions. TLS and replica-set behavior are not established here.
+  distributions. Replica-set behavior is not established here.

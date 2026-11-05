@@ -2,7 +2,7 @@
 set -euo pipefail
 
 runner_image=${1:?Usage: test-go-ycsb-runner.sh IMAGE}
-for tool in docker python3 timeout; do
+for tool in docker openssl python3 timeout; do
   command -v "$tool" > /dev/null
 done
 timeout -k 5s 20s docker info > /dev/null
@@ -228,11 +228,50 @@ timeout -k 5s 30s docker run --rm --name "$runner_name" --platform "$runner_plat
     uname -m
   '
 
+# preferTLS keeps plaintext checks working while TLS clients must verify the
+# server against a private CA, like operator-issued instance certificates.
+tls_config="$test_dir/tls.cnf"
+tls_ca_key="$test_dir/ca.key"
+tls_ca="$test_dir/ca.pem"
+tls_server_key="$test_dir/server.key"
+tls_server_csr="$test_dir/server.csr"
+tls_server_crt="$test_dir/server.crt"
+tls_server_pem="$test_dir/server.pem"
+test_files+=("$tls_config" "$tls_ca_key" "$tls_ca" "$tls_server_key" "$tls_server_csr" "$tls_server_crt" "$tls_server_pem")
+cat > "$tls_config" <<'CNF'
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+CN = go-ycsb test CA
+[ca]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = CA:FALSE
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:go-ycsb-db
+CNF
+openssl req -x509 -config "$tls_config" -extensions ca -newkey rsa:2048 -nodes -days 2 \
+  -keyout "$tls_ca_key" -out "$tls_ca" 2> /dev/null
+openssl req -new -config "$tls_config" -subj /CN=go-ycsb-db -newkey rsa:2048 -nodes \
+  -keyout "$tls_server_key" -out "$tls_server_csr" 2> /dev/null
+openssl x509 -req -in "$tls_server_csr" -CA "$tls_ca" -CAkey "$tls_ca_key" -set_serial 2 -days 2 \
+  -extfile "$tls_config" -extensions server -out "$tls_server_crt" 2> /dev/null
+cat "$tls_server_crt" "$tls_server_key" > "$tls_server_pem"
+# Only these test-only files are mounted; mongod runs as a different user.
+chmod 644 "$tls_server_pem" "$tls_ca"
+
 echo "Starting disposable MongoDB 8.0 for runner image checks"
 network_id=$(timeout -k 5s 20s docker network create "$network_name")
 database_id=$(timeout -k 10s 180s docker run -d --name "$database_name" \
   --network "$network_id" --network-alias go-ycsb-db \
-  -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD="$root_password" mongo:8.0)
+  -e MONGO_INITDB_ROOT_USERNAME=root -e MONGO_INITDB_ROOT_PASSWORD="$root_password" \
+  --mount "type=bind,src=$tls_server_pem,dst=/etc/mongo-tls/server.pem,readonly" \
+  --mount "type=bind,src=$tls_ca,dst=/etc/mongo-tls/ca.pem,readonly" \
+  mongo:8.0 --tlsMode preferTLS --tlsCertificateKeyFile /etc/mongo-tls/server.pem \
+  --tlsCAFile /etc/mongo-tls/ca.pem --tlsAllowConnectionsWithoutCertificates)
 
 readiness_log="$test_dir/readiness.log"
 database_log="$test_dir/database.log"
@@ -306,6 +345,20 @@ if [[ $(query_root 'print(connection.getDB("ycsb").admin_records.countDocuments(
   echo "Authentication source changed the benchmark database" >&2
   exit 1
 fi
+
+run_success tls true \
+  -e "MONGODB_URI=$(mongodb_uri ycsb_only "$database_password" ycsb)&tls=true" \
+  -e "MONGODB_TLS_CA=$(cat "$tls_ca")" -e BENCH_COLLECTION=tls_records
+if [[ $(query_root 'print(connection.getDB("ycsb").tls_records.countDocuments({}))') != 1000 ]]; then
+  echo "TLS benchmark did not load the expected 1000 documents" >&2
+  exit 1
+fi
+run_failure tls-untrusted-ca false 'certificate signed by unknown authority' \
+  -e "MONGODB_URI=$(mongodb_uri ycsb_only "$database_password" ycsb)&tls=true" \
+  -e BENCH_COLLECTION=tls_records
+run_failure tls-invalid-ca false 'MONGODB_TLS_CA must contain a PEM-encoded CA certificate' \
+  -e "MONGODB_URI=$(mongodb_uri ycsb_only "$database_password" ycsb)&tls=true" \
+  -e MONGODB_TLS_CA=not-a-certificate
 
 run_failure duplicate-load true 'load failed: go-ycsb reported failed operations'
 if [[ $(grep -c '^Run finished, takes ' "$log_file") != 1 ]]; then

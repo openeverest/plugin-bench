@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -21,10 +22,13 @@ const (
 	benchmarkDatabase = "ycsb"
 	workloadPath      = "/etc/go-ycsb/workloads/workloada"
 	reportInterval    = 10 // Seconds; go-ycsb requires a positive ticker interval.
+	// go-ycsb always serves unauthenticated pprof, by default on every
+	// interface (":6060"). Keep it reachable only from inside the Pod.
+	debugPprofAddress = "127.0.0.1:6060"
 )
 
 type config struct {
-	uri, collection                      string
+	uri, collection, tlsCA               string
 	recordCount, operationCount, threads int
 	initialize                           bool
 }
@@ -46,6 +50,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if connection.Database != "" && connection.Database != benchmarkDatabase {
 		return config{}, errors.New("go-ycsb supports only the ycsb database")
+	}
+	// Instances with operator-issued certificates are not publicly trusted;
+	// their CA must be supplied for verification when the URI enables TLS.
+	c.tlsCA = getenv("MONGODB_TLS_CA")
+	if c.tlsCA != "" && !x509.NewCertPool().AppendCertsFromPEM([]byte(c.tlsCA)) {
+		return config{}, errors.New("MONGODB_TLS_CA must contain a PEM-encoded CA certificate")
 	}
 
 	c.collection = getenv("BENCH_COLLECTION")
@@ -102,13 +112,14 @@ type phaseExecutionError struct {
 func (e *phaseExecutionError) Error() string { return e.phase + " failed" }
 func (e *phaseExecutionError) Unwrap() error { return e.cause }
 
-// commandEnvironment keeps the URI out of the child environment because the
-// child reads it from the private properties file. It also forces stable
+// commandEnvironment keeps connection settings out of the child environment
+// because the child reads them from private files. It also forces stable
 // output formatting for parsing.
 func commandEnvironment(env []string) []string {
 	result := make([]string, 0, len(env)+1)
 	for _, entry := range env {
-		if !strings.HasPrefix(entry, "MONGODB_URI=") && !strings.HasPrefix(entry, "LC_ALL=") {
+		if !strings.HasPrefix(entry, "MONGODB_URI=") && !strings.HasPrefix(entry, "MONGODB_TLS_CA=") &&
+			!strings.HasPrefix(entry, "LC_ALL=") {
 			result = append(result, entry)
 		}
 	}
@@ -157,6 +168,7 @@ func run(ctx context.Context, c config,
 			"-P", connectionPath,
 			"-p", "recordcount=" + strconv.Itoa(c.recordCount),
 			"-p", "operationcount=" + strconv.Itoa(c.operationCount),
+			"-p", "debug.pprof=" + debugPprofAddress,
 			"--threads", strconv.Itoa(threads),
 			"--table", c.collection,
 			"--interval", strconv.Itoa(reportInterval),
