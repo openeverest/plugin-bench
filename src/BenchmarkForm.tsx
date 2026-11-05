@@ -50,6 +50,7 @@ export function BenchmarkForm({ target, availableDrivers, provider, isSubmitting
   const [resourcesExpanded, setResourcesExpanded] = useState(false);
   const errors = validateBenchmarkForm(values, provider);
   const databaseRequired = isBenchmarkDatabaseRequired(values.driver, provider);
+  const fixedDatabase = benchmarkDrivers[values.driver].fixedDatabase;
   const affinity = prepareNodeAffinityDraft(values.nodeAffinity);
   const driverAvailable = availableDrivers.includes(values.driver);
   const canSubmit = driverAvailable && Object.keys(errors).length === 0 && affinity.ok && !isSubmitting;
@@ -62,7 +63,13 @@ export function BenchmarkForm({ target, availableDrivers, provider, isSubmitting
     setTouched(current => ({ ...current, [field]: true }));
   };
   const fieldError = (field: BenchmarkFormField) => (touched[field] ? errors[field] : undefined);
-  const updateDriver = (selection: DriverDraft) => setValues(current => ({ ...current, ...selection }));
+  const updateDriver = (selection: DriverDraft) => setValues(current => ({
+    ...current,
+    ...selection,
+    database: current.driver === selection.driver ? current.database
+      : benchmarkDrivers[selection.driver].fixedDatabase?.name
+        ?? (benchmarkDrivers[current.driver].fixedDatabase ? '' : current.database),
+  }));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -87,18 +94,22 @@ export function BenchmarkForm({ target, availableDrivers, provider, isSubmitting
             id="benchmark-database"
             name="database"
             label="Database"
-            placeholder={databaseRequired ? 'Existing database name' : 'Instance default'}
+            placeholder={fixedDatabase?.name ?? (databaseRequired ? 'Existing database name' : 'Instance default')}
             required={databaseRequired}
             size="small"
             fullWidth
             value={values.database}
             error={Boolean(fieldError('database'))}
-            helperText={fieldError('database') ?? (databaseRequired
+            helperText={fieldError('database') ?? fixedDatabase?.helperText ?? (databaseRequired
               ? 'Enter an existing disposable database. This provider does not supply a default; table preparation does not create the database.'
               : "Leave empty to use the instance's default database.")}
-            onChange={event => updateValue('database', event.target.value)}
+            onChange={event => { if (!fixedDatabase) updateValue('database', event.target.value); }}
             onBlur={() => markTouched('database')}
-            slotProps={{ inputLabel: { shrink: true }, htmlInput: { 'aria-label': 'Database' } }}
+            slotProps={{
+              inputLabel: { shrink: true },
+              input: { readOnly: Boolean(fixedDatabase) },
+              htmlInput: { 'aria-label': 'Database' },
+            }}
           />
 
           <TextField
@@ -113,6 +124,7 @@ export function BenchmarkForm({ target, availableDrivers, provider, isSubmitting
               const driver = event.target.value;
               if (!isSubmitting && isBenchmarkDriverId(driver) && availableDrivers.includes(driver) && driver !== values.driver) {
                 updateDriver(createDriverDraft(driver));
+                setTouched(current => ({ ...current, database: false }));
                 setSubmitted(false);
               }
             }}

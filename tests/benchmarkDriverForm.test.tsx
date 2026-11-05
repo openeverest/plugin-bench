@@ -173,6 +173,50 @@ describe('benchmark driver form', () => {
     expect(start().disabled).toBe(false);
   });
 
+  it('applies fixed database policy only on driver changes and keeps resources and placement', () => {
+    const { submissions } = setup(['sysbench', 'go-ycsb']);
+    const select = (label: string) => {
+      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Benchmark driver' }));
+      fireEvent.click(screen.getByRole('option', { name: label }));
+    };
+    change('Database', 'sbtest');
+    fireEvent.click(screen.getByRole('button', { name: 'Job resources' }));
+    change('CPU request (millicores)', '500');
+    fireEvent.click(screen.getByRole('button', { name: /Job placement/ }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Run on nodes with specific labels' }));
+    change('Label key 1', 'pool');
+    change('Label value 1', 'benchmark');
+
+    select('go-ycsb');
+    expect(input('Database').value).toBe('ycsb');
+    expect(input('Database').readOnly).toBe(true);
+    change('Collection', '');
+    fireEvent.blur(input('Collection'));
+    expect(screen.getByText('Enter a collection name.')).toBeTruthy();
+    change('Collection', 'records');
+    change('Threads', '2');
+    expect(input('Database').value).toBe('ycsb');
+    fireEvent.click(start());
+    expect(submissions[0]).toMatchObject({
+      database: 'ycsb', driver: 'go-ycsb', options: { collection: 'records', threads: 2 },
+      resources: { cpuRequest: '500m' },
+    });
+    expect(submissions[0]).toHaveProperty('nodeAffinity');
+
+    select('Sysbench');
+    expect(input('Database').value).toBe('');
+    expect(input('Database').readOnly).toBe(false);
+    change('Database', 'another_db');
+    change('Threads', '3');
+    expect(input('Database').value).toBe('another_db');
+    expect(input('CPU request (millicores)').value).toBe('500');
+    expect(input('Label key 1').value).toBe('pool');
+    select('go-ycsb');
+    expect(input('Database').value).toBe('ycsb');
+    change('Collection', '');
+    expect(screen.queryByText('Enter a collection name.')).toBeNull();
+  });
+
   it('blocks submission when the driver is no longer available', () => {
     const { submissions, available } = setup();
     available(['sysbench']);

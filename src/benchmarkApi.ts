@@ -14,7 +14,7 @@ export type BenchmarkRunResources = {
 
 export type CreateBenchmarkRunRequest = DriverRequest & {
   target: BenchmarkTarget;
-  /** Omit to benchmark the instance's default database. */
+  /** Omit to use the selected driver's database defaults. */
   database?: string;
   resources?: BenchmarkRunResources;
   nodeAffinity?: NodeAffinity;
