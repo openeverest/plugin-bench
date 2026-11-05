@@ -193,6 +193,23 @@ docker_build(
     ],
 )
 
+goycsb_runner_image = 'plugin-bench-go-ycsb:tilt-dev'
+docker_build(
+    goycsb_runner_image,
+    context='{0}/runners/go-ycsb'.format(bench_dir),
+    dockerfile='{0}/runners/go-ycsb/Dockerfile'.format(bench_dir),
+    only=[
+        'Dockerfile',
+        'go.mod',
+        'go.sum',
+        'main.go',
+        'credentials.go',
+        'output.go',
+        'metrics.go',
+        'workloads/workloada',
+    ],
+)
+
 # ===========================
 # Plugin: Helm chart
 # ===========================
@@ -218,11 +235,12 @@ helm_resource(
     chart_dir,
     namespace=plugin_namespace,
     flags=plugin_flags,
-    image_deps=[plugin_bench_image, pgbench_runner_image, sysbench_runner_image],
+    image_deps=[plugin_bench_image, pgbench_runner_image, sysbench_runner_image, goycsb_runner_image],
     image_keys=[
         ('image.repository', 'image.tag'),
         ('drivers.pgbench.image.repository', 'drivers.pgbench.image.tag'),
         ('drivers.sysbench.image.repository', 'drivers.sysbench.image.tag'),
+        ('drivers.go-ycsb.image.repository', 'drivers.go-ycsb.image.tag'),
     ],
     resource_deps=plugin_resource_deps,
     labels=['plugin-bench'],
