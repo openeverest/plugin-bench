@@ -16,8 +16,8 @@ most 16 KiB. New clients always identify the driver and provide an options objec
 ```
 
 Use a disposable benchmark database. For pgbench, `initialize: true` drops and
-recreates pgbench tables. An omitted or empty `database` uses the driver's
-resolution of upstream connection details; it does not create a database.
+recreates pgbench tables. For SQL drivers, an omitted or empty `database` uses
+the driver's resolution of upstream connection details; it does not create a database.
 
 Resources and node affinity remain optional shared fields outside `options`.
 The selected driver must support the database type returned by OpenEverest;
@@ -26,7 +26,7 @@ deployment settings, never from the request.
 
 The API checks the shared request envelope; the driver strictly decodes its
 options into a typed struct and validates them. Arrays, strings, and `null` are
-not options objects. Both drivers reject unknown option fields and explicitly
+not options objects. All drivers reject unknown option fields and explicitly
 null fields. Omitted pgbench fields receive these defaults:
 
 | Field | Default | Validation |
@@ -101,7 +101,7 @@ Job and Secret cleanup does not remove database tables.
 
 `durationSeconds` limits the measured phase. Scheduling, image startup, and
 preparation also consume the shared overall execution timeout. Resources and
-node affinity work identically for both drivers. The password is supplied through
+node affinity use the shared execution lifecycle. The password is supplied through
 a per-run Secret reference; other connection fields and benchmark settings use
 ordinary environment values. Effective options and snapshots contain no credentials.
 
@@ -138,7 +138,7 @@ mutable tags do not guarantee identical runner binaries across runs.
 ## Runner transport and wire format
 
 Each runner writes one final JSON record to `/dev/termination-log` after obtaining
-its measurements. Both pgbench and Sysbench write it after a successful,
+its measurements. All three runners write it after a successful,
 uncancelled benchmark and after measured stdout has been drained. The record
 uses this version-1 format:
 
@@ -172,7 +172,9 @@ extracts TPS without initial connection time and average latency from its own
 summary. The Sysbench runner extracts transaction throughput and average latency
 from the final SQL statistics and latency sections of `oltp_read_write`, excluding
 preparation output and intermediate reports. It emits `tps` in `tx/s` and
-`latency_avg` in `ms`. Shared names and units do not make results from different
+`latency_avg` in `ms`. go-ycsb reports `ops_per_second` in `ops/s` and
+`latency_avg` in `ms` from the final measured `TOTAL` summary, excluding loading.
+Shared names and units do not make results from different
 workloads or engines directly comparable. Shared backend code only decodes named
 numbers with units. Multi-step operations such as initialization,
 prepare/run/cleanup, or load/run belong inside
@@ -201,7 +203,7 @@ and `outputTruncated` flag. This limit does not truncate termination metrics.
 Missing or invalid records mean metrics are unavailable. Running records and
 terminal runs without available metrics omit `metrics`; this alone never changes
 execution status or removes log output. Older runner images remain usable.
-Both runners warn generically if metrics cannot be produced/written and preserve
+All runners warn generically if metrics cannot be produced/written and preserve
 their benchmark exit status; failed/cancelled runs do not write a success record.
 Shared collection can retain valid metrics from another runner even if the Job
 fails. Log or cleanup errors can still make execution fail while
@@ -222,12 +224,22 @@ comparison charts, and a metric taxonomy are separate follow-up work.
 
 The benchmark tab submits explicit `driver` and `options` fields. Its shared form
 renders the selected driver's options component: pgbench for the supported
-PostgreSQL providers and Sysbench for `percona-server-mysql` and
-`percona-xtradb-cluster`. Both forms default
+PostgreSQL providers, Sysbench for `percona-server-mysql` and
+`percona-xtradb-cluster`, and go-ycsb for `percona-server-mongodb`. The sidebar and
+tab intersect provider support with the backend's enabled driver IDs.
+The PostgreSQL and MySQL forms default
 to a 30-second run with initialization enabled. The MySQL form requires an existing
 database name for both `percona-server-mysql` and `percona-xtradb-cluster`;
 neither provider's credentials supply a default database.
 The API defaults above apply to omitted fields.
+
+The go-ycsb form fixes Database to `ycsb` and exposes collection, record count,
+operation count, threads, and loading. Defaults are `usertable`, 10000, 20000,
+1, and loading on; the API's omitted `initialize` remains false. Only an omitted,
+empty, or `ycsb` database is accepted by the backend. Loading can create the
+database/collection with authorized credentials; reuse requires matching dataset
+settings. See the [MongoDB API example](../README.md#mongodb-benchmarks-through-the-api)
+and [runner reference](../runners/go-ycsb/README.md) for validation and cleanup rules.
 
 Result cards display the stored driver, configured image reference, and effective
 options without interpreting a driver's option schema. Completed runs show metric

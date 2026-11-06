@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { PgbenchOptionsForm } from './PgbenchOptionsForm';
 import { SysbenchOptionsForm } from './SysbenchOptionsForm';
+import { GoYCSBOptionsForm } from './GoYCSBOptionsForm';
 import type { BenchmarkDriverId, DriverDraft, DriverOptionsErrors } from './index';
 
 export interface DriverOptionsFormProps<K extends BenchmarkDriverId = BenchmarkDriverId> {
@@ -16,6 +17,7 @@ export interface DriverOptionsFormProps<K extends BenchmarkDriverId = BenchmarkD
 const optionsForms: { [K in BenchmarkDriverId]: (props: DriverOptionsFormProps<K>) => ReactElement } = {
   pgbench: PgbenchOptionsForm,
   sysbench: SysbenchOptionsForm,
+  'go-ycsb': GoYCSBOptionsForm,
 };
 
 export function DriverOptionsForm<K extends BenchmarkDriverId>(props: DriverOptionsFormProps<K>) {

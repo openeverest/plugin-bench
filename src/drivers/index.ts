@@ -6,12 +6,17 @@ import {
   describeSysbenchRunOptions, initialSysbenchOptionsDraft, prepareSysbenchOptions, validateSysbenchDatabase,
 } from './sysbench.js';
 import type { SysbenchOptions, SysbenchOptionsDraft } from './sysbench';
+import {
+  describeGoYCSBRunOptions, initialGoYCSBOptionsDraft, prepareGoYCSBOptions, validateGoYCSBDatabase,
+} from './goycsb.js';
+import type { GoYCSBOptions, GoYCSBOptionsDraft } from './goycsb';
 
 // Register each driver's draft and validated options together so their types
 // stay associated throughout the form and the submitted request.
 type DriverTypes = {
   pgbench: { draft: PgbenchOptionsDraft; options: PgbenchOptions };
   sysbench: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
+  'go-ycsb': { draft: GoYCSBOptionsDraft; options: GoYCSBOptions };
 };
 
 export type BenchmarkDriverId = keyof DriverTypes;
@@ -31,6 +36,8 @@ type DriverDefinition<K extends BenchmarkDriverId> = {
   providers: readonly string[];
   /** Providers whose credentials do not supply a default database. */
   databaseRequiredProviders?: readonly string[];
+  /** A driver whose tool can benchmark only one database. */
+  fixedDatabase?: { name: string; helperText: string };
   createDraft: () => DriverDraft<K>;
   prepare: (draft: DriverDraft<K>) => DriverPreparation<K>;
   validateDatabase: (database: string) => string | undefined;
@@ -63,6 +70,22 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
     },
     validateDatabase: validateSysbenchDatabase,
     describeRunOptions: describeSysbenchRunOptions,
+  },
+  'go-ycsb': {
+    label: 'go-ycsb',
+    providers: ['percona-server-mongodb'],
+    fixedDatabase: {
+      name: 'ycsb',
+      helperText: 'go-ycsb currently supports only the ycsb database. The instance credentials need read/write access to it.',
+    },
+    createDraft: () => ({ driver: 'go-ycsb', options: { ...initialGoYCSBOptionsDraft } }),
+    prepare: ({ options }) => {
+      const prepared = prepareGoYCSBOptions(options);
+      if (prepared.ok === false) return prepared;
+      return { ok: true, request: { driver: 'go-ycsb', options: prepared.options } };
+    },
+    validateDatabase: validateGoYCSBDatabase,
+    describeRunOptions: describeGoYCSBRunOptions,
   },
 };
 
