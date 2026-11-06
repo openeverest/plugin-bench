@@ -1,0 +1,28 @@
+Using request distribution 'uniform' a keyrange of [0 999]
+Connected to MongoDB!
+***************** properties *****************
+"readallfields"="true"
+"dotransactions"="false"
+"updateproportion"="0.5"
+"requestdistribution"="uniform"
+"mongodb.url"="<redacted-mongodb-uri>"
+"recordcount"="1000"
+"fieldlength"="100"
+"readproportion"="0.5"
+"threadcount"="1"
+"operationcount"="4000"
+"workload"="core"
+"scanproportion"="0"
+"measurement.interval"="1"
+"insertproportion"="0"
+"fieldcount"="10"
+"command"="load"
+"table"="qualification_records"
+"readmodifywriteproportion"="0"
+**********************************************
+write exception: write errors: [E11000 duplicate key error collection: ycsb.qualification_records index: _id_ dup key: { _id: "user6284781860667377211" }]
+write exception: write errors: [E11000 duplicate key error collection: ycsb.qualification_records index: _id_ dup key: { _id: "user6284782960179005422" }]
+[Repeated duplicate-key diagnostics and periodic reports omitted from this fixture.]
+**********************************************
+Run finished, takes 1.394293232s
+INSERT_ERROR - Takes(s): 1.4, Count: 1000, OPS: 717.9, Avg(us): 1335, Min(us): 680, Max(us): 10183, 50th(us): 1166, 90th(us): 1971, 95th(us): 2477, 99th(us): 4007, 99.9th(us): 5223, 99.99th(us): 10183

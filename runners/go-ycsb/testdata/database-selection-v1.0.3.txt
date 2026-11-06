@@ -1,0 +1,14 @@
+Using request distribution 'uniform' a keyrange of [0 19]
+Connected to MongoDB!
+***************** properties *****************
+"mongodb.url"="<redacted-mongodb-uri>"
+"workload"="core"
+"recordcount"="20"
+"dotransactions"="false"
+"command"="load"
+"table"="database_probe"
+**********************************************
+**********************************************
+Run finished, takes 51.632192ms
+INSERT - Takes(s): 0.0, Count: 20, OPS: 1416.0, Avg(us): 2495, Min(us): 520, Max(us): 37695, 50th(us): 595, 90th(us): 1032, 95th(us): 1283, 99th(us): 37695, 99.9th(us): 37695, 99.99th(us): 37695
+TOTAL  - Takes(s): 0.0, Count: 20, OPS: 1440.6, Avg(us): 2495, Min(us): 520, Max(us): 37695, 50th(us): 595, 90th(us): 1032, 95th(us): 1283, 99th(us): 37695, 99.9th(us): 37695, 99.99th(us): 37695

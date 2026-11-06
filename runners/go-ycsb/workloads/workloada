@@ -1,0 +1,12 @@
+# Workload A: equal reads and updates with uniform key selection.
+# Record count, operation count and workers are supplied separately by the runner.
+workload=core
+readallfields=true
+readproportion=0.5
+updateproportion=0.5
+insertproportion=0
+scanproportion=0
+readmodifywriteproportion=0
+requestdistribution=uniform
+fieldcount=10
+fieldlength=100
