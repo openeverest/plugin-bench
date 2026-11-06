@@ -1,5 +1,8 @@
 # Keep at 1: run state and concurrency limits are local to each backend pod.
 # Scale out only after adding shared storage and cross-pod coordination.
+# Must remain 1: on startup the backend fails runs left "running" by a previous
+# process and deletes their leftover Jobs and Secrets, which is only safe while
+# one backend owns the workload namespace.
 replicaCount: 1
 
 # Allow time beyond the backend's 30-second shutdown timeout for Kubernetes cleanup.
@@ -78,6 +81,19 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+
+# Where benchmark run history is stored.
+storage:
+  # "memory" keeps history in the backend process: it is lost on restart and
+  # completed runs expire after one hour. "postgresql" persists history.
+  type: memory
+  postgresql:
+    # Secret in the release namespace containing a PostgreSQL connection URI,
+    # e.g. postgresql://user:password@host:5432/benchmarks?sslmode=require.
+    # The backend creates and migrates its own tables in that database.
+    existingSecret: ""
+    # Key in existingSecret that holds the URI.
+    uriKey: uri
 
 # Shared configuration for benchmark Kubernetes Jobs.
 runner:

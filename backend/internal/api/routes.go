@@ -32,7 +32,7 @@ type API struct {
 	runner              BenchmarkRunner
 	registry            *driver.Registry
 	resourceDefaults    coordinator.Resources
-	store               *RunStore
+	store               RunStore
 	lifecycleCtx        context.Context
 	runSlots            chan struct{}
 	runsMu              sync.Mutex
@@ -40,7 +40,7 @@ type API struct {
 	closing             bool
 }
 
-func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, registry *driver.Registry, lookupInstances InstanceLookup) *API {
+func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, registry *driver.Registry, lookupInstances InstanceLookup) *API {
 	if store == nil {
 		store = NewRunStore()
 	}
@@ -63,6 +63,7 @@ func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessC
 func (a *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/instances", a.listInstances)
 	mux.HandleFunc("POST /api/runs", a.createRun)
+	mux.HandleFunc("GET /api/runs", a.listRuns)
 	mux.HandleFunc("GET /api/runs/{id}", a.getRun)
 }
 

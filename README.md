@@ -41,8 +41,16 @@ Missing or invalid metrics do not turn a successful benchmark into a failed run.
 The frontend submits the explicit driver/options envelope and displays these
 effective settings and metrics.
 
+`GET /api/runs?k8sCluster=…&namespace=…&instance=…` lists one instance's runs,
+newest first. `limit` is optional (default 20, maximum 100). The caller's access
+to the instance is verified through OpenEverest before history is read. Entries
+contain status, timestamps, effective settings, metrics, and errors but omit
+runner output; fetch a single run for its logs. Both run responses include the
+target's `databaseType` as reported by OpenEverest.
+
 `GET /api/status` returns generic backend readiness with `status`, `runnerReady`,
-`storage`, `message`, and a sorted `drivers` array of enabled driver IDs, such as
+`storage` (`ephemeral` for in-memory history, `postgresql` when persistent),
+`message`, and a sorted `drivers` array of enabled driver IDs, such as
 `["go-ycsb", "pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
 `database` field has been removed. This endpoint does not test database
 connectivity or runner-image availability.
@@ -157,7 +165,7 @@ run's status and logs. Failed runs show their error alongside any available resu
 
 Use **Look up a benchmark run** to retrieve a stored run by ID. Looking up an
 already displayed ID does not add a duplicate card. Records remain subject to the
-in-memory retention described under [Current limitations](#current-limitations).
+configured [run history storage](#run-history-storage).
 
 ### Runner placement
 
@@ -239,6 +247,78 @@ images. It injects each runner's repository and tag
 through `drivers.<id>.image.repository` and `drivers.<id>.image.tag`. Runner images
 are used when the coordinator starts benchmark Jobs; no published runner image
 is needed for this flow.
+
+Set `BENCH_STORAGE=postgresql` in `dev/.env` to deploy a disposable PostgreSQL
+and store run history there, which lets you exercise persistence and restart
+recovery locally. Its data is lost when that Pod is replaced.
+
+## Run history storage
+
+By default, run history lives in backend memory: it is lost on restart and
+completed runs expire after one hour. To keep history, point the plugin at a
+PostgreSQL database, for example one provisioned with OpenEverest:
+
+1. Create a database for the plugin, such as `benchmarks`, and an account that
+   can create tables in it.
+2. Create a Secret in the plugin's release namespace that holds the connection
+   URI. Kubernetes reads Secret references only from the Pod's own namespace,
+   so a connection Secret in another namespace must be copied:
+
+   ```bash
+   kubectl -n everest-system create secret generic plugin-bench-history \
+     --from-literal=uri='postgresql://bench:<password>@<host>:5432/benchmarks?sslmode=require'
+   ```
+
+3. Enable PostgreSQL storage:
+
+   ```yaml
+   storage:
+     type: postgresql
+     postgresql:
+       existingSecret: plugin-bench-history
+       uriKey: uri
+   ```
+
+On startup, the backend applies its own schema migrations (the
+`benchmark_runs`, `benchmark_run_metrics`, `plugin_bench_installation`, and
+`plugin_bench_schema_migrations` tables) under an advisory lock and refuses to
+start against a schema created by a newer release. A database belongs to one
+plugin installation, identified by its Helm release name: a second installation
+pointed at the same database refuses to start before changing its schema, so
+give each installation its own database or schema (for example, with
+`search_path=<schema>` in the URI). An
+unreachable database or an invalid URI stops startup rather than falling back
+to memory. Each run records its target, database type (for example
+`postgresql` or `mysql`), driver, effective options, resources, status,
+timestamps, and redacted logs; it never contains target database credentials.
+Metrics are stored one row per name and unit in `benchmark_run_metrics`, so any
+benchmark tool can report its own metrics and results can be compared across
+runs with SQL. PostgreSQL history is kept until
+you delete it; there is no automatic retention yet.
+
+Avoid benchmarking the database that stores history: the benchmark load skews
+its own results and competes with history writes.
+
+### Restart recovery
+
+A run cannot be resumed after the backend restarts, because redacting its logs
+requires target credentials that only existed in the previous process. Before
+accepting requests, the backend therefore marks runs left `running` as `failed`
+("interrupted because the benchmark service restarted") and deletes the runner
+Jobs and credential Secrets in the workload namespace labeled
+`app.kubernetes.io/managed-by=plugin-bench` and
+`app.kubernetes.io/instance=<release name>`. Other installations' resources are
+untouched. In memory mode, the records are already gone, but leftover resources
+are still removed. If cleanup fails, for example because of a transient
+Kubernetes API error, startup continues and cleanup is retried in the
+background with backoff until it succeeds. Each backend process also labels its
+runner resources with `benchmark.openeverest.io/backend-process`, and cleanup
+skips the current process's resources, so retries never touch runs started
+after the restart.
+
+This cleanup assumes one backend per installation. The chart uses the
+`Recreate` Deployment strategy, so the old backend stops before the new one
+starts, and rejects `replicaCount` values other than 1.
 
 ## Driver configuration
 
@@ -385,6 +465,8 @@ npm run build
 
 cd backend && go test ./...
 cd backend && go vet ./...
+# PostgreSQL storage integration tests (skipped unless the URI is set):
+cd backend && PLUGIN_BENCH_TEST_POSTGRES_URI='postgres://user:pass@localhost:5432/db?sslmode=disable' go test ./internal/pgstore/ .
 
 helm lint charts/plugin-bench/
 docker build -t plugin-bench-pgbench:dev runners/pgbench
@@ -439,6 +521,8 @@ backend/internal/everest/    OpenEverest API client
 backend/internal/driver/     Driver contracts, registry, workload preparation
 backend/internal/coordinator Kubernetes Job and Secret orchestration
 backend/internal/runnerresult Generic runner metrics decoder
+backend/internal/api/storetest Shared run store conformance tests
+backend/internal/pgstore/    PostgreSQL run history storage and migrations
 runners/pgbench/             pgbench runner image
 runners/sysbench/            MySQL Sysbench runner image
 runners/go-ycsb/             MongoDB go-ycsb runner image
@@ -452,12 +536,12 @@ spec.md                      MVP requirements
 The UI supports the providers listed above; MySQL requires an enabled Sysbench
 driver and a usable image. MongoDB is limited to the `ycsb` database and Workload A;
 additional workloads remain future work.
-Run records, including output and metrics, are held in backend memory and are
-lost on restart.
-Completed records become unavailable one hour after completion; running records
-do not expire. Expired records are removed from memory when a new run is created.
-Keep one backend replica until shared storage and cross-pod coordination exist.
-Persistent history and comparisons remain future work.
+With the default in-memory storage, run records, including output and metrics,
+are lost on restart, and completed records become unavailable one hour after
+completion. Configure [PostgreSQL storage](#run-history-storage) to keep
+history. Runs in progress during a restart are marked failed rather than
+resumed. One backend replica is supported. The UI does not show run history yet,
+and comparisons remain future work.
 
 ## License
 

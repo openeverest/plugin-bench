@@ -110,7 +110,7 @@ func TestPreparationErrorsRejectBeforeAdmission(t *testing.T) {
 				return coordinator.Result{}, nil
 			}), NewRunStore(), context.Background(), coordinator.Resources{})
 			w := submitRun(a, test.body)
-			if w.Code != test.status || called.Load() || len(a.store.runs) != 0 || len(a.runSlots) != 0 {
+			if w.Code != test.status || called.Load() || storedRunCount(a) != 0 || len(a.runSlots) != 0 {
 				t.Fatalf("POST = %d: %s; invalid request was admitted", w.Code, w.Body.String())
 			}
 			if strings.Contains(w.Body.String(), "credential-sentinel") || strings.Contains(w.Body.String(), testCredentials().Password) {
@@ -131,7 +131,7 @@ func TestPreparationErrorsRejectBeforeAdmission(t *testing.T) {
 			if absent == "registry" {
 				want = http.StatusServiceUnavailable
 			}
-			if w.Code != want || len(a.store.runs) != 0 {
+			if w.Code != want || storedRunCount(a) != 0 {
 				t.Fatalf("missing %s: %d, %s", absent, w.Code, w.Body.String())
 			}
 		})
@@ -252,7 +252,7 @@ func TestInvalidDriverPreparationCannotAdmitRun(t *testing.T) {
 				}),
 				NewRunStore(), context.Background(), coordinator.Resources{}, registry, nil)
 			w := submitRun(a, strings.Replace(modernRunBody, `"pgbench"`, `"fake-tool"`, 1))
-			if w.Code != http.StatusInternalServerError || called.Load() || len(a.store.runs) != 0 || len(a.runSlots) != 0 || strings.Contains(w.Body.String(), "credential-sentinel") {
+			if w.Code != http.StatusInternalServerError || called.Load() || storedRunCount(a) != 0 || len(a.runSlots) != 0 || strings.Contains(w.Body.String(), "credential-sentinel") {
 				t.Fatalf("invalid preparation caused admission or unsafe error: %d %s", w.Code, w.Body.String())
 			}
 		})
@@ -334,7 +334,7 @@ func testPreparedDriverExecution(t *testing.T, message string, wantMetrics []run
 		}}}, nil
 	})
 	defaults := coordinator.Resources{CPURequest: "0", MemoryLimit: "0"}
-	runner, err := coordinator.New(coordinator.Config{WorkloadNamespace: "workloads", RunnerServiceAccount: "runner", ExecutionTimeout: time.Minute, Resources: defaults}, client)
+	runner, err := coordinator.New(coordinator.Config{InstallationID: "plugin-bench", WorkloadNamespace: "workloads", RunnerServiceAccount: "runner", ExecutionTimeout: time.Minute, Resources: defaults}, client)
 	if err != nil {
 		t.Fatal(err)
 	}

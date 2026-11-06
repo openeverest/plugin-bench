@@ -197,7 +197,7 @@ func TestGoYCSBPreparationErrorsRejectBeforeAdmission(t *testing.T) {
 			if err := a.Shutdown(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if w.Code != test.status || called.Load() || len(a.store.runs) != 0 || len(a.runSlots) != 0 {
+			if w.Code != test.status || called.Load() || storedRunCount(a) != 0 || len(a.runSlots) != 0 {
 				t.Fatalf("POST = %d: %s; invalid request was admitted", w.Code, w.Body.String())
 			}
 			for _, secret := range []string{"credential-sentinel", "mongo-password", credentials.URI} {

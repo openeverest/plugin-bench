@@ -121,12 +121,12 @@ func TestRunMetricsRequireTargetAccessAndAreOmittedWhileRunning(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := NewRunStore()
-			if _, err := store.Create("run", Target{K8sCluster: "main", Namespace: "db", Instance: "instance"}, RunSnapshot{}, coordinator.Resources{}, nil); err != nil {
+			if _, err := store.Create(context.Background(), "run", Target{K8sCluster: "main", Namespace: "db", Instance: "instance"}, RunSnapshot{}, coordinator.Resources{}, nil); err != nil {
 				t.Fatal(err)
 			}
 			if test.completed {
 				result := coordinator.Result{Metrics: []runnerresult.Metric{{Name: "private_metric", Unit: "count", Value: 9}}}
-				if err := store.Complete("run", RunStatusSucceeded, result, ""); err != nil {
+				if err := store.Complete(context.Background(), "run", RunStatusSucceeded, result, ""); err != nil {
 					t.Fatal(err)
 				}
 			}

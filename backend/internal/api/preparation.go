@@ -74,7 +74,8 @@ func (a *API) prepareRun(request CreateRunRequest, credentials *everest.Credenti
 	}
 	return preparedRun{
 		Input: input,
-		Snapshot: RunSnapshot{Driver: registration.Driver.ID(), RunnerImage: registration.Runner.Image,
+		Snapshot: RunSnapshot{DatabaseType: strings.ToLower(strings.TrimSpace(credentials.Type)),
+			Driver: registration.Driver.ID(), RunnerImage: registration.Runner.Image,
 			Database: spec.Snapshot.Database, Options: append(json.RawMessage(nil), spec.Snapshot.Options...)},
 		SensitiveValues: redactionValues(spec),
 	}, nil

@@ -6,7 +6,14 @@ metadata:
   labels:
     {{- include "plugin-bench.labels" . | nindent 4 }}
 spec:
+  {{- if ne (int .Values.replicaCount) 1 }}
+  {{- fail "replicaCount must be 1: startup recovery assumes a single backend owns the workload namespace" }}
+  {{- end }}
   replicas: {{ .Values.replicaCount }}
+  # Recreate stops the old backend, which records or fails its active runs,
+  # before the new one starts and cleans up what was left behind.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "plugin-bench.selectorLabels" . | nindent 6 }}
@@ -31,6 +38,10 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.service.port | quote }}
+            # The cluster-scoped Plugin CR is named after the release, so the
+            # release name uniquely identifies this installation.
+            - name: BENCHMARK_INSTALLATION_ID
+              value: {{ .Release.Name | quote }}
             - name: WORKLOAD_NAMESPACE
               value: {{ include "plugin-bench.workloadNamespace" . | quote }}
             - name: RUNNER_SERVICE_ACCOUNT_NAME
@@ -53,6 +64,17 @@ spec:
               value: {{ .Values.runner.resources.limits.cpu | quote }}
             - name: RUNNER_MEMORY_LIMIT
               value: {{ .Values.runner.resources.limits.memory | quote }}
+            - name: BENCHMARK_STORAGE
+              value: {{ .Values.storage.type | quote }}
+            {{- if eq .Values.storage.type "postgresql" }}
+            - name: BENCHMARK_STORAGE_POSTGRES_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "storage.postgresql.existingSecret is required when storage.type is postgresql" .Values.storage.postgresql.existingSecret | quote }}
+                  key: {{ required "storage.postgresql.uriKey is required" .Values.storage.postgresql.uriKey | quote }}
+            {{- else if ne .Values.storage.type "memory" }}
+            {{- fail "storage.type must be memory or postgresql" }}
+            {{- end }}
             {{- if .Values.everestAPIURL }}
             - name: EVEREST_API_URL
               value: {{ .Values.everestAPIURL | quote }}

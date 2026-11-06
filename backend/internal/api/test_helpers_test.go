@@ -28,7 +28,7 @@ func testRegistry() *driver.Registry {
 	return registry
 }
 
-func newTestAPI(get CredentialLookup, access InstanceAccessCheck, runner BenchmarkRunner, store *RunStore, ctx context.Context, defaults coordinator.Resources) *API {
+func newTestAPI(get CredentialLookup, access InstanceAccessCheck, runner BenchmarkRunner, store RunStore, ctx context.Context, defaults coordinator.Resources) *API {
 	return NewAPI(get, access, runner, store, ctx, defaults, testRegistry(), nil)
 }
 
@@ -82,7 +82,7 @@ func awaitAcceptedRun(t *testing.T, a *API, w *httptest.ResponseRecorder) Run {
 	if err := a.Shutdown(ctx); err != nil {
 		t.Fatal(err)
 	}
-	run, err := a.store.Get(response.ID)
+	run, err := a.store.Get(context.Background(), response.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,4 +108,8 @@ func mutateTestNodeAffinity(affinity *corev1.NodeAffinity) {
 	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight = 1
 	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchExpressions[0].Values[0] = "changed"
 	affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchFields[0].Values[0] = "changed"
+}
+
+func storedRunCount(a *API) int {
+	return len(a.store.(*MemoryRunStore).runs)
 }

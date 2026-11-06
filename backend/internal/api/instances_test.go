@@ -68,7 +68,7 @@ func TestListInstancesEndpoint(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || !reflect.DeepEqual(response.Instances, want) {
 		t.Fatalf("response = %s, decode error = %v", w.Body.String(), err)
 	}
-	if calls != 1 || len(a.store.runs) != 0 || len(a.runSlots) != cap(a.runSlots) {
+	if calls != 1 || storedRunCount(a) != 0 || len(a.runSlots) != cap(a.runSlots) {
 		t.Fatal("discovery changed benchmark run state or called lookup more than once")
 	}
 }

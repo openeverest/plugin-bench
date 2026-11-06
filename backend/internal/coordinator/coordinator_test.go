@@ -11,6 +11,7 @@ import (
 
 func validConfig() Config {
 	return Config{
+		InstallationID:       "plugin-bench",
 		WorkloadNamespace:    "plugin-bench-workloads",
 		RunnerServiceAccount: "plugin-bench-runner",
 		ExecutionTimeout:     time.Minute,
@@ -109,5 +110,15 @@ func TestNewValidatesRunnerResources(t *testing.T) {
 				t.Fatal("configuration validation made Kubernetes API calls")
 			}
 		})
+	}
+}
+
+func TestConfigRequiresInstallationIDLabelValue(t *testing.T) {
+	for _, id := range []string{"", "not/a label", strings.Repeat("a", 64)} {
+		config := validConfig()
+		config.InstallationID = id
+		if err := config.Validate(); err == nil {
+			t.Fatalf("accepted installation ID %q", id)
+		}
 	}
 }

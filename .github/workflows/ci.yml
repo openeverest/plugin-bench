@@ -31,6 +31,24 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    services:
+      # Run history integration tests use a disposable database and an
+      # isolated schema per test.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: bench
+          POSTGRES_PASSWORD: bench
+          POSTGRES_DB: bench
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bench -d bench"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PLUGIN_BENCH_TEST_POSTGRES_URI: postgres://bench:bench@localhost:5432/bench?sslmode=disable
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
