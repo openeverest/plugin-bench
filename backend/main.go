@@ -18,6 +18,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/api"
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/goycsb"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/pgbench"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/sysbench"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
@@ -143,6 +144,7 @@ func decodeJSONEnv(key string, target any) error {
 // those implementations and selects their runner images.
 func benchmarkRegistryFromEnv() (*driver.Registry, error) {
 	registrations, err := driverRegistrationsFromEnv(map[string]func() driver.Driver{
+		"go-ycsb":  goycsb.New,
 		"pgbench":  pgbench.New,
 		"sysbench": sysbench.New,
 	})

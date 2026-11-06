@@ -73,13 +73,16 @@ jobs:
   # Keep the built images as archives so publication uses the tested artifacts.
   build-image:
     name: Build and test images
-    runs-on: ubuntu-latest
+    # This job runs MongoDB 8.0 for the go-ycsb image integration tests.
+    # Temporarily use the 22.04 runner's compatible kernel (SERVER-121912).
+    runs-on: ubuntu-22.04
     needs: [prepare, build-frontend]
     timeout-minutes: 60
     outputs:
       backend-tags: ${{ steps.backend-meta.outputs.tags }}
       runner-tags: ${{ steps.runner-meta.outputs.tags }}
       sysbench-tags: ${{ steps.sysbench-meta.outputs.tags }}
+      ycsb-runner-tags: ${{ steps.ycsb-meta.outputs.tags }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Download frontend bundle
@@ -90,7 +93,11 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.25"
-          cache-dependency-path: backend/go.sum
+          cache-dependency-path: |
+            backend/go.sum
+            runners/pgbench/go.mod
+            runners/sysbench/go.mod
+            runners/go-ycsb/go.sum
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: "3.14.0"
@@ -103,6 +110,7 @@ jobs:
           (cd backend && go vet ./... && go test -race ./...)
           (cd runners/pgbench && go vet ./... && go test -race ./...)
           (cd runners/sysbench && go vet ./... && go test -race ./...)
+          (cd runners/go-ycsb && go vet ./... && go test -race ./...)
       - run: helm lint charts/plugin-bench/
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -131,6 +139,15 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ needs.prepare.outputs.image }}-sysbench
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+      - name: Extract go-ycsb runner image metadata
+        id: ycsb-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ needs.prepare.outputs.image }}-go-ycsb
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -168,6 +185,16 @@ jobs:
           labels: ${{ steps.sysbench-meta.outputs.labels }}
           cache-from: type=gha,scope=sysbench-runner
           cache-to: type=gha,scope=sysbench-runner,mode=max
+      - name: Build go-ycsb runner archive
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: runners/go-ycsb
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=image-artifacts/go-ycsb-runner.tar
+          tags: ${{ needs.prepare.outputs.image }}-go-ycsb:${{ needs.prepare.outputs.version }}
+          labels: ${{ steps.ycsb-meta.outputs.labels }}
+          cache-from: type=gha,scope=go-ycsb-runner
+          cache-to: type=gha,scope=go-ycsb-runner,mode=max
       - name: Install image tools
         run: |
           sudo apt-get update
@@ -204,6 +231,14 @@ jobs:
       - name: Integration test Sysbench runner
         timeout-minutes: 10
         run: bash .github/scripts/test-sysbench-runner.sh plugin-bench-sysbench:release-test
+      - name: Load go-ycsb runner from release archive
+        run: |
+          skopeo --override-os linux --override-arch amd64 copy \
+            oci-archive:image-artifacts/go-ycsb-runner.tar \
+            docker-daemon:plugin-bench-go-ycsb:release-test
+      - name: Integration test go-ycsb runner
+        timeout-minutes: 20
+        run: bash .github/scripts/test-go-ycsb-runner.sh plugin-bench-go-ycsb:release-test
       - name: Upload tested images
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -250,6 +285,7 @@ jobs:
           BACKEND_TAGS: ${{ needs.build-image.outputs.backend-tags }}
           RUNNER_TAGS: ${{ needs.build-image.outputs.runner-tags }}
           SYSBENCH_TAGS: ${{ needs.build-image.outputs.sysbench-tags }}
+          GO_YCSB_TAGS: ${{ needs.build-image.outputs.ycsb-runner-tags }}
         run: |
           set -euo pipefail
           auth="$RUNNER_TEMP/ghcr-auth.json"
@@ -266,10 +302,12 @@ jobs:
           publish image-artifacts/backend.tar "$RUNNER_TEMP/backend.digest" "$BACKEND_TAGS"
           publish image-artifacts/runner.tar "$RUNNER_TEMP/runner.digest" "$RUNNER_TAGS"
           publish image-artifacts/sysbench-runner.tar "$RUNNER_TEMP/sysbench.digest" "$SYSBENCH_TAGS"
+          publish image-artifacts/go-ycsb-runner.tar "$RUNNER_TEMP/go-ycsb.digest" "$GO_YCSB_TAGS"
           {
             echo "backend-digest=$(cat "$RUNNER_TEMP/backend.digest")"
             echo "runner-digest=$(cat "$RUNNER_TEMP/runner.digest")"
             echo "sysbench-digest=$(cat "$RUNNER_TEMP/sysbench.digest")"
+            echo "ycsb-runner-digest=$(cat "$RUNNER_TEMP/go-ycsb.digest")"
           } >> "$GITHUB_OUTPUT"
       - name: Publish Helm chart to GHCR
         env:
@@ -292,6 +330,8 @@ jobs:
             || not_public "${IMAGE}-pgbench"
           skopeo inspect --no-creds "docker://${IMAGE}-sysbench:${VERSION}" > /dev/null \
             || not_public "${IMAGE}-sysbench"
+          skopeo inspect --no-creds "docker://${IMAGE}-go-ycsb:${VERSION}" > /dev/null \
+            || not_public "${IMAGE}-go-ycsb"
           helm show chart "oci://${IMAGE%/*}/charts/plugin-bench" --version "$VERSION" \
             --registry-config "$RUNNER_TEMP/anonymous-helm.json" > /dev/null \
             || not_public "${IMAGE%/*}/charts/plugin-bench"
@@ -301,6 +341,7 @@ jobs:
           BACKEND_DIGEST: ${{ steps.publish.outputs.backend-digest }}
           RUNNER_DIGEST: ${{ steps.publish.outputs.runner-digest }}
           SYSBENCH_DIGEST: ${{ steps.publish.outputs.sysbench-digest }}
+          YCSB_RUNNER_DIGEST: ${{ steps.publish.outputs.ycsb-runner-digest }}
         run: |
           cat > release-artifacts/notes.md <<EOF
           ## Plugin Bench v${VERSION}
@@ -312,6 +353,8 @@ jobs:
             - Digest: \`${RUNNER_DIGEST}\`
           - Sysbench runner: \`${IMAGE}-sysbench:${VERSION}\`
             - Digest: \`${SYSBENCH_DIGEST}\`
+          - go-ycsb runner: \`${IMAGE}-go-ycsb:${VERSION}\`
+            - Digest: \`${YCSB_RUNNER_DIGEST}\`
 
           Platforms: \`linux/amd64\`, \`linux/arm64\`.
 

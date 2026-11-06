@@ -19,7 +19,7 @@ export type BenchmarkFormValues = SharedFormValues & DriverDraft;
 export function createInitialBenchmarkFormValues(driver: BenchmarkDriverId = defaultBenchmarkDriver): BenchmarkFormValues {
   return {
     ...createDriverDraft(driver),
-    database: '',
+    database: benchmarkDrivers[driver].fixedDatabase?.name ?? '',
     cpuRequest: '',
     cpuLimit: '',
     memoryRequest: '',

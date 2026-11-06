@@ -111,6 +111,9 @@ type Credentials struct {
 	Type     string `json:"type"`
 	// Database is a provider-specific key; not every provider publishes it.
 	Database string `json:"database"`
+	// CACertificate is a provider-specific PEM CA for instances whose
+	// certificates are not publicly trusted.
+	CACertificate string `json:"ca.crt"`
 }
 
 func everestAPIURL() string {

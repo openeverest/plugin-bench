@@ -150,4 +150,25 @@ describe('benchmark result metrics and logs', () => {
     expect(first.getByRole('rowheader', { name: 'tps' })).toBeTruthy();
     expect(second.getByRole('rowheader', { name: 'operations' })).toBeTruthy();
   });
+
+  it.each([false, true])('displays recorded go-ycsb dataset settings and operation metrics with loading=%s', initialize => {
+    const options = { collection: 'saved_records', recordCount: 1000, operationCount: 2000, threads: 2, initialize };
+    render(card({ ...completed, driver: 'go-ycsb', database: 'ycsb', runnerImage: 'registry/go-ycsb:v2',
+      options, metrics: [{ name: 'ops_per_second', unit: 'ops/s', value: 123.45 }, { name: 'latency_avg', unit: 'ms', value: 0.004321 }],
+    }));
+    expect(screen.getByText('ycsb')).toBeTruthy();
+    const effective = within(screen.getByRole('region', { name: 'Effective benchmark options' }));
+    expect(effective.getByText('saved_records')).toBeTruthy();
+    expect(effective.getByText('1000')).toBeTruthy();
+    expect(effective.getByText('2000')).toBeTruthy();
+    expect(effective.getByText(String(initialize))).toBeTruthy();
+    expect(effective.queryByText('From existing tables')).toBeNull();
+    const table = within(screen.getByRole('table', { name: 'Benchmark metrics' }));
+    expect(table.getByRole('rowheader', { name: 'ops_per_second' })).toBeTruthy();
+    expect(table.getByRole('cell', { name: 'ops/s' })).toBeTruthy();
+    expect(table.getByRole('cell', { name: 'ms' })).toBeTruthy();
+    expect(table.getByRole('cell', { name: digits('000432') })).toBeTruthy();
+    expect(table.queryByRole('rowheader', { name: 'tps' })).toBeNull();
+    expect(options).toEqual({ collection: 'saved_records', recordCount: 1000, operationCount: 2000, threads: 2, initialize });
+  });
 });

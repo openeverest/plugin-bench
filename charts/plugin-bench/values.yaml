@@ -22,7 +22,7 @@ service:
 
 plugin:
   displayName: "Performance Benchmark"
-  description: "Run and inspect PostgreSQL and MySQL benchmarks for OpenEverest database clusters."
+  description: "Run and inspect PostgreSQL, MySQL, and MongoDB benchmarks for OpenEverest database clusters."
   vendor: "OpenEverest"
   enabled: true
   bundlePath: "/main.js"
@@ -42,6 +42,7 @@ plugin:
         - provider-percona-postgresql
         - percona-server-mysql
         - percona-xtradb-cluster
+        - percona-server-mongodb
 
 everestAPIURL: ""
 
@@ -69,6 +70,14 @@ drivers:
     image:
       # Empty fields default to ghcr.io/openeverest/plugin-bench-sysbench,
       # appVersion, and IfNotPresent. Legacy runner.image affects pgbench only.
+      repository: ""
+      tag: ""
+      pullPolicy: ""
+  go-ycsb:
+    enabled: true
+    image:
+      # Empty fields default to ghcr.io/openeverest/plugin-bench-go-ycsb,
+      # appVersion, and IfNotPresent.
       repository: ""
       tag: ""
       pullPolicy: ""
