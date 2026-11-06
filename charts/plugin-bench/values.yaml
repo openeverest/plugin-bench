@@ -69,6 +69,14 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  go-ycsb:
+    enabled: true
+    image:
+      # Empty fields default to ghcr.io/openeverest/plugin-bench-go-ycsb,
+      # appVersion, and IfNotPresent.
+      repository: ""
+      tag: ""
+      pullPolicy: ""
 
 # Shared configuration for benchmark Kubernetes Jobs.
 runner:

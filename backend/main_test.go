@@ -61,6 +61,24 @@ func TestHandleStatusReportsOnlyEnabledDrivers(t *testing.T) {
 				`"pgbench":{"enabled":false}}`,
 			want: []string{"sysbench"},
 		},
+		{
+			name: "all drivers enabled",
+			payload: `{"go-ycsb":{"enabled":true,"image":"private.example/go-ycsb:test"},` +
+				`"pgbench":{"enabled":true,"image":"private.example/pgbench:test"},` +
+				`"sysbench":{"enabled":true,"image":"private.example/sysbench:test"}}`,
+			want: []string{"go-ycsb", "pgbench", "sysbench"},
+		},
+		{
+			name: "go-ycsb disabled",
+			payload: `{"go-ycsb":{"enabled":false},` +
+				`"pgbench":{"enabled":true,"image":"private.example/pgbench:test"}}`,
+			want: []string{"pgbench"},
+		},
+		{
+			name:    "go-ycsb only",
+			payload: `{"go-ycsb":{"enabled":true,"image":"private.example/go-ycsb:test"}}`,
+			want:    []string{"go-ycsb"},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("BENCHMARK_DRIVERS", test.payload)
@@ -105,6 +123,9 @@ func TestBenchmarkRegistryUsesExistingImageConfiguration(t *testing.T) {
 	}
 	if _, err := registry.Resolve("sysbench", driver.TargetInfo{DatabaseType: "mysql"}); err == nil {
 		t.Fatal("legacy pgbench image configuration implicitly enabled sysbench")
+	}
+	if _, err := registry.Resolve("go-ycsb", driver.TargetInfo{DatabaseType: "mongodb"}); err == nil {
+		t.Fatal("legacy pgbench image configuration implicitly enabled go-ycsb")
 	}
 	for _, test := range []struct{ image, policy string }{{"", "IfNotPresent"}, {"runner:test", "invalid"}} {
 		t.Setenv("RUNNER_IMAGE", test.image)

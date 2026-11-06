@@ -2,7 +2,8 @@
 
 OpenEverest Plugin Bench runs PostgreSQL (pgbench) and MySQL (Sysbench)
 benchmarks as temporary Kubernetes Jobs from the database cluster tab or backend API.
-Both drivers are enabled by default in the Helm chart.
+The backend also supports MongoDB benchmarks through go-ycsb.
+All three drivers are enabled by default in the Helm chart.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
 > launching, and inspecting benchmark runs.
@@ -15,16 +16,16 @@ The plugin backend coordinates a benchmark run:
    OpenEverest API.
 2. Pick the database: the one entered in the form, otherwise the instance's
    default database (the provider's `database` connection key, or the database
-   in its connection URI).
+   in its connection URI). The go-ycsb driver supports only the `ycsb` database.
 3. Select the requested driver, validate its options and connection details,
-   and create a temporary Secret containing its password.
+   and create a temporary Secret containing its password or connection URI.
 4. Create a Kubernetes Job using the configured driver image and prepared settings.
 5. Wait for the Job and collect the runner logs and optional structured metrics.
 6. Delete the Job and temporary Secret.
 
 The benchmark tab is built with MUI and themed from the host through
 `@openeverest/plugin-theme`.
-The backend uses a shared driver interface with pgbench and Sysbench implementations.
+The backend uses a shared driver interface with pgbench, Sysbench, and go-ycsb implementations.
 Additional benchmark tools can supply their own option validation and workload
 preparation while sharing the Kubernetes execution lifecycle.
 
@@ -69,6 +70,37 @@ already exist. Poll `GET /api/runs/{id}` with the accepted ID and caller
 authorization. See the [request contract](docs/runner-result-contract.md#sysbench-mysql-requests)
 for defaults and connection rules, and the [runner README](runners/sysbench/README.md)
 for standalone usage and table cleanup.
+
+### MongoDB benchmarks through the API
+
+go-ycsb is enabled by default in Helm and uses the runner image from the matching
+release. Tilt supplies a locally built image for development.
+Submit this body to `POST /api/runs` with caller authorization:
+
+```json
+{
+  "target": {"k8sCluster": "main", "namespace": "default", "instance": "my-mongodb"},
+  "database": "ycsb",
+  "driver": "go-ycsb",
+  "options": {"collection": "benchmark_records", "recordCount": 1000, "operationCount": 2000, "threads": 2, "initialize": true}
+}
+```
+
+The target must report type `mongodb` and supply a `mongodb://` URI. Only the
+`ycsb` database is supported by the pinned upstream tool: omit `database` or
+set it to `ycsb`; other names are rejected. The backend preserves authentication,
+including provider URIs using `/admin`, while targeting `ycsb`. The supplied
+account needs read/write access to `ycsb`. For TLS instances, a provider CA
+published as `ca.crt` in the connection details is passed to the runner to
+verify the server certificate.
+
+Workload A uses equal reads and updates. Set `initialize=true` to load a fresh,
+disposable collection; reloading existing keys fails. To reuse it, set
+`initialize=false` and keep the collection and record count unchanged. Job cleanup
+leaves the data in MongoDB; drop the collection separately when finished.
+Poll `GET /api/runs/{id}` for logs and optional `ops_per_second` (`ops/s`) and
+`latency_avg` (`ms`). See the [runner reference](runners/go-ycsb/README.md)
+for defaults. MongoDB UI support is tracked separately.
 
 ### Using the benchmark tab
 
@@ -193,7 +225,7 @@ If the cluster already exists, run:
 tilt up -f dev/Tiltfile
 ```
 
-Tilt builds the frontend, backend image, and both pgbench and Sysbench runner
+Tilt builds the frontend, backend image, and pgbench, Sysbench, and go-ycsb runner
 images. It injects each runner's repository and tag
 through `drivers.<id>.image.repository` and `drivers.<id>.image.tag`. Runner images
 are used when the coordinator starts benchmark Jobs; no published runner image
@@ -217,6 +249,12 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  go-ycsb:
+    enabled: true
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: ""
 ```
 
 Empty image fields use the defaults below after any legacy pgbench overrides.
@@ -225,7 +263,7 @@ With no overrides, pgbench uses
 `appVersion` comes from the chart being installed, including metadata set by
 `helm package --app-version` during a release.
 
-Both drivers are enabled by default and use their published release images.
+All three drivers are enabled by default and use their matching release images.
 To use a custom Sysbench image, override its repository or tag:
 
 ```yaml
@@ -268,7 +306,7 @@ Helm serializes the resolved settings into one backend environment variable.
 For a chart with `appVersion: 0.2.0`:
 
 ```json
-{"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.2.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-sysbench:0.2.0","imagePullPolicy":"IfNotPresent"}}
+{"go-ycsb":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-go-ycsb:0.2.0","imagePullPolicy":"IfNotPresent"},"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.2.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-sysbench:0.2.0","imagePullPolicy":"IfNotPresent"}}
 ```
 
 The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
@@ -276,8 +314,7 @@ The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
 policy must be `Always`, `IfNotPresent`, or `Never` (omitted/empty defaults to
 `IfNotPresent`). Only drivers compiled into the backend can be enabled; adding
 a Helm entry does not install an implementation. The compiled drivers are
-pgbench and Sysbench. At least one must remain enabled; disabling pgbench is
-valid when Sysbench is enabled with a usable image.
+pgbench, Sysbench, and go-ycsb. At least one must remain enabled with a usable image.
 
 For deployments setting environment variables directly, `RUNNER_IMAGE` and
 `RUNNER_IMAGE_PULL_POLICY` remain deprecated pgbench fallbacks **only when
@@ -320,6 +357,11 @@ benchmark settings use environment values. See the
 [Sysbench configuration reference](runners/sysbench/README.md#configuration)
 for defaults and credential-file encoding rules.
 
+The go-ycsb runner receives `MONGODB_URI` and, when the provider publishes one,
+`MONGODB_TLS_CA` through Secret references and ordinary
+`BENCH_*` options through environment values. See its
+[configuration reference](runners/go-ycsb/README.md#runner-configuration).
+
 ## Useful commands
 
 ```bash
@@ -338,6 +380,7 @@ cd backend && go vet ./...
 helm lint charts/plugin-bench/
 docker build -t plugin-bench-pgbench:dev runners/pgbench
 docker build -t plugin-bench-sysbench:dev runners/sysbench
+docker build -t plugin-bench-go-ycsb:dev runners/go-ycsb
 ```
 
 Both PR CI and release builds run these frontend test suites before building the
@@ -364,17 +407,18 @@ Push a `vX.Y.Z` tag, or `vX.Y.Z-<pre-release>` for a pre-release, to run the
 release workflow. It publishes:
 
 - `ghcr.io/openeverest/plugin-bench`, `ghcr.io/openeverest/plugin-bench-pgbench`,
-  and `ghcr.io/openeverest/plugin-bench-sysbench` images for `linux/amd64` and `linux/arm64`
+  `ghcr.io/openeverest/plugin-bench-sysbench`, and `ghcr.io/openeverest/plugin-bench-go-ycsb`
+  images for `linux/amd64` and `linux/arm64`
 - the `oci://ghcr.io/openeverest/charts/plugin-bench` Helm chart
 - a GitHub release with the chart archive and release notes
 
-The workflow tests both runners from their built AMD64 archives before publishing.
+The workflow tests all three runners from their built AMD64 archives before publishing.
 Release notes include each image reference and digest.
 
 GHCR creates new packages as private, so the first release fails at the
 "Verify public access" step. Make each new package, including
-`plugin-bench-sysbench`, public in its GHCR package settings, then re-run the failed
-job. Publishing is idempotent, so re-runs are safe.
+`plugin-bench-sysbench` and `plugin-bench-go-ycsb`, public in its GHCR package
+settings, then re-run the failed job. Publishing is idempotent, so re-runs are safe.
 
 ## Project structure
 
@@ -382,11 +426,12 @@ job. Publishing is idempotent, so re-runs are safe.
 src/                         React frontend
 backend/                     Go backend
 backend/internal/everest/    OpenEverest API client
-backend/internal/driver/     Driver contracts, registry, pgbench/Sysbench preparation
+backend/internal/driver/     Driver contracts, registry, workload preparation
 backend/internal/coordinator Kubernetes Job and Secret orchestration
 backend/internal/runnerresult Generic runner metrics decoder
 runners/pgbench/             pgbench runner image
 runners/sysbench/            MySQL Sysbench runner image
+runners/go-ycsb/             MongoDB go-ycsb runner image
 charts/plugin-bench/         Helm chart and Plugin resource
 dev/                         Tilt and k3d configuration
 spec.md                      MVP requirements
@@ -395,7 +440,7 @@ spec.md                      MVP requirements
 ## Current limitations
 
 The UI supports the providers listed above; MySQL requires an enabled Sysbench
-driver and a usable image. Additional workloads and MongoDB remain future work.
+driver and a usable image. Additional workloads and MongoDB UI support remain future work.
 Run records, including output and metrics, are held in backend memory and are
 lost on restart.
 Completed records become unavailable one hour after completion; running records

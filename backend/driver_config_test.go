@@ -61,6 +61,9 @@ func TestDriverConfigurationRejectsInvalidPayloadWithoutLegacyFallback(t *testin
 		{"disabled sysbench", `{"sysbench":{"enabled":false}}`, "at least one enabled driver"},
 		{"missing sysbench image", `{"sysbench":{"enabled":true}}`, "runner image is required"},
 		{"invalid sysbench pull policy", `{"sysbench":{"enabled":true,"image":"runner:v2","imagePullPolicy":"Sometimes"}}`, "image pull policy"},
+		{"disabled go-ycsb", `{"go-ycsb":{"enabled":false}}`, "at least one enabled driver"},
+		{"missing go-ycsb image", `{"go-ycsb":{"enabled":true}}`, "runner image is required"},
+		{"invalid go-ycsb pull policy", `{"go-ycsb":{"enabled":true,"image":"runner:v2","imagePullPolicy":"Sometimes"}}`, "image pull policy"},
 		{"missing image", `{"pgbench":{"enabled":true}}`, "runner image is required"},
 		{"blank image", `{"pgbench":{"enabled":true,"image":"  "}}`, "runner image is required"},
 		{"invalid pull policy", `{"pgbench":{"enabled":true,"image":"runner:v2","imagePullPolicy":"Sometimes"}}`, "image pull policy"},
@@ -79,7 +82,7 @@ func TestDriverConfigurationRejectsInvalidPayloadWithoutLegacyFallback(t *testin
 	}
 }
 
-func TestDriverConfigurationSupportsSysbench(t *testing.T) {
+func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 	for _, test := range []struct {
 		name, payload string
 		want          map[string]driver.RunnerConfig
@@ -105,6 +108,25 @@ func TestDriverConfigurationSupportsSysbench(t *testing.T) {
 			name: "sysbench explicitly disabled", payload: `{"pgbench":{"enabled":true,"image":"example.com/pgbench:v1"},"sysbench":{"enabled":false}}`,
 			want: map[string]driver.RunnerConfig{"pgbench": {Image: "example.com/pgbench:v1", ImagePullPolicy: "IfNotPresent"}},
 		},
+		{
+			name: "all drivers",
+			payload: `{"go-ycsb":{"enabled":true,"image":"example.com/go-ycsb:v3","imagePullPolicy":"Always"},` +
+				`"pgbench":{"enabled":true,"image":"example.com/pgbench:v1"},` +
+				`"sysbench":{"enabled":true,"image":"example.com/sysbench:v2"}}`,
+			want: map[string]driver.RunnerConfig{
+				"go-ycsb":  {Image: "example.com/go-ycsb:v3", ImagePullPolicy: "Always"},
+				"pgbench":  {Image: "example.com/pgbench:v1", ImagePullPolicy: "IfNotPresent"},
+				"sysbench": {Image: "example.com/sysbench:v2", ImagePullPolicy: "IfNotPresent"},
+			},
+		},
+		{
+			name: "go-ycsb only", payload: `{"go-ycsb":{"enabled":true,"image":"example.com/go-ycsb:v3"}}`,
+			want: map[string]driver.RunnerConfig{"go-ycsb": {Image: "example.com/go-ycsb:v3", ImagePullPolicy: "IfNotPresent"}},
+		},
+		{
+			name: "go-ycsb explicitly disabled", payload: `{"pgbench":{"enabled":true,"image":"example.com/pgbench:v1"},"go-ycsb":{"enabled":false}}`,
+			want: map[string]driver.RunnerConfig{"pgbench": {Image: "example.com/pgbench:v1", ImagePullPolicy: "IfNotPresent"}},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("BENCHMARK_DRIVERS", test.payload)
@@ -115,7 +137,7 @@ func TestDriverConfigurationSupportsSysbench(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for id, databaseType := range map[string]string{"pgbench": "postgresql", "sysbench": "mysql"} {
+			for id, databaseType := range map[string]string{"pgbench": "postgresql", "sysbench": "mysql", "go-ycsb": "mongodb"} {
 				registration, err := registry.Resolve(id, driver.TargetInfo{DatabaseType: databaseType, Provider: "unfamiliar-provider"})
 				want, enabled := test.want[id]
 				if !enabled {
