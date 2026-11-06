@@ -56,6 +56,53 @@ func chartAppVersion(t *testing.T, chart string) string {
 	return version.AppVersion
 }
 
+func TestChartInstanceDiscoveryPermissions(t *testing.T) {
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("Helm is required for chart rendering checks")
+	}
+	output, err := exec.Command(helm, "template", "instance-discovery-test", filepath.Join("..", "charts", "plugin-bench"),
+		"--show-only", "templates/plugin-cr.yaml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, output)
+	}
+	data, err := kubeyaml.ToJSON(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plugin struct {
+		Kind string `json:"kind"`
+		Spec struct {
+			Permissions []struct {
+				Verb     string `json:"verb"`
+				Resource string `json:"resource"`
+			} `json:"permissions"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(data, &plugin); err != nil {
+		t.Fatal(err)
+	}
+	// Names must match OpenEverest RBAC: connection details are the
+	// read-connection action on instances, not a separate resource.
+	type permissionKey struct{ verb, resource string }
+	want := map[permissionKey]bool{
+		{"read", "namespaces"}:           false,
+		{"read", "instances"}:            false,
+		{"read-connection", "instances"}: false,
+	}
+	if plugin.Kind != "Plugin" || len(plugin.Spec.Permissions) != len(want) {
+		t.Fatalf("unexpected Plugin permission shape: %s", output)
+	}
+	for _, permission := range plugin.Spec.Permissions {
+		key := permissionKey{permission.Verb, permission.Resource}
+		seen, exists := want[key]
+		if !exists || seen {
+			t.Fatalf("unexpected or duplicate permission: %+v", permission)
+		}
+		want[key] = true
+	}
+}
+
 func TestChartDriverImageResolution(t *testing.T) {
 	chart := filepath.Join("..", "charts", "plugin-bench")
 	appVersion := chartAppVersion(t, chart)

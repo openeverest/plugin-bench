@@ -72,6 +72,12 @@ for standalone usage and table cleanup.
 
 ### Using the benchmark tab
 
+Open **Performance Benchmark** in the sidebar to list accessible instances in
+the host's current Kubernetes cluster. Only providers supported by an enabled
+driver appear. Select an instance or **Benchmark** to open its benchmark tab;
+use **Retry** if discovery fails. Discovery uses your OpenEverest permissions
+and reads instance metadata without requesting database credentials.
+
 Open a supported instance's **Performance Benchmark** tab. Its provider determines
 which driver is offered:
 

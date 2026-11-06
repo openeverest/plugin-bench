@@ -66,21 +66,21 @@ type ResponseReadError struct {
 }
 
 func (e *ResponseReadError) Error() string {
-	return fmt.Sprintf("failed to read OpenEverest credentials response: %v", e.Err)
+	return fmt.Sprintf("failed to read OpenEverest response: %v", e.Err)
 }
 
 func (e *ResponseReadError) Unwrap() error {
 	return e.Err
 }
 
-// InvalidResponseError identifies a successful HTTP response that does not
-// contain usable credentials.
+// InvalidResponseError identifies a successful HTTP response whose JSON does
+// not match the expected response shape.
 type InvalidResponseError struct {
 	Err error
 }
 
 func (e *InvalidResponseError) Error() string {
-	return fmt.Sprintf("invalid OpenEverest credentials response: %v", e.Err)
+	return fmt.Sprintf("invalid OpenEverest response: %v", e.Err)
 }
 
 func (e *InvalidResponseError) Unwrap() error {

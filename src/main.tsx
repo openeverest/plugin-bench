@@ -18,7 +18,7 @@ const register: PluginRegisterFn = (api: PluginApi) => {
     label: 'Performance Benchmark',
     component: () => (
       <PluginRoot nonce={cssNonce}>
-        <BenchmarkPage />
+        <BenchmarkPage pluginFetch={pluginFetch} basePath={api.basePath} />
       </PluginRoot>
     ),
   });
