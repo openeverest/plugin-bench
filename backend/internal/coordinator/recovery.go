@@ -8,6 +8,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 )
 
 const (
@@ -16,6 +17,9 @@ const (
 	instanceLabel  = "app.kubernetes.io/instance"
 	// RunIDLabel links runner Jobs, Pods, and Secrets to their run record.
 	RunIDLabel = "benchmark.openeverest.io/run-id"
+	// processLabel identifies the backend process that created a runner
+	// resource; resources of the current process are never orphans.
+	processLabel = "benchmark.openeverest.io/backend-process"
 )
 
 // installationLabels identify every runner resource this installation owns.
@@ -25,6 +29,7 @@ func (c *Coordinator) installationLabels() labels.Set {
 
 func (c *Coordinator) runLabels(runID string) map[string]string {
 	result := c.installationLabels()
+	result[processLabel] = c.processID
 	if runID != "" {
 		result[RunIDLabel] = runID
 	}
@@ -40,15 +45,20 @@ type OrphanCleanup struct {
 // CleanupOrphanedResources deletes every runner Job and credential Secret
 // that a previous process of this installation left in the workload
 // namespace. A crash otherwise leaves Secrets holding target database
-// passwords indefinitely. Call it only before accepting runs: it also removes
-// this installation's active resources, which is safe only while one backend
-// replica runs per installation.
+// passwords indefinitely. Resources created by the current process are
+// excluded, so a failed cleanup can be retried while runs are active. It
+// still assumes one backend replica per installation: another live replica's
+// resources would look orphaned.
 func (c *Coordinator) CleanupOrphanedResources(ctx context.Context) (OrphanCleanup, error) {
 	var cleanup OrphanCleanup
 	if c == nil {
 		return cleanup, errors.New("coordinator is nil")
 	}
-	selector := c.installationLabels().String()
+	notThisProcess, err := labels.NewRequirement(processLabel, selection.NotEquals, []string{c.processID})
+	if err != nil {
+		return cleanup, fmt.Errorf("build orphaned resource selector: %w", err)
+	}
+	selector := labels.SelectorFromSet(c.installationLabels()).Add(*notThisProcess).String()
 	namespace := c.config.WorkloadNamespace
 	var cleanupErrors []error
 

@@ -309,7 +309,12 @@ Jobs and credential Secrets in the workload namespace labeled
 `app.kubernetes.io/managed-by=plugin-bench` and
 `app.kubernetes.io/instance=<release name>`. Other installations' resources are
 untouched. In memory mode, the records are already gone, but leftover resources
-are still removed.
+are still removed. If cleanup fails, for example because of a transient
+Kubernetes API error, startup continues and cleanup is retried in the
+background with backoff until it succeeds. Each backend process also labels its
+runner resources with `benchmark.openeverest.io/backend-process`, and cleanup
+skips the current process's resources, so retries never touch runs started
+after the restart.
 
 This cleanup assumes one backend per installation. The chart uses the
 `Recreate` Deployment strategy, so the old backend stops before the new one

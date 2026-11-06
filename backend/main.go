@@ -178,8 +178,12 @@ func run() error {
 		return fmt.Errorf("initialize run storage: %w", err)
 	}
 	defer closeStore()
-	if err := recoverInterruptedRuns(lifecycleCtx, store, benchmarkCoordinator); err != nil {
+	cleanupPending, err := recoverInterruptedRuns(lifecycleCtx, store, benchmarkCoordinator)
+	if err != nil {
 		return err
+	}
+	if cleanupPending {
+		go retryOrphanCleanup(lifecycleCtx, benchmarkCoordinator, orphanCleanupRetry, orphanCleanupMaxRetry)
 	}
 	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, store, lifecycleCtx, config.Resources, registry, everest.ListInstances)
 
