@@ -2,13 +2,7 @@ import {
   Box, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography,
 } from '@mui/material';
 import type { BenchmarkMetric } from './benchmarkApi';
-
-// Runners report raw tool precision (pgbench prints six decimals). Values below
-// one keep significant digits so small latencies do not round to zero.
-const formatMetricValue = (value: number): string =>
-  Math.abs(value) >= 1 || value === 0
-    ? value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-    : value.toLocaleString(undefined, { maximumSignificantDigits: 3 });
+import { formatMetricValue } from './benchmarkMetricFormat.js';
 
 export function BenchmarkRunMetrics({ metrics }: { metrics?: readonly BenchmarkMetric[] }) {
   return (

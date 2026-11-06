@@ -11,7 +11,8 @@ import type { BenchmarkFormValues } from './benchmarkFormValidation';
 import { providerFromClusterDetailProps, targetFromClusterDetailProps } from './benchmarkTarget';
 import type { BenchmarkTarget } from './benchmarkTarget';
 import { getBenchmarkDriversForProvider } from './drivers';
-import { getEnabledBenchmarkDrivers } from './benchmarkDriversApi';
+import { getBenchmarkServiceStatus } from './benchmarkDriversApi';
+import { BenchmarkRunHistory } from './BenchmarkRunHistory';
 
 interface BenchmarkTabProps extends ClusterDetailTabProps {
   pluginFetch: PluginApi['fetch'];
@@ -45,7 +46,9 @@ interface BenchmarkWorkflowProps {
 function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowProps) {
   const supportedDrivers = getBenchmarkDriversForProvider(provider);
   const [driverState, setDriverState] = useState<
-    { status: 'loading' } | { status: 'ready'; ids: string[] } | { status: 'failed'; message: string }
+    | { status: 'loading' }
+    | { status: 'ready'; ids: string[]; persistentHistory: boolean }
+    | { status: 'failed'; message: string }
   >({ status: 'loading' });
   const [driverAttempt, setDriverAttempt] = useState(0);
   const availableDrivers = driverState.status === 'ready'
@@ -53,13 +56,20 @@ function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowP
   const [submission, setSubmission] = useState<SubmissionState>({ status: 'idle' });
   const activeRequest = useRef<AbortController | null>(null);
   const [runIds, setRunIds] = useState<string[]>([]);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const refreshHistory = () => setHistoryVersion(version => version + 1);
+  // Only runs started here refresh history when they finish; opening a past
+  // run from history must not trigger a reload.
+  const submittedRunIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (getBenchmarkDriversForProvider(provider).length === 0) return;
     const controller = new AbortController();
     setDriverState({ status: 'loading' });
-    getEnabledBenchmarkDrivers(pluginFetch, { signal: controller.signal }).then(
-      ids => { if (!controller.signal.aborted) setDriverState({ status: 'ready', ids }); },
+    getBenchmarkServiceStatus(pluginFetch, { signal: controller.signal }).then(
+      ({ drivers, persistentHistory }) => {
+        if (!controller.signal.aborted) setDriverState({ status: 'ready', ids: drivers, persistentHistory });
+      },
       error => {
         if (!controller.signal.aborted) setDriverState({ status: 'failed', message: error.message });
       },
@@ -89,8 +99,10 @@ function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowP
     try {
       const run = await createBenchmarkRun(pluginFetch, request, { signal: controller.signal });
       if (activeRequest.current !== controller || controller.signal.aborted) return;
+      submittedRunIds.current.add(run.id);
       addRun(run.id);
       setSubmission({ status: 'accepted', id: run.id });
+      refreshHistory();
     } catch (error) {
       if (activeRequest.current !== controller || controller.signal.aborted) return;
       setSubmission({
@@ -146,10 +158,22 @@ function BenchmarkWorkflow({ pluginFetch, target, provider }: BenchmarkWorkflowP
                 pluginFetch={pluginFetch}
                 id={id}
                 onDismiss={() => setRunIds(ids => ids.filter(runId => runId !== id))}
+                onSettled={submittedRunIds.current.has(id) ? refreshHistory : undefined}
               />
             ))}
           </Box>
         </Stack>
+      )}
+      {/* Like the driver check, history waits for a supported provider. */}
+      {supportedDrivers.length > 0 && (
+        <BenchmarkRunHistory
+          pluginFetch={pluginFetch}
+          target={target}
+          refreshKey={historyVersion}
+          persistentHistory={driverState.status === 'ready' ? driverState.persistentHistory : undefined}
+          shownRunIds={runIds}
+          onOpen={addRun}
+        />
       )}
       <RunLookup onLookup={addRun} />
     </Stack>

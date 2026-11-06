@@ -16,12 +16,13 @@ const run = (id: string, status: BenchmarkRunStatus, extra: Partial<BenchmarkRun
   ...(status === 'failed' ? { error: 'benchmark execution failed' } : {}),
   ...extra,
 });
-// Execution tests assume all registered drivers are enabled; availability itself
-// is exercised with real status requests in benchmarkEnabledDrivers.test.tsx.
+// Execution tests assume all registered drivers are enabled and an empty
+// history; availability and history are exercised in their own test files.
 const fetchWrappers = new WeakMap<PluginApi['fetch'], PluginApi['fetch']>();
 const withEnabledDrivers = (fetch: PluginApi['fetch']): PluginApi['fetch'] => {
   if (!fetchWrappers.has(fetch)) fetchWrappers.set(fetch, (path, init) =>
-    path === '/api/status' ? Promise.resolve(response({ drivers: ['pgbench', 'sysbench', 'go-ycsb'] })) : fetch(path, init));
+    path === '/api/status' ? Promise.resolve(response({ drivers: ['pgbench', 'sysbench', 'go-ycsb'] }))
+      : path.startsWith('/api/runs?') ? Promise.resolve(response({ runs: [] })) : fetch(path, init));
   return fetchWrappers.get(fetch)!;
 };
 const renderReady = async (element: React.ReactElement) => {

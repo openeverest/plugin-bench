@@ -163,6 +163,13 @@ options, and a metrics table. **Raw logs** expands the captured output; a
 invalid metrics show **Structured metrics unavailable** while preserving the
 run's status and logs. Failed runs show their error alongside any available results.
 
+**History** lists the instance's 20 most recent runs, newest first, with the
+tool, status, duration, and metrics (or the error of a failed run). It reloads
+when you start a run and when that run finishes; **Refresh** reloads it on
+demand. **View** opens a run as a card with its full results and logs; runs
+already shown are marked **Shown**. When history is kept only in memory, the
+section says so. See [run history storage](#run-history-storage).
+
 Use **Look up a benchmark run** to retrieve a stored run by ID. Looking up an
 already displayed ID does not add a duplicate card. Records remain subject to the
 configured [run history storage](#run-history-storage).
@@ -540,8 +547,8 @@ With the default in-memory storage, run records, including output and metrics,
 are lost on restart, and completed records become unavailable one hour after
 completion. Configure [PostgreSQL storage](#run-history-storage) to keep
 history. Runs in progress during a restart are marked failed rather than
-resumed. One backend replica is supported. The UI does not show run history yet,
-and comparisons remain future work.
+resumed. One backend replica is supported. The UI lists recent runs per
+instance; paging beyond them, charts, and comparisons remain future work.
 
 ## License
 
