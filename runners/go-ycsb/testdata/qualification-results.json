@@ -1,0 +1,32 @@
+[
+  {
+    "case": "load",
+    "exitCode": 0,
+    "hasErrors": false,
+    "finished": true
+  },
+  {
+    "case": "run",
+    "exitCode": 0,
+    "hasErrors": false,
+    "finished": true
+  },
+  {
+    "case": "duplicate-load",
+    "exitCode": 0,
+    "hasErrors": true,
+    "finished": true
+  },
+  {
+    "case": "missing-data",
+    "exitCode": 0,
+    "hasErrors": true,
+    "finished": true
+  },
+  {
+    "case": "authentication",
+    "exitCode": 1,
+    "hasErrors": false,
+    "finished": false
+  }
+]

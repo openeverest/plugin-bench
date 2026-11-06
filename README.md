@@ -1,8 +1,8 @@
 # OpenEverest Plugin Bench
 
-OpenEverest Plugin Bench runs PostgreSQL (pgbench) and MySQL (Sysbench)
+OpenEverest Plugin Bench runs PostgreSQL (pgbench), MySQL (Sysbench), and MongoDB (go-ycsb)
 benchmarks as temporary Kubernetes Jobs from the database cluster tab or backend API.
-Both drivers are enabled by default in the Helm chart.
+All three drivers are enabled by default in the Helm chart.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
 > launching, and inspecting benchmark runs.
@@ -15,16 +15,16 @@ The plugin backend coordinates a benchmark run:
    OpenEverest API.
 2. Pick the database: the one entered in the form, otherwise the instance's
    default database (the provider's `database` connection key, or the database
-   in its connection URI).
+   in its connection URI). The go-ycsb driver supports only the `ycsb` database.
 3. Select the requested driver, validate its options and connection details,
-   and create a temporary Secret containing its password.
+   and create a temporary Secret containing its password or connection URI.
 4. Create a Kubernetes Job using the configured driver image and prepared settings.
 5. Wait for the Job and collect the runner logs and optional structured metrics.
 6. Delete the Job and temporary Secret.
 
 The benchmark tab is built with MUI and themed from the host through
 `@openeverest/plugin-theme`.
-The backend uses a shared driver interface with pgbench and Sysbench implementations.
+The backend uses a shared driver interface with pgbench, Sysbench, and go-ycsb implementations.
 Additional benchmark tools can supply their own option validation and workload
 preparation while sharing the Kubernetes execution lifecycle.
 
@@ -51,7 +51,7 @@ target's `databaseType` as reported by OpenEverest.
 `GET /api/status` returns generic backend readiness with `status`, `runnerReady`,
 `storage` (`ephemeral` for in-memory history, `postgresql` when persistent),
 `message`, and a sorted `drivers` array of enabled driver IDs, such as
-`["pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
+`["go-ycsb", "pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
 `database` field has been removed. This endpoint does not test database
 connectivity or runner-image availability.
 
@@ -78,6 +78,37 @@ authorization. See the [request contract](docs/runner-result-contract.md#sysbenc
 for defaults and connection rules, and the [runner README](runners/sysbench/README.md)
 for standalone usage and table cleanup.
 
+### MongoDB benchmarks through the API
+
+go-ycsb is enabled by default in Helm and uses the runner image from the matching
+release. Tilt supplies a locally built image for development.
+Submit this body to `POST /api/runs` with caller authorization:
+
+```json
+{
+  "target": {"k8sCluster": "main", "namespace": "default", "instance": "my-mongodb"},
+  "database": "ycsb",
+  "driver": "go-ycsb",
+  "options": {"collection": "benchmark_records", "recordCount": 1000, "operationCount": 2000, "threads": 2, "initialize": true}
+}
+```
+
+The target must report type `mongodb` and supply a `mongodb://` URI. Only the
+`ycsb` database is supported by the pinned upstream tool: omit `database` or
+set it to `ycsb`; other names are rejected. The backend preserves authentication,
+including provider URIs using `/admin`, while targeting `ycsb`. The supplied
+account needs read/write access to `ycsb`. For TLS instances, a provider CA
+published as `ca.crt` in the connection details is passed to the runner to
+verify the server certificate.
+
+Workload A uses equal reads and updates. Set `initialize=true` to load a fresh,
+disposable collection; reloading existing keys fails. To reuse it, set
+`initialize=false` and keep the collection and record count unchanged. Job cleanup
+leaves the data in MongoDB; drop the collection separately when finished.
+Poll `GET /api/runs/{id}` for logs and optional `ops_per_second` (`ops/s`) and
+`latency_avg` (`ms`). See the [runner reference](runners/go-ycsb/README.md)
+for defaults.
+
 ### Using the benchmark tab
 
 Open **Performance Benchmark** in the sidebar to list accessible instances in
@@ -93,13 +124,14 @@ which driver is offered:
 | --- | --- |
 | `provider-cloudnative-pg`, `provider-percona-postgresql` | pgbench |
 | `percona-server-mysql`, `percona-xtradb-cluster` | Sysbench |
+| `percona-server-mongodb` | go-ycsb |
 
 The tab checks `/api/status` and only offers drivers enabled on the backend.
 If none are enabled for the provider, run lookup remains available.
 
-Database, **Job resources**, and **Job placement** are shared settings. A blank
-database uses the instance default when available; otherwise enter an existing
-database name. Use a disposable benchmark database.
+Database, **Job resources**, and **Job placement** are shared settings. For SQL
+drivers, a blank database uses the instance default when available; otherwise
+enter an existing database name. Use a disposable benchmark database.
 For both `percona-server-mysql` and PXC (`percona-xtradb-cluster`), a database name
 is required because neither provider supplies a default. Create the database
 before starting the benchmark; table preparation does not create it.
@@ -114,6 +146,15 @@ a fresh dataset; existing table names cause preparation to fail. To reuse
 tables, turn preparation off and match **Tables** and **Rows per table** to the
 existing dataset. Tables remain after Job cleanup. Sysbench must be enabled with
 an accessible runner image; see [Driver configuration](#driver-configuration).
+
+**go-ycsb** fixes Database to the read-only value `ycsb`. It starts with collection
+`usertable`, 10,000 records, 20,000 operations, one thread, and **Load benchmark data**
+checked. Workload A performs equal reads and updates. Use a fresh disposable
+collection for loading; to reuse it, turn loading off and keep Collection and
+Records matched to the dataset. Operations controls work performed, subject to
+the overall execution timeout. The account needs read/write access to `ycsb`;
+MongoDB can create the database/collection during loading, and Job cleanup leaves
+the data intact.
 
 Each accepted run has its own card and polls for status every two seconds until
 completion. Completed cards show the driver, configured runner image, effective
@@ -208,7 +249,7 @@ If the cluster already exists, run:
 tilt up -f dev/Tiltfile
 ```
 
-Tilt builds the frontend, backend image, and both pgbench and Sysbench runner
+Tilt builds the frontend, backend image, and pgbench, Sysbench, and go-ycsb runner
 images. It injects each runner's repository and tag
 through `drivers.<id>.image.repository` and `drivers.<id>.image.tag`. Runner images
 are used when the coordinator starts benchmark Jobs; no published runner image
@@ -250,8 +291,9 @@ On startup, the backend applies its own schema migrations (the
 `plugin_bench_schema_migrations` tables) under an advisory lock and refuses to
 start against a schema created by a newer release. A database belongs to one
 plugin installation, identified by its Helm release name: a second installation
-pointed at the same database refuses to start, so give each installation its
-own database or schema (for example, with `search_path=<schema>` in the URI). An
+pointed at the same database refuses to start before changing its schema, so
+give each installation its own database or schema (for example, with
+`search_path=<schema>` in the URI). An
 unreachable database or an invalid URI stops startup rather than falling back
 to memory. Each run records its target, database type (for example
 `postgresql` or `mysql`), driver, effective options, resources, status,
@@ -274,7 +316,12 @@ Jobs and credential Secrets in the workload namespace labeled
 `app.kubernetes.io/managed-by=plugin-bench` and
 `app.kubernetes.io/instance=<release name>`. Other installations' resources are
 untouched. In memory mode, the records are already gone, but leftover resources
-are still removed.
+are still removed. If cleanup fails, for example because of a transient
+Kubernetes API error, startup continues and cleanup is retried in the
+background with backoff until it succeeds. Each backend process also labels its
+runner resources with `benchmark.openeverest.io/backend-process`, and cleanup
+skips the current process's resources, so retries never touch runs started
+after the restart.
 
 This cleanup assumes one backend per installation. The chart uses the
 `Recreate` Deployment strategy, so the old backend stops before the new one
@@ -298,6 +345,12 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  go-ycsb:
+    enabled: true
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: ""
 ```
 
 Empty image fields use the defaults below after any legacy pgbench overrides.
@@ -306,7 +359,7 @@ With no overrides, pgbench uses
 `appVersion` comes from the chart being installed, including metadata set by
 `helm package --app-version` during a release.
 
-Both drivers are enabled by default and use their published release images.
+All three drivers are enabled by default and use their matching release images.
 To use a custom Sysbench image, override its repository or tag:
 
 ```yaml
@@ -349,7 +402,7 @@ Helm serializes the resolved settings into one backend environment variable.
 For a chart with `appVersion: 0.2.0`:
 
 ```json
-{"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.2.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-sysbench:0.2.0","imagePullPolicy":"IfNotPresent"}}
+{"go-ycsb":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-go-ycsb:0.2.0","imagePullPolicy":"IfNotPresent"},"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.2.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-sysbench:0.2.0","imagePullPolicy":"IfNotPresent"}}
 ```
 
 The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
@@ -357,8 +410,7 @@ The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
 policy must be `Always`, `IfNotPresent`, or `Never` (omitted/empty defaults to
 `IfNotPresent`). Only drivers compiled into the backend can be enabled; adding
 a Helm entry does not install an implementation. The compiled drivers are
-pgbench and Sysbench. At least one must remain enabled; disabling pgbench is
-valid when Sysbench is enabled with a usable image.
+pgbench, Sysbench, and go-ycsb. At least one must remain enabled with a usable image.
 
 For deployments setting environment variables directly, `RUNNER_IMAGE` and
 `RUNNER_IMAGE_PULL_POLICY` remain deprecated pgbench fallbacks **only when
@@ -401,6 +453,11 @@ benchmark settings use environment values. See the
 [Sysbench configuration reference](runners/sysbench/README.md#configuration)
 for defaults and credential-file encoding rules.
 
+The go-ycsb runner receives `MONGODB_URI` and, when the provider publishes one,
+`MONGODB_TLS_CA` through Secret references and ordinary
+`BENCH_*` options through environment values. See its
+[configuration reference](runners/go-ycsb/README.md#runner-configuration).
+
 ## Useful commands
 
 ```bash
@@ -421,6 +478,7 @@ cd backend && PLUGIN_BENCH_TEST_POSTGRES_URI='postgres://user:pass@localhost:543
 helm lint charts/plugin-bench/
 docker build -t plugin-bench-pgbench:dev runners/pgbench
 docker build -t plugin-bench-sysbench:dev runners/sysbench
+docker build -t plugin-bench-go-ycsb:dev runners/go-ycsb
 ```
 
 Both PR CI and release builds run these frontend test suites before building the
@@ -428,8 +486,7 @@ bundle. Component tests include the complete submission/polling/results and run
 lookup workflows with mocked API responses, including concurrent cards and
 cancellation on unmount or target changes.
 
-For a live check after starting Tilt, use a disposable PostgreSQL or supported
-MySQL database:
+For a live check after starting Tilt, use a disposable supported database:
 
 1. Start a short run and confirm the POST contains `driver` and nested `options`.
 2. Confirm polling reaches a terminal status and stops. Check effective options,
@@ -440,6 +497,8 @@ MySQL database:
 
 For Sysbench, prepare a small fresh dataset, then repeat with preparation off
 and matching table settings. Preparing the same tables again should fail clearly.
+For go-ycsb, load a fresh collection, then repeat with loading off and the same
+collection and record count.
 
 ## Releasing
 
@@ -447,17 +506,18 @@ Push a `vX.Y.Z` tag, or `vX.Y.Z-<pre-release>` for a pre-release, to run the
 release workflow. It publishes:
 
 - `ghcr.io/openeverest/plugin-bench`, `ghcr.io/openeverest/plugin-bench-pgbench`,
-  and `ghcr.io/openeverest/plugin-bench-sysbench` images for `linux/amd64` and `linux/arm64`
+  `ghcr.io/openeverest/plugin-bench-sysbench`, and `ghcr.io/openeverest/plugin-bench-go-ycsb`
+  images for `linux/amd64` and `linux/arm64`
 - the `oci://ghcr.io/openeverest/charts/plugin-bench` Helm chart
 - a GitHub release with the chart archive and release notes
 
-The workflow tests both runners from their built AMD64 archives before publishing.
+The workflow tests all three runners from their built AMD64 archives before publishing.
 Release notes include each image reference and digest.
 
 GHCR creates new packages as private, so the first release fails at the
 "Verify public access" step. Make each new package, including
-`plugin-bench-sysbench`, public in its GHCR package settings, then re-run the failed
-job. Publishing is idempotent, so re-runs are safe.
+`plugin-bench-sysbench` and `plugin-bench-go-ycsb`, public in its GHCR package
+settings, then re-run the failed job. Publishing is idempotent, so re-runs are safe.
 
 ## Project structure
 
@@ -465,13 +525,14 @@ job. Publishing is idempotent, so re-runs are safe.
 src/                         React frontend
 backend/                     Go backend
 backend/internal/everest/    OpenEverest API client
-backend/internal/driver/     Driver contracts, registry, pgbench/Sysbench preparation
+backend/internal/driver/     Driver contracts, registry, workload preparation
 backend/internal/coordinator Kubernetes Job and Secret orchestration
 backend/internal/runnerresult Generic runner metrics decoder
 backend/internal/api/storetest Shared run store conformance tests
 backend/internal/pgstore/    PostgreSQL run history storage and migrations
 runners/pgbench/             pgbench runner image
 runners/sysbench/            MySQL Sysbench runner image
+runners/go-ycsb/             MongoDB go-ycsb runner image
 charts/plugin-bench/         Helm chart and Plugin resource
 dev/                         Tilt and k3d configuration
 spec.md                      MVP requirements
@@ -480,7 +541,8 @@ spec.md                      MVP requirements
 ## Current limitations
 
 The UI supports the providers listed above; MySQL requires an enabled Sysbench
-driver and a usable image. Additional workloads and MongoDB remain future work.
+driver and a usable image. MongoDB is limited to the `ycsb` database and Workload A;
+additional workloads remain future work.
 With the default in-memory storage, run records, including output and metrics,
 are lost on restart, and completed records become unavailable one hour after
 completion. Configure [PostgreSQL storage](#run-history-storage) to keep

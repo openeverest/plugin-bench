@@ -120,6 +120,29 @@ jobs:
         timeout-minutes: 10
         run: bash .github/scripts/test-sysbench-runner.sh plugin-bench-sysbench:ci
 
+  go-ycsb-runner:
+    name: go-ycsb Runner
+    # MongoDB 8.0 cannot start on the newer kernels in ubuntu-latest/24.04.
+    # Keep its integration tests on the 22.04 runner's compatible kernel.
+    # https://jira.mongodb.org/browse/SERVER-121912
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25"
+          cache-dependency-path: runners/go-ycsb/go.sum
+      - name: Vet runner
+        run: cd runners/go-ycsb && go vet ./...
+      - name: Test runner
+        run: cd runners/go-ycsb && go test -race ./...
+      - name: Build runner image
+        run: docker build -t plugin-bench-go-ycsb:ci runners/go-ycsb
+      - name: Integration test runner
+        timeout-minutes: 20
+        run: bash .github/scripts/test-go-ycsb-runner.sh plugin-bench-go-ycsb:ci
+
   helm-lint:
     name: Helm lint
     runs-on: ubuntu-latest

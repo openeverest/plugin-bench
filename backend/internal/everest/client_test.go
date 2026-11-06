@@ -336,3 +336,18 @@ func TestGetCredentialsTimeoutAndCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestGetCredentialsReadsProviderCACertificate(t *testing.T) {
+	const ca = "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"uri":"mongodb://mongo:27017/admin?tls=true","type":"mongodb","ca.crt":"-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n"}`))
+	}))
+	defer server.Close()
+	t.Setenv("EVEREST_API_URL", server.URL)
+
+	credentials, err := GetCredentials(context.Background(), "test-token", "cluster-a", "databases", "mongo")
+	if err != nil || credentials == nil || credentials.CACertificate != ca {
+		t.Fatal("GetCredentials() must read the provider CA published as ca.crt")
+	}
+}

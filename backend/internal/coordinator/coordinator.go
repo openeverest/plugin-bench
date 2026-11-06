@@ -1,6 +1,8 @@
 package coordinator
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -62,6 +64,9 @@ func (c Config) Validate() error {
 type Coordinator struct {
 	config     Config
 	kubeClient kubernetes.Interface
+	// processID labels the runner resources this backend process creates, so
+	// orphan cleanup can tell them apart from an earlier process's leftovers.
+	processID string
 }
 
 // New validates the shared configuration and injects the Kubernetes client.
@@ -73,7 +78,11 @@ func New(config Config, kubeClient kubernetes.Interface) (*Coordinator, error) {
 	if kubeClient == nil {
 		return nil, ErrKubernetesClientRequired
 	}
-	return &Coordinator{config: config, kubeClient: kubeClient}, nil
+	var processID [8]byte
+	if _, err := rand.Read(processID[:]); err != nil {
+		return nil, fmt.Errorf("generate backend process ID: %w", err)
+	}
+	return &Coordinator{config: config, kubeClient: kubeClient, processID: hex.EncodeToString(processID[:])}, nil
 }
 
 // NewInCluster constructs a coordinator using the Pod's ServiceAccount.

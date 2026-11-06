@@ -19,6 +19,7 @@ describe('backend-enabled benchmark drivers', () => {
     { provider: 'percona-server-mysql', ids: ['sysbench', 'future'], label: 'Sysbench' },
     { provider: 'percona-xtradb-cluster', ids: ['pgbench', 'sysbench'], label: 'Sysbench' },
     { provider: 'provider-cloudnative-pg', ids: ['pgbench', 'sysbench'], label: 'pgbench' },
+    { provider: 'percona-server-mongodb', ids: ['pgbench', 'sysbench', 'go-ycsb', 'future'], label: 'go-ycsb' },
   ])('intersects enabled drivers with $provider support', async ({ provider, ids, label }) => {
     const fetch = vi.fn<PluginApi['fetch']>(async () => response({ drivers: ids }));
     await act(async () => { render(tab(fetch, provider)); });
@@ -26,7 +27,7 @@ describe('backend-enabled benchmark drivers', () => {
     expect(fetch).toHaveBeenCalledWith('/api/status', expect.objectContaining({ method: 'GET' }));
   });
 
-  it.each(['percona-server-mysql', 'percona-xtradb-cluster'].flatMap(provider =>
+  it.each(['percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb'].flatMap(provider =>
     [[], ['pgbench'], ['future']].map(ids => ({ provider, ids }))))(
     'hides a disabled driver for $provider and enabled IDs $ids', async ({ provider, ids }) => {
       const fetch = vi.fn<PluginApi['fetch']>(async () => response({ drivers: ids }));
@@ -37,14 +38,14 @@ describe('backend-enabled benchmark drivers', () => {
     },
   );
 
-  it('waits for the backend and aborts the request on unmount', async () => {
+  it.each(['percona-server-mysql', 'percona-server-mongodb'])('waits for the backend and aborts on unmount for %s', async provider => {
     let resolve!: (value: Response) => void;
     let signal: AbortSignal | null | undefined;
     const fetch: PluginApi['fetch'] = async (_path, init) => {
       signal = init?.signal;
       return new Promise<Response>(done => { resolve = done; });
     };
-    const view = render(tab(fetch));
+    const view = render(tab(fetch, provider));
     expect(screen.getByText('Checking available benchmark drivers…')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Start benchmark' })).toBeNull();
     view.unmount();
@@ -52,20 +53,23 @@ describe('backend-enabled benchmark drivers', () => {
     await act(async () => { resolve(response({ drivers: ['sysbench'] })); });
   });
 
-  it('retries a failed check without submitting a run', async () => {
+  it.each([
+    { provider: 'percona-server-mysql', id: 'sysbench', label: 'Sysbench' },
+    { provider: 'percona-server-mongodb', id: 'go-ycsb', label: 'go-ycsb' },
+  ])('retries a failed check without submitting a run for $provider', async ({ provider, id, label }) => {
     const fetch = vi.fn<PluginApi['fetch']>()
       .mockResolvedValueOnce(response({ error: 'unavailable' }, 503))
-      .mockResolvedValueOnce(response({ drivers: ['sysbench'] }));
-    await act(async () => { render(tab(fetch)); });
+      .mockResolvedValueOnce(response({ drivers: [id] }));
+    await act(async () => { render(tab(fetch, provider)); });
     expect(screen.getByRole('alert').textContent).toContain('HTTP 503');
     expect(screen.getByRole('button', { name: 'Find run' })).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Retry driver check' })); });
-    expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe('Sysbench');
+    expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe(label);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls.every(([path, init]) => path === '/api/status' && init?.method === 'GET')).toBe(true);
   });
 
-  it('ignores an old driver response after the provider changes', async () => {
+  it.each(['percona-server-mysql', 'percona-server-mongodb'])('ignores an old driver response from %s after the provider changes', async provider => {
     let resolve!: (value: Response) => void;
     let oldSignal: AbortSignal | null | undefined;
     const fetch = vi.fn<PluginApi['fetch']>()
@@ -74,10 +78,10 @@ describe('backend-enabled benchmark drivers', () => {
         return new Promise<Response>(done => { resolve = done; });
       })
       .mockResolvedValueOnce(response({ drivers: ['pgbench'] }));
-    const view = render(tab(fetch));
+    const view = render(tab(fetch, provider));
     await act(async () => { view.rerender(tab(fetch, 'provider-cloudnative-pg')); });
     expect(oldSignal?.aborted).toBe(true);
-    await act(async () => { resolve(response({ drivers: ['sysbench'] })); });
+    await act(async () => { resolve(response({ drivers: ['sysbench', 'go-ycsb'] })); });
     expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe('pgbench');
   });
 

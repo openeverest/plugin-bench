@@ -41,7 +41,7 @@ func TestRunLabelsRunnerResourcesWithRunID(t *testing.T) {
 	if _, err := c.Run(context.Background(), input); !errors.Is(err, creationFailure) {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := map[string]string{managedByLabel: managedByValue, instanceLabel: "plugin-bench", RunIDLabel: "0123456789abcdef"}
+	want := map[string]string{managedByLabel: managedByValue, instanceLabel: "plugin-bench", RunIDLabel: "0123456789abcdef", processLabel: c.processID}
 	for name, got := range map[string]map[string]string{"Secret": secretLabels, "Job": jobLabels, "Pod template": podLabels} {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s labels = %v, want %v", name, got, want)
@@ -107,6 +107,42 @@ func TestCleanupOrphanedResourcesRemovesOnlyThisInstallationsResources(t *testin
 				t.Fatal("orphaned Job deletion must not block startup on Pod termination")
 			}
 		}
+	}
+}
+
+// Cleanup must be safe to retry after the backend accepts runs, so it may
+// remove only resources created by an earlier process of this installation.
+func TestCleanupOrphanedResourcesKeepsCurrentProcessResources(t *testing.T) {
+	namespace := validConfig().WorkloadNamespace
+	client := fake.NewSimpleClientset()
+	c, err := New(validConfig(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousProcess := c.runLabels("old-run")
+	previousProcess[processLabel] = "previous-process"
+	ctx := context.Background()
+	for _, object := range []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"active", c.runLabels("active-run")},
+		{"orphan", previousProcess},
+	} {
+		if _, err := client.BatchV1().Jobs(namespace).Create(ctx, &batchv1.Job{ObjectMeta: managedObjectMeta(namespace, object.name+"-job", object.labels)}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.CoreV1().Secrets(namespace).Create(ctx, &corev1.Secret{ObjectMeta: managedObjectMeta(namespace, object.name+"-secret", object.labels)}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleanup, err := c.CleanupOrphanedResources(ctx)
+	if err != nil || cleanup != (OrphanCleanup{Jobs: 1, Secrets: 1}) {
+		t.Fatalf("cleanup = %+v, %v", cleanup, err)
+	}
+	if jobs, secrets := names(t, client, "jobs"), names(t, client, "secrets"); !reflect.DeepEqual(jobs, []string{"active-job"}) ||
+		!reflect.DeepEqual(secrets, []string{"active-secret"}) {
+		t.Fatalf("remaining Jobs = %v, Secrets = %v; want only the current process's resources", jobs, secrets)
 	}
 }
 

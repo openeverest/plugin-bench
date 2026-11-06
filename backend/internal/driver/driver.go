@@ -33,6 +33,8 @@ type ConnectionDetails struct {
 	Password string
 	URI      string
 	Database string
+	// CACertificate is a PEM CA that verifies the instance's TLS certificate.
+	CACertificate string
 }
 
 // PrepareInput carries options in their public JSON form. The selected driver

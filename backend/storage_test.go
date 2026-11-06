@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,11 +101,12 @@ func TestRecoverInterruptedRunsFailsRunningRecordsAndCleansUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleaner := &recordingCleaner{err: errors.New("list Secrets forbidden")}
-	if err := recoverInterruptedRuns(ctx, store, cleaner); err != nil {
+	cleanupPending, err := recoverInterruptedRuns(ctx, store, cleaner)
+	if err != nil {
 		t.Fatalf("cleanup failure must not stop startup: %v", err)
 	}
-	if !cleaner.called {
-		t.Fatal("orphaned runner resources were not cleaned up")
+	if !cleaner.called || !cleanupPending {
+		t.Fatalf("cleanup called = %t, pending = %t; want a failed cleanup reported for retry", cleaner.called, cleanupPending)
 	}
 	interrupted, _ := store.Get(ctx, "running")
 	done, _ := store.Get(ctx, "done")
@@ -120,7 +123,62 @@ func (failingRecoveryStore) FailRunning(context.Context, string) ([]string, erro
 
 func TestRecoverInterruptedRunsStopsStartupWhenRecordsCannotBeUpdated(t *testing.T) {
 	cleaner := &recordingCleaner{}
-	if err := recoverInterruptedRuns(context.Background(), failingRecoveryStore{api.NewRunStore()}, cleaner); err == nil {
+	if _, err := recoverInterruptedRuns(context.Background(), failingRecoveryStore{api.NewRunStore()}, cleaner); err == nil {
 		t.Fatal("startup continued with running records that can never complete")
+	}
+}
+
+func TestRecoverInterruptedRunsNeedsNoRetryAfterSuccessfulCleanup(t *testing.T) {
+	cleanupPending, err := recoverInterruptedRuns(context.Background(), api.NewRunStore(), &recordingCleaner{})
+	if err != nil || cleanupPending {
+		t.Fatalf("pending = %t, err = %v; want nothing left to retry", cleanupPending, err)
+	}
+}
+
+type flakyCleaner struct {
+	failures int
+	calls    atomic.Int32
+}
+
+func (c *flakyCleaner) CleanupOrphanedResources(context.Context) (coordinator.OrphanCleanup, error) {
+	if int(c.calls.Add(1)) <= c.failures {
+		return coordinator.OrphanCleanup{}, errors.New("Kubernetes API unavailable")
+	}
+	return coordinator.OrphanCleanup{Secrets: 1}, nil
+}
+
+func TestRetryOrphanCleanupStopsAfterSuccess(t *testing.T) {
+	cleaner := &flakyCleaner{failures: 2}
+	done := make(chan struct{})
+	go func() {
+		retryOrphanCleanup(context.Background(), cleaner, time.Millisecond, 2*time.Millisecond)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup retry did not finish after cleanup succeeded")
+	}
+	if calls := cleaner.calls.Load(); calls != 3 {
+		t.Fatalf("cleanup attempts = %d, want retries until the first success", calls)
+	}
+}
+
+func TestRetryOrphanCleanupStopsOnShutdown(t *testing.T) {
+	cleaner := &flakyCleaner{failures: math.MaxInt}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		retryOrphanCleanup(ctx, cleaner, time.Millisecond, time.Millisecond)
+		close(done)
+	}()
+	for cleaner.calls.Load() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup retry kept running after shutdown")
 	}
 }

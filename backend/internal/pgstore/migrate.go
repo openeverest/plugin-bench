@@ -54,14 +54,13 @@ func loadMigrations() ([]migration, error) {
 	return migrations, nil
 }
 
-// migrate applies pending migrations in one transaction under an advisory
-// lock. It refuses to run against a schema written by a newer release, since
-// this binary cannot know whether that schema is still compatible.
-func migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	migrations, err := loadMigrations()
-	if err != nil {
-		return fmt.Errorf("load migrations: %w", err)
-	}
+// migrate claims the database for one installation and applies pending
+// migrations in a single transaction under an advisory lock. Ownership is
+// checked before any schema change, so a database that belongs to another
+// installation is never migrated, and a refused startup leaves nothing
+// behind. It also refuses a schema written by a newer release, since this
+// binary cannot know whether that schema is still compatible.
+func migrate(ctx context.Context, pool *pgxpool.Pool, installationID string, migrations []migration) error {
 	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockKey); err != nil {
 			return fmt.Errorf("acquire migration lock: %w", err)
@@ -71,6 +70,9 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 			applied_at timestamptz NOT NULL DEFAULT now()
 		)`); err != nil {
 			return fmt.Errorf("create migration table: %w", err)
+		}
+		if err := claimInstallation(ctx, tx, installationID); err != nil {
+			return err
 		}
 		var current int
 		if err := tx.QueryRow(ctx, "SELECT COALESCE(max(version), 0) FROM plugin_bench_schema_migrations").Scan(&current); err != nil {
@@ -89,4 +91,30 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 		return nil
 	})
+}
+
+// claimInstallation records the first installation to start as the owner and
+// refuses any other. Startup interrupts every running record and history is
+// keyed by target names that can repeat across installations, so sharing a
+// database would fail live runs and mix histories.
+func claimInstallation(ctx context.Context, tx pgx.Tx, installationID string) error {
+	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS plugin_bench_installation (
+		singleton       boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+		installation_id text    NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create installation table: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO plugin_bench_installation (installation_id) VALUES ($1)
+		ON CONFLICT (singleton) DO NOTHING`, installationID); err != nil {
+		return fmt.Errorf("claim PostgreSQL database for this installation: %w", err)
+	}
+	var owner string
+	if err := tx.QueryRow(ctx, "SELECT installation_id FROM plugin_bench_installation").Scan(&owner); err != nil {
+		return fmt.Errorf("read PostgreSQL database owner: %w", err)
+	}
+	if owner != installationID {
+		return fmt.Errorf("PostgreSQL database already stores history for plugin-bench installation %q; "+
+			"use a separate database or schema for installation %q", owner, installationID)
+	}
+	return nil
 }

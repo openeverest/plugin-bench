@@ -1,0 +1,30 @@
+Using request distribution 'uniform' a keyrange of [0 999]
+Connected to MongoDB!
+***************** properties *****************
+"recordcount"="1000"
+"mongodb.url"="<redacted-mongodb-uri>"
+"requestdistribution"="uniform"
+"readmodifywriteproportion"="0"
+"operationcount"="4000"
+"scanproportion"="0"
+"fieldlength"="100"
+"table"="missing_records"
+"insertproportion"="0"
+"readproportion"="0.5"
+"updateproportion"="0.5"
+"command"="run"
+"workload"="core"
+"fieldcount"="10"
+"threadcount"="2"
+"measurement.interval"="1"
+"readallfields"="true"
+"dotransactions"="true"
+**********************************************
+READ_ERROR - Takes(s): 1.0, Count: 1008, OPS: 1023.7, Avg(us): 993, Min(us): 534, Max(us): 5427, 50th(us): 904, 90th(us): 1347, 95th(us): 1562, 99th(us): 2259, 99.9th(us): 5107, 99.99th(us): 5427
+UPDATE_ERROR - Takes(s): 1.0, Count: 1007, OPS: 1021.2, Avg(us): 954, Min(us): 431, Max(us): 14871, 50th(us): 855, 90th(us): 1228, 95th(us): 1464, 99th(us): 2051, 99.9th(us): 14799, 99.99th(us): 14871
+READ_ERROR - Takes(s): 2.0, Count: 1930, OPS: 972.8, Avg(us): 1032, Min(us): 519, Max(us): 9135, 50th(us): 936, 90th(us): 1417, 95th(us): 1685, 99th(us): 2477, 99.9th(us): 5371, 99.99th(us): 9135
+UPDATE_ERROR - Takes(s): 2.0, Count: 1930, OPS: 972.0, Avg(us): 1000, Min(us): 431, Max(us): 15879, 50th(us): 890, 90th(us): 1304, 95th(us): 1558, 99th(us): 2605, 99.9th(us): 14799, 99.99th(us): 15879
+**********************************************
+Run finished, takes 2.084887307s
+READ_ERROR - Takes(s): 2.1, Count: 1997, OPS: 965.5, Avg(us): 1033, Min(us): 519, Max(us): 9135, 50th(us): 937, 90th(us): 1417, 95th(us): 1678, 99th(us): 2477, 99.9th(us): 5427, 99.99th(us): 9135
+UPDATE_ERROR - Takes(s): 2.1, Count: 2003, OPS: 967.4, Avg(us): 1001, Min(us): 431, Max(us): 15879, 50th(us): 890, 90th(us): 1304, 95th(us): 1558, 99th(us): 2605, 99.9th(us): 14799, 99.99th(us): 15879

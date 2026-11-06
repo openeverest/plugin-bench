@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -162,6 +163,51 @@ func TestDatabaseBelongsToOneInstallation(t *testing.T) {
 		t.Fatalf("second installation error = %v; want refusal naming the owner", err)
 	}
 	openStore(t, config)
+}
+
+func TestOtherInstallationDoesNotApplyMigrations(t *testing.T) {
+	config := isolatedConfig(t)
+	store := openStore(t, config)
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := append(slices.Clone(migrations), migration{
+		version: len(migrations) + 1, name: "future.sql", sql: "CREATE TABLE future_release_table (id integer)",
+	})
+	err = migrate(context.Background(), store.pool, "plugin-bench-staging", pending)
+	if err == nil || !strings.Contains(err.Error(), `installation "plugin-bench"`) {
+		t.Fatalf("migrate error = %v; want refusal naming the owner", err)
+	}
+	var version int
+	var futureTableExists bool
+	if err := store.pool.QueryRow(context.Background(),
+		"SELECT max(version), to_regclass('future_release_table') IS NOT NULL FROM plugin_bench_schema_migrations").Scan(&version, &futureTableExists); err != nil {
+		t.Fatal(err)
+	}
+	if version != len(migrations) || futureTableExists {
+		t.Fatalf("schema version %d, future table exists %t; another installation migrated the database", version, futureTableExists)
+	}
+}
+
+func TestFailedInitializationLeavesNothingBehind(t *testing.T) {
+	config := isolatedConfig(t)
+	pool, err := pgxpool.NewWithConfig(context.Background(), config.Copy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrate(context.Background(), pool, testInstallation, []migration{{version: 1, name: "broken.sql", sql: "NOT SQL"}}); err == nil {
+		t.Fatal("broken migration was applied")
+	}
+	var tables int
+	if err := pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema()").Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Fatalf("failed initialization left %d table(s) behind", tables)
+	}
 }
 
 // Metrics are rows rather than a JSON document so history can be compared

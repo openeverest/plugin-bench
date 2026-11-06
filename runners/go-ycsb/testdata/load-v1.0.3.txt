@@ -1,0 +1,26 @@
+Using request distribution 'uniform' a keyrange of [0 999]
+Connected to MongoDB!
+***************** properties *****************
+"readproportion"="0.5"
+"threadcount"="1"
+"measurement.interval"="1"
+"recordcount"="1000"
+"scanproportion"="0"
+"mongodb.url"="<redacted-mongodb-uri>"
+"operationcount"="4000"
+"requestdistribution"="uniform"
+"table"="qualification_records"
+"updateproportion"="0.5"
+"readmodifywriteproportion"="0"
+"fieldcount"="10"
+"fieldlength"="100"
+"readallfields"="true"
+"insertproportion"="0"
+"command"="load"
+"dotransactions"="false"
+"workload"="core"
+**********************************************
+**********************************************
+Run finished, takes 673.770439ms
+INSERT - Takes(s): 0.7, Count: 1000, OPS: 1527.8, Avg(us): 643, Min(us): 422, Max(us): 19343, 50th(us): 570, 90th(us): 831, 95th(us): 942, 99th(us): 1409, 99.9th(us): 5211, 99.99th(us): 19343
+TOTAL  - Takes(s): 0.7, Count: 1000, OPS: 1527.4, Avg(us): 643, Min(us): 422, Max(us): 19343, 50th(us): 570, 90th(us): 831, 95th(us): 942, 99th(us): 1409, 99.9th(us): 5211, 99.99th(us): 19343

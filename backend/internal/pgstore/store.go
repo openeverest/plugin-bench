@@ -33,8 +33,8 @@ type Store struct {
 
 var _ api.RunStore = (*Store)(nil)
 
-// Open connects, applies schema migrations, and claims the database for one
-// installation, refusing a database that another installation already owns.
+// Open connects, claims the database for one installation, and applies schema
+// migrations, refusing a database that another installation already owns.
 func Open(ctx context.Context, connectionString, installationID string) (*Store, error) {
 	config, err := pgxpool.ParseConfig(connectionString)
 	if err != nil {
@@ -59,39 +59,16 @@ func open(ctx context.Context, config *pgxpool.Config, installationID string) (*
 		pool.Close()
 		return nil, fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
-	if err := migrate(ctx, pool); err != nil {
+	migrations, err := loadMigrations()
+	if err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("migrate PostgreSQL schema: %w", err)
+		return nil, fmt.Errorf("load migrations: %w", err)
 	}
-	if err := claimInstallation(ctx, pool, installationID); err != nil {
+	if err := migrate(ctx, pool, installationID, migrations); err != nil {
 		pool.Close()
-		return nil, err
+		return nil, fmt.Errorf("initialize PostgreSQL schema: %w", err)
 	}
 	return &Store{pool: pool, now: time.Now}, nil
-}
-
-// claimInstallation runs under the migration lock so concurrent first starts
-// agree on a single owner.
-func claimInstallation(ctx context.Context, pool *pgxpool.Pool, installationID string) error {
-	var owner string
-	err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockKey); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO plugin_bench_installation (installation_id) VALUES ($1)
-			ON CONFLICT (singleton) DO NOTHING`, installationID); err != nil {
-			return err
-		}
-		return tx.QueryRow(ctx, "SELECT installation_id FROM plugin_bench_installation").Scan(&owner)
-	})
-	if err != nil {
-		return fmt.Errorf("claim PostgreSQL database for this installation: %w", err)
-	}
-	if owner != installationID {
-		return fmt.Errorf("PostgreSQL database already stores history for plugin-bench installation %q; "+
-			"use a separate database or schema for installation %q", owner, installationID)
-	}
-	return nil
 }
 
 func (s *Store) Close() {
