@@ -284,8 +284,9 @@ On startup, the backend applies its own schema migrations (the
 `plugin_bench_schema_migrations` tables) under an advisory lock and refuses to
 start against a schema created by a newer release. A database belongs to one
 plugin installation, identified by its Helm release name: a second installation
-pointed at the same database refuses to start, so give each installation its
-own database or schema (for example, with `search_path=<schema>` in the URI). An
+pointed at the same database refuses to start before changing its schema, so
+give each installation its own database or schema (for example, with
+`search_path=<schema>` in the URI). An
 unreachable database or an invalid URI stops startup rather than falling back
 to memory. Each run records its target, database type (for example
 `postgresql` or `mysql`), driver, effective options, resources, status,
