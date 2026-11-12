@@ -2,8 +2,8 @@
 
 This directory contains configuration validation and Tcl configuration generation
 for a standalone HammerDB **6.1.1** TPROC-C runner for PostgreSQL and MySQL.
-Private script staging is implemented; execution and image packaging follow in
-subsequent steps.
+Private staging, executable Tcl phases, Go process execution and output redaction
+are implemented. Metrics and image packaging follow.
 
 ## Runtime
 
@@ -63,15 +63,28 @@ unchanged. Never accept arbitrary Tcl or CLI argument passthrough.
 config. Preparation uses one schema worker; measurement uses the configured
 virtual users, timed mode, explicit ramp-up/duration, fail-on-error and profiling.
 Every command argument passes through `tclLiteral`. The generated text contains
-credentials and must be stored privately. It does not yet launch workers or
-perform database/schema checks; those belong to phase execution.
+credentials and must be stored privately. `phaseScript` adds database/schema
+checks, workload commands, worker-status validation and an explicit exit code.
+Only successful phases write their job ID to a private `.done` file. Go execution
+checks the record's version, phase and job ID as well as the subprocess result;
+missing, stale or malformed records fail the phase.
 
 `writeScripts` places `run.tcl` and, when initializing, `prepare.tcl` in a fresh
 `0700` directory with `0600` files. Its private `state` directory is the child's
 `TMP`, `TMPDIR`, `TEMP` and `HOME`, keeping default SQLite settings, Jobs data and
 logs within that invocation. The caller defers the returned cleanup function;
-staging failures clean up immediately. Step 3 wires this environment and cleanup
-into execution and cancellation. Cleanup removes local files, not database data.
+staging failures clean up immediately. `runStaged` passes this environment to the
+CLI, removes `DB_PASSWORD` from the inherited environment, and cleans up after
+success, failure or cancellation. Execution uses the CLI's directory, sends
+SIGTERM to its process group on cancellation and bounds shutdown with a
+five-second wait before forced cleanup. Each phase buffers bounded lines and redacts raw and Tcl-escaped passwords before
+forwarding either stream to Pod logs. Oversized lines are omitted; destination
+errors are retained while child output drains. `main.go` loads configuration,
+locates `hammerdbcli` on PATH or in the working directory, and handles SIGTERM
+and interrupt through a shared cancellation context.
+Cleanup removes local files, not database data.
+Phase tests use real Tcl with substituted database/CLI operations; live image
+verification remains a separate step.
 
 Tests cover password restrictions, literal encoding, engine settings and Tcl
 argument round trips. The round-trip test stubs `diset`; it checks our generated
@@ -102,6 +115,8 @@ no separately generated account, role, database or password is part of this
 contract. Existing data is reused only when initialization is off, the schema is
 compatible and its warehouse count matches. Check both the warehouse count and
 identifier range, rather than accepting missing/gapped warehouse rows blindly.
+The current PostgreSQL script requires the default schema to resolve to `public`
+and preparation to use the existing database owner.
 
 PostgreSQL's `pg_superuser`/`pg_superuserpass` settings must refer to the same
 supplied account; their names do not justify requiring superuser privileges.

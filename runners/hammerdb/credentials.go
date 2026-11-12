@@ -8,26 +8,20 @@ import (
 )
 
 type scriptPaths struct {
-	directory string
-	prepare   string
-	run       string
-	state     string
+	directory   string
+	prepare     string
+	run         string
+	state       string
+	prepareDone string
+	runDone     string
 }
 
 // writeScripts stages configuration text, including credentials, in a private
-// directory. The caller must defer cleanup after success. Execution will add
-// schema checks and phase completion logic before launching these scripts.
+// directory. The caller must defer cleanup after success. Each script includes
+// preflight and worker checks.
 func writeScripts(c config) (scriptPaths, func(), error) {
-	run, err := configurationScript(c, false)
-	if err != nil {
+	if _, err := configurationScript(c, false); err != nil {
 		return scriptPaths{}, nil, err
-	}
-	var prepare string
-	if c.initialize {
-		prepare, err = configurationScript(c, true)
-		if err != nil {
-			return scriptPaths{}, nil, err
-		}
 	}
 	dir, err := os.MkdirTemp("", "hammerdb-")
 	if err != nil {
@@ -42,6 +36,12 @@ func writeScripts(c config) (scriptPaths, func(), error) {
 	}
 	dir = abs
 	paths := scriptPaths{directory: dir, run: filepath.Join(dir, "run.tcl"), state: filepath.Join(dir, "state")}
+	paths.runDone = filepath.Join(dir, "run.done")
+	run, err := phaseScript(c, false, paths.runDone)
+	if err != nil {
+		cleanup()
+		return scriptPaths{}, nil, err
+	}
 	if err := os.Mkdir(paths.state, 0700); err != nil {
 		cleanup()
 		return scriptPaths{}, nil, errors.New("could not create the private HammerDB state directory")
@@ -52,6 +52,12 @@ func writeScripts(c config) (scriptPaths, func(), error) {
 	}
 	if c.initialize {
 		paths.prepare = filepath.Join(dir, "prepare.tcl")
+		paths.prepareDone = filepath.Join(dir, "prepare.done")
+		prepare, err := phaseScript(c, true, paths.prepareDone)
+		if err != nil {
+			cleanup()
+			return scriptPaths{}, nil, err
+		}
 		if err := writePrivateFile(paths.prepare, []byte(prepare)); err != nil {
 			cleanup()
 			return scriptPaths{}, nil, errors.New("could not write the private HammerDB preparation script")
@@ -71,13 +77,14 @@ func writePrivateFile(path string, data []byte) error {
 
 // HammerDB 6.1.1's findtempdir checks TMP before TMPDIR on Linux. Override
 // all three names so its default SQLite configuration/Jobs files and logs
-// stay under this invocation's private directory. Step 3 supplies this to Cmd.Env.
+// stay under this invocation's private directory. The password is already in
+// the private script and need not be inherited by the child process.
 func (p scriptPaths) environment(base []string) []string {
 	result := make([]string, 0, len(base)+4)
 	for _, entry := range base {
 		key, _, _ := strings.Cut(entry, "=")
 		switch key {
-		case "TMP", "TMPDIR", "TEMP", "HOME":
+		case "TMP", "TMPDIR", "TEMP", "HOME", "DB_PASSWORD":
 			continue
 		}
 		result = append(result, entry)

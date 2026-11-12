@@ -1,12 +1,60 @@
 package main
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 )
+
+//go:embed phase.tcl
+var phaseSupport string
+
+// phaseScript wraps configuration in a checked, noninteractive phase. Completion
+// is a fresh private file, never inferred from the CLI's exit status alone.
+func phaseScript(c config, prepare bool, completion string) (string, error) {
+	settings, err := configurationScript(c, prepare)
+	if err != nil {
+		return "", err
+	}
+	if completion == "" || !utf8.ValidString(completion) || strings.ContainsRune(completion, '\x00') {
+		return "", errors.New("invalid private HammerDB completion path")
+	}
+	var b strings.Builder
+	b.WriteString(phaseSupport)
+	for _, entry := range []struct{ key, value string }{
+		{"engine", c.databaseType}, {"host", c.host}, {"port", strconv.Itoa(c.port)},
+		{"user", c.user}, {"password", c.password}, {"database", c.database},
+		{"pg_sslmode", c.pgSSLMode}, {"mysql_ssl", strconv.FormatBool(c.mysqlSSL)},
+		{"prepare", strconv.FormatBool(prepare)}, {"warehouses", strconv.Itoa(c.warehouses)},
+		{"completion", completion},
+	} {
+		fmt.Fprintf(&b, "set runner_%s %s\n", entry.key, tclLiteral(entry.value))
+	}
+	b.WriteString("try {\nif {[file exists $runner_completion]} {error \"completion file already exists\"}\nrunner_preflight\n")
+	b.WriteString(settings)
+	// A new process is expected for each phase. Clear stale status explicitly
+	// rather than accepting leftovers if a CLI command returns without working.
+	b.WriteString("unset -nocomplain ::jobid ::vustatus\n")
+	if prepare {
+		b.WriteString("buildschema\nset runner_job [runner_check_workers 1]\n")
+	} else {
+		fmt.Fprintf(&b, "loadscript\nvucreate\nvurun\nset runner_job [runner_check_workers %d]\n", int64(c.virtualUsers)+1)
+	}
+	b.WriteString(`vudestroy
+runner_complete $runner_job
+} on error {message options} {
+    catch {vudestroy}
+    catch {file delete -force $runner_completion}
+    puts stderr "HammerDB phase failed: check database access, schema and worker status"
+    exit 1
+}
+exit 0
+`)
+	return b.String(), nil
+}
 
 // tclLiteral encodes one word inside double quotes. In particular, Tcl must
 // not evaluate command substitutions, variables, or backslash sequences in it.

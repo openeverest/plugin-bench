@@ -41,7 +41,11 @@ func TestWriteScriptsPrivateFilesAndCleanup(t *testing.T) {
 					t.Fatal("script is not a private regular file")
 				}
 				data, err := os.ReadFile(path)
-				want, generationErr := configurationScript(c, prepare)
+				completion := paths.runDone
+				if prepare {
+					completion = paths.prepareDone
+				}
+				want, generationErr := phaseScript(c, prepare, completion)
 				if err != nil || generationErr != nil || string(data) != want {
 					t.Fatal("staged script differs from the generated configuration")
 				}
@@ -151,7 +155,7 @@ func TestWritePrivateFileExclusive(t *testing.T) {
 }
 
 func TestScriptEnvironment(t *testing.T) {
-	base := []string{"PATH=/bin", "TMP=/shared", "TMPDIR=/shared", "TEMP=/shared", "HOME=/shared", "TMP=/duplicate", "OTHER=a=b"}
+	base := []string{"PATH=/bin", "TMP=/shared", "TMPDIR=/shared", "TEMP=/shared", "HOME=/shared", "TMP=/duplicate", "DB_PASSWORD=private", "OTHER=a=b"}
 	original := append([]string(nil), base...)
 	paths := scriptPaths{state: "/private/state"}
 	want := []string{"PATH=/bin", "OTHER=a=b", "TMP=/private/state", "TMPDIR=/private/state", "TEMP=/private/state", "HOME=/private/state"}
