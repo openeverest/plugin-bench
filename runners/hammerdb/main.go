@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -42,7 +43,7 @@ func run(ctx context.Context, c config, paths scriptPaths, invoke func(context.C
 
 // runStaged owns temporary files through execution, including cancellation.
 // Each phase filters both streams before forwarding output to Pod logs.
-func runStaged(ctx context.Context, c config, executable string, env []string, stdout, stderr io.Writer) error {
+func runStaged(ctx context.Context, c config, executable string, env []string, stdout, stderr io.Writer, terminationPath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -52,12 +53,53 @@ func runStaged(ctx context.Context, c config, executable string, env []string, s
 	}
 	defer cleanup()
 	childEnv := paths.environment(env)
-	return run(ctx, c, paths, func(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-		out, diagnostic := newOutput(c, stdout, stderr)
-		executionErr := execute(ctx, executable, args, childEnv, out, diagnostic)
-		outputErr := finishOutput(out, diagnostic)
+	return runWithMetrics(ctx, c, paths, func(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+		return execute(ctx, executable, args, childEnv, stdout, stderr)
+	}, stdout, stderr, terminationPath)
+}
+
+// runWithMetrics observes raw measured stdout alongside the redacting writer.
+// A verified workload succeeds even if structured metrics are unavailable.
+func runWithMetrics(ctx context.Context, c config, paths scriptPaths,
+	invoke func(context.Context, []string, io.Writer, io.Writer) error,
+	stdout, stderr io.Writer, terminationPath string,
+) error {
+	collector := summaryCollector{engine: c.databaseType}
+	err := run(ctx, c, paths, func(ctx context.Context, args []string, destination, diagnostic io.Writer) error {
+		out, safeErr := newOutput(c, destination, diagnostic)
+		var output io.Writer = out
+		if len(args) == 2 && args[1] == paths.run {
+			output = io.MultiWriter(out, &collector)
+		}
+		executionErr := invoke(ctx, args, output, safeErr)
+		outputErr := finishOutput(out, safeErr)
 		return errors.Join(executionErr, outputErr)
 	}, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Flush an unterminated final stdout line before examining optional timing.
+	if len(collector.line) > 0 && !collector.discarding {
+		collector.parseLine()
+		collector.line = collector.line[:0]
+	}
+	if data, readErr := os.ReadFile(paths.runDone); readErr == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) == 3 {
+			collector.collectTiming(fields[2])
+		}
+	}
+	record, err := collector.result()
+	if err == nil {
+		err = writeTerminationResult(terminationPath, record)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "runner warning: structured metrics unavailable")
+	}
+	return nil
 }
 
 func runnerMain() int {
@@ -77,7 +119,7 @@ func runnerMain() int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = runStaged(ctx, c, executable, os.Environ(), os.Stdout, os.Stderr)
+	err = runStaged(ctx, c, executable, os.Environ(), os.Stdout, os.Stderr, terminationLogPath)
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "runner cancelled")
 		return 1

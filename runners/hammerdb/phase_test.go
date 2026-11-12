@@ -82,6 +82,11 @@ proc vurun {} {
     lappend ::events run
     if {$::mode ne "no_work"} {populate_workers 2}
 }
+proc jobs {args} {
+    if {$args eq "format JSON"} {return}
+    if {$args ne "TEST123 timing"} {error "unexpected timing query"}
+    puts {{"NEWORD":{"avg_ms":"9.61"}}}
+}
 proc vustatus {} {}
 proc vudestroy {} {lappend ::events destroy; unset -nocomplain ::vustatus}
 rename exit process_exit

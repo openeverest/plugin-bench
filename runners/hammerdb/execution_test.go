@@ -143,7 +143,7 @@ printf '1 %s JOB123\n' "$phase" > "$(dirname "$2")/$phase.done"
 				timer := time.AfterFunc(100*time.Millisecond, cancel)
 				defer timer.Stop()
 			}
-			err := runStaged(ctx, c, executable, append(os.Environ(), "SCENARIO="+scenario, "DB_PASSWORD=private"), io.Discard, io.Discard)
+			err := runStaged(ctx, c, executable, append(os.Environ(), "SCENARIO="+scenario, "DB_PASSWORD=private"), io.Discard, io.Discard, filepath.Join(root, "absent"))
 			if (scenario == "success") != (err == nil) {
 				t.Fatalf("unexpected result: %v", err)
 			}

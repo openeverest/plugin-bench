@@ -3,7 +3,9 @@
 This directory contains configuration validation and Tcl configuration generation
 for a standalone HammerDB **6.1.1** TPROC-C runner for PostgreSQL and MySQL.
 Private staging, executable Tcl phases, Go process execution and output redaction
-are implemented. Metrics and image packaging follow.
+are implemented. Measured stdout feeds both the redacting log writer and a
+bounded NOPM/TPM collector; successful runs write the version-1 termination
+record. Image packaging follows.
 
 ## Runtime
 
@@ -154,14 +156,16 @@ Use `exit <status>` in noninteractive scripts. An offline 6.1.1 probe found that
 All generated scripts and diagnostic streams may contain connection material;
 redact it before forwarding to stdout/stderr and remove temporary files on exit.
 
-Return `nopm` (`orders/min`) first and `tpm` (`tx/min`) second through the existing
+The runner emits `nopm` (`orders/min`) first and `tpm` (`tx/min`) second through the existing
 version-1 `/dev/termination-log` contract. TPM is engine-specific; do not label it
-as pgbench/Sysbench TPS. Enable timing profiling in verification and add available
-transaction-specific average latency in `ms`, without inventing a global average.
+as pgbench/Sysbench TPS. After worker success, the Tcl script prints the current job’s JSON timing data
+inside a marked stdout block. The collector adds available per-transaction
+average latencies in `ms`, verified against that phase’s completion job ID.
+Missing or malformed timing leaves throughput available; no global average is invented.
 The pinned Jobs timing JSON encodes numbers as strings and exposes `avg_ms` and
 percentile fields per operation. Parse finite, nonnegative numeric values explicitly.
 
-| Native timing operation | Proposed metric name (unit `ms`) |
+| Native timing operation | Metric name (unit `ms`) |
 | --- | --- |
 | `NEWORD` | `latency_new_order_avg` |
 | `PAYMENT` | `latency_payment_avg` |

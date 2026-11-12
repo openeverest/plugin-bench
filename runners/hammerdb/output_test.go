@@ -105,7 +105,7 @@ printf '1 %s JOB123\n' "$phase" > "$(dirname "$2")/$phase.done"
 	c.initialize = true
 	c.password = "dummy$[secret]\\value"
 	var output bytes.Buffer
-	if err := runStaged(context.Background(), c, executable, os.Environ(), &output, &output); err != nil {
+	if err := runStaged(context.Background(), c, executable, os.Environ(), &output, &output, filepath.Join(root, "absent")); err != nil {
 		t.Fatal(err)
 	}
 	literal := tclLiteral(c.password)

@@ -42,6 +42,17 @@ func phaseScript(c config, prepare bool, completion string) (string, error) {
 		b.WriteString("buildschema\nset runner_job [runner_check_workers 1]\n")
 	} else {
 		fmt.Fprintf(&b, "loadscript\nvucreate\nvurun\nset runner_job [runner_check_workers %d]\n", int64(c.virtualUsers)+1)
+		b.WriteString(`
+# Optional profiling must not change independently verified worker success.
+if {[catch {
+    jobs format JSON
+    puts "RUNNER TIMING BEGIN $runner_job"
+    jobs $runner_job timing
+}]} {
+    puts stderr "runner warning: transaction timing unavailable"
+}
+puts "RUNNER TIMING END"
+`)
 	}
 	b.WriteString(`vudestroy
 runner_complete $runner_job
