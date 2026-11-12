@@ -5,7 +5,7 @@ for a standalone HammerDB **6.1.1** TPROC-C runner for PostgreSQL and MySQL.
 Private staging, executable Tcl phases, Go process execution and output redaction
 are implemented. Measured stdout feeds both the redacting log writer and a
 bounded NOPM/TPM collector; successful runs write the version-1 termination
-record. Image packaging follows.
+record. The Dockerfile packages both database clients.
 
 ## Runtime
 
@@ -17,16 +17,54 @@ record. Image packaging follows.
   `/home/HammerDB-6.1.1`. Invoke `./hammerdbcli auto /tmp/<private-directory>/run.tcl`
   from that directory. The release CLI is a bundled executable with Tcl 9.0.2.
 - PostgreSQL uses `Pgtcl` 2.1.1.2 and `libpq.so.5`. Upstream installs `libpq5`
-  from the PGDG Ubuntu Noble repository, pinned to `17.*`, with
-  `postgresql-client-17`.
-- MySQL uses `mysqltcl` 3.052.1 and `libmysqlclient.so.24`. Upstream downloads
-  the architecture-specific library from HammerDB and verifies its SHA-256,
-  architecture and SONAME. Installing an arbitrary MariaDB client package is
-  not an equivalent replacement for that dependency.
+  from the PGDG Ubuntu Noble repository, pinned to `17.*`. Our image installs
+  the library without the separate `psql` client package.
+- MySQL uses `mysqltcl` 3.052.1 and `libmysqlclient.so.24`. The Dockerfile copies
+  only that library from the official multi-architecture MySQL image pinned to
+  `sha256:e9f6f2dae328de97dcd81427be6c711f5b818be8191d9f6efa977a9c04a1abb6`,
+  checking its architecture and SONAME. The runtime installs its shared-library
+  dependencies. An arbitrary MariaDB client is not an equivalent replacement.
 - `librarycheck` must report success for PostgreSQL and MySQL. Failure for an
   intentionally absent database client must not mask the two required checks.
-- Run the eventual wrapper as non-root. Scripts, credentials, certificate files,
+- The wrapper runs as UID/GID 10001. Scripts, credentials, certificate files,
   and writable HammerDB configuration/Jobs state need a private temporary area.
+
+Build from the repository root:
+
+```bash
+docker build -t plugin-bench-hammerdb:dev runners/hammerdb
+```
+
+The entrypoint is `/usr/local/bin/hammerdb-runner`, with `/home/hammerdb` as the
+working directory. The pinned source image indexes include AMD64 and ARM64;
+the completed image has been built for both platforms. Offline startup checks
+passed natively on AMD64 and under emulation on ARM64. Live database execution
+is checked separately.
+
+Run the offline image checks from the repository root:
+
+```bash
+bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev
+```
+
+For both architectures, use Buildx with a builder/image store supporting
+multiple platforms, then run the same checks for each platform:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 --load \
+  -t plugin-bench-hammerdb:dev runners/hammerdb
+bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev linux/amd64
+bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev linux/arm64
+```
+
+Running a foreign architecture requires emulation. The Go builder compiles on
+the build host for each target; runtime library installation and startup checks
+execute using the target architecture.
+
+This checks the entrypoint, UID/GID 10001, private temporary-file permissions,
+HammerDB 6.1.1/Tcl 9, both database bindings and invalid configuration rejection.
+`/tmp` must be writable and permit executable mappings: bundled Tcl libraries
+are extracted there. For a tmpfs mount, use `--tmpfs /tmp:rw,exec,mode=1777`.
 
 ## Environment
 
