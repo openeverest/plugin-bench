@@ -77,3 +77,26 @@ The PostgreSQL preparation took approximately 262 seconds and the subsequent run
 probe timings, not performance baselines. Native PostgreSQL phase/result/timing
 fixtures are in `testdata/tprocc-postgresql-6.1.1.json`. No MySQL success fixture
 or successful MySQL workload verification is claimed.
+
+## Wrapper image: Step 6
+
+Native AMD64 initialized and reused runs passed against PostgreSQL 17 and MySQL
+8.4 using the custom runner image. NOPM/TPM and available transaction latencies
+matched native output and the termination record. Passwords were absent from
+runner logs/results; account credentials, privileges, database inventory and
+ownership stayed unchanged. A warehouse name changed before reuse survived.
+MySQL used its default authentication and TLS; PostgreSQL used `sslmode=disable`.
+Test resources were removed after execution.
+
+The first MySQL attempt failed before loading because clearing `mysql_socket`
+removed an argument from HammerDB's generated Tcl call. Keeping the default
+socket value fixed the call; the configured remote hostname still selects TCP.
+The complete integration script also passed missing-schema, wrong-password,
+insufficient-privilege, unreachable-host, invalid-setting, warehouse-mismatch and
+non-empty-preparation cases for both engines. Failures produced no measurement
+or success metrics. Passwords containing Tcl braces worked in actual runs without
+appearing in logs or metrics. SIGTERM during measurement returned promptly,
+left no success metrics, closed database sessions and removed private staging
+files before the test container was removed. All test containers, volumes and
+the network were cleaned up. These successful wrapper checks supersede the
+incomplete Step 1 MySQL probe above.

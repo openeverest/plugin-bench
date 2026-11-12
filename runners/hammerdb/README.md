@@ -1,54 +1,28 @@
-# HammerDB runner contract
+# HammerDB runner
 
-This directory contains configuration validation and Tcl configuration generation
-for a standalone HammerDB **6.1.1** TPROC-C runner for PostgreSQL and MySQL.
-Private staging, executable Tcl phases, Go process execution and output redaction
-are implemented. Measured stdout feeds both the redacting log writer and a
-bounded NOPM/TPM collector; successful runs write the version-1 termination
-record. The Dockerfile packages both database clients.
+Standalone HammerDB **6.1.1** TPROC-C runner for PostgreSQL and MySQL. One image
+contains both database clients and a Go wrapper that prepares Tcl scripts,
+optionally builds the schema, runs the timed workload and collects metrics.
+Plugin API/UI integration is a separate task; this image is usable directly.
 
-## Runtime
+## Build and check
 
-- Use one image based on `tpcorg/hammerdb:v6.1.1-base`, adding both database clients.
-  The inspected base index is
-  `sha256:1bf2882b9462834105bc39cb850327596a19c706863f6e31db9e2ac2119bcda9`;
-  it contains `linux/amd64` and `linux/arm64` manifests.
-- HammerDB's working directory is `/home/hammerdb`, a symlink to
-  `/home/HammerDB-6.1.1`. Invoke `./hammerdbcli auto /tmp/<private-directory>/run.tcl`
-  from that directory. The release CLI is a bundled executable with Tcl 9.0.2.
-- PostgreSQL uses `Pgtcl` 2.1.1.2 and `libpq.so.5`. Upstream installs `libpq5`
-  from the PGDG Ubuntu Noble repository, pinned to `17.*`. Our image installs
-  the library without the separate `psql` client package.
-- MySQL uses `mysqltcl` 3.052.1 and `libmysqlclient.so.24`. The Dockerfile copies
-  only that library from the official multi-architecture MySQL image pinned to
-  `sha256:e9f6f2dae328de97dcd81427be6c711f5b818be8191d9f6efa977a9c04a1abb6`,
-  checking its architecture and SONAME. The runtime installs its shared-library
-  dependencies. An arbitrary MariaDB client is not an equivalent replacement.
-- `librarycheck` must report success for PostgreSQL and MySQL. Failure for an
-  intentionally absent database client must not mask the two required checks.
-- The wrapper runs as UID/GID 10001. Scripts, credentials, certificate files,
-  and writable HammerDB configuration/Jobs state need a private temporary area.
-
-Build from the repository root:
+From the repository root:
 
 ```bash
 docker build -t plugin-bench-hammerdb:dev runners/hammerdb
-```
-
-The entrypoint is `/usr/local/bin/hammerdb-runner`, with `/home/hammerdb` as the
-working directory. The pinned source image indexes include AMD64 and ARM64;
-the completed image has been built for both platforms. Offline startup checks
-passed natively on AMD64 and under emulation on ARM64. Live database execution
-is checked separately.
-
-Run the offline image checks from the repository root:
-
-```bash
 bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev
+bash .github/scripts/test-hammerdb-runner.sh plugin-bench-hammerdb:dev
 ```
 
-For both architectures, use Buildx with a builder/image store supporting
-multiple platforms, then run the same checks for each platform:
+The integration script creates disposable PostgreSQL 17 and MySQL 8.4 servers,
+checks preparation/reuse, metrics, failures, redaction and cancellation, then
+removes its containers, volumes, network and private files. Pass `postgresql` or
+`mysql` as its second argument to test one engine. Initialization has an
+eight-minute limit, reuse three minutes, expected failures one minute, and
+cancellation a 20-second exit limit. CI runs both scripts.
+
+Build both platforms with a compatible Buildx builder/image store:
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 --load \
@@ -57,164 +31,125 @@ bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev linux/amd
 bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev linux/arm64
 ```
 
-Running a foreign architecture requires emulation. The Go builder compiles on
-the build host for each target; runtime library installation and startup checks
-execute using the target architecture.
-
-This checks the entrypoint, UID/GID 10001, private temporary-file permissions,
-HammerDB 6.1.1/Tcl 9, both database bindings and invalid configuration rejection.
-`/tmp` must be writable and permit executable mappings: bundled Tcl libraries
-are extracted there. For a tmpfs mount, use `--tmpfs /tmp:rw,exec,mode=1777`.
+Startup checks passed on native AMD64 and emulated ARM64; live database checks
+passed on AMD64. Foreign-platform execution requires emulation. The Dockerfile
+pins upstream base/MySQL image indexes, installs PostgreSQL `libpq` 17 and keeps
+upstream licenses. HammerDB uses Tcl 9, `Pgtcl` and `mysqltcl`. The wrapper runs as
+UID/GID 10001 from `/home/hammerdb`. `/tmp` must be writable and permit executable
+mappings because bundled Tcl libraries are extracted there.
 
 ## Environment
-
-The following names and defaults are the runner interface for backend
-integration. None is an OpenEverest user-facing API field by itself.
 
 | Variable | Default / validation |
 | --- | --- |
 | `DB_TYPE` | Required: `postgresql` or `mysql` |
-| `DB_HOST` | Required single TCP target host |
-| `DB_PORT` | 5432 for PostgreSQL or 3306 for MySQL; integer 1–65535 |
-| `DB_NAME` | Required pre-created disposable database |
-| `DB_USER` | Required existing account with privileges in that database |
-| `DB_PASSWORD` | Required valid UTF-8; no NUL, double quotes, or leading/trailing whitespace; supplied through a Secret by the later integration |
-| `BENCH_WORKLOAD` | `tproc-c`; no other workloads initially |
+| `DB_HOST` | Required single IP address or DNS hostname, without a port |
+| `DB_PORT` | 5432 for PostgreSQL; 3306 for MySQL; range 1–65535 |
+| `DB_NAME` | Required existing disposable database |
+| `DB_USER` | Required existing account with database privileges |
+| `DB_PASSWORD` | Required UTF-8; no NUL, double quotes or surrounding whitespace |
+| `BENCH_WORKLOAD` | `tproc-c`; no other workloads supported |
 | `BENCH_WAREHOUSES` | 1; positive integer |
-| `BENCH_VIRTUAL_USERS` | 1; positive integer <= warehouses |
-| `BENCH_RAMPUP_MINUTES` | 0; nonnegative integer |
-| `BENCH_DURATION_MINUTES` | 1; positive integer |
-| `BENCH_INITIALIZE` | `false`; strict `true`/`false` |
-| `PGSSLMODE` | PostgreSQL only: `prefer`; initially accept `disable`, `prefer`, `require` |
-| `MYSQL_SSL` | MySQL only: `true`; strict `true`/`false` |
+| `BENCH_VIRTUAL_USERS` | 1; positive integer, at most the warehouse count |
+| `BENCH_RAMPUP_MINUTES` | 0; nonnegative whole minutes |
+| `BENCH_DURATION_MINUTES` | 1; positive whole minutes |
+| `BENCH_INITIALIZE` | `false`; `true` or `false` |
+| `PGSSLMODE` | PostgreSQL: `prefer`; accepts `disable`, `prefer`, `require` |
+| `MYSQL_SSL` | MySQL: `true`; `true` or `false` |
 
-Reject malformed/overflowing numeric values and NUL bytes. Minute settings are
-whole minutes; their sum must fit a Go `time.Duration`. Database/user names
-initially accept only ASCII letters, digits, underscores, hyphens and dots,
-because the pinned builders interpolate them into Tcl and SQL. PostgreSQL names
-are limited to 63 bytes; MySQL database names to 64 and usernames to 32.
-Hosts must be one IP address or DNS hostname, with the port supplied separately.
-Values are not trimmed. HammerDB 6.1.1 trims surrounding password whitespace in
-`diset` and does not escape double quotes in its generated worker scripts, so
-those passwords are rejected before staging files. Accepted passwords are kept
-unchanged. Never accept arbitrary Tcl or CLI argument passthrough.
+Database and user names accept ASCII letters, digits, underscores, hyphens and
+dots. PostgreSQL names are limited to 63 bytes; MySQL database names to 64 and
+usernames to 32. Numeric settings must fit the validated bounds and the combined
+minute duration must fit Go's `time.Duration`. Password restrictions follow
+HammerDB's upstream configuration/worker handling; accepted values are preserved.
 
-`configurationScript` generates connection and phase settings from a validated
-config. Preparation uses one schema worker; measurement uses the configured
-virtual users, timed mode, explicit ramp-up/duration, fail-on-error and profiling.
-Every command argument passes through `tclLiteral`. The generated text contains
-credentials and must be stored privately. `phaseScript` adds database/schema
-checks, workload commands, worker-status validation and an explicit exit code.
-Only successful phases write their job ID to a private `.done` file. Go execution
-checks the record's version, phase and job ID as well as the subprocess result;
-missing, stale or malformed records fail the phase.
+## Database setup and execution
 
-`writeScripts` places `run.tcl` and, when initializing, `prepare.tcl` in a fresh
-`0700` directory with `0600` files. Its private `state` directory is the child's
-`TMP`, `TMPDIR`, `TEMP` and `HOME`, keeping default SQLite settings, Jobs data and
-logs within that invocation. The caller defers the returned cleanup function;
-staging failures clean up immediately. `runStaged` passes this environment to the
-CLI, removes `DB_PASSWORD` from the inherited environment, and cleans up after
-success, failure or cancellation. Execution uses the CLI's directory, sends
-SIGTERM to its process group on cancellation and bounds shutdown with a
-five-second wait before forced cleanup. Each phase buffers bounded lines and redacts raw and Tcl-escaped passwords before
-forwarding either stream to Pod logs. Oversized lines are omitted; destination
-errors are retained while child output drains. `main.go` loads configuration,
-locates `hammerdbcli` on PATH or in the working directory, and handles SIGTERM
-and interrupt through a shared cancellation context.
-Cleanup removes local files, not database data.
-Phase tests use real Tcl with substituted database/CLI operations; live image
-verification remains a separate step.
+Provision the database and account before running the image. For PostgreSQL,
+the account must own the database and its default schema must resolve to
+`public`; superuser, `CREATEDB` and `CREATEROLE` are unnecessary. For MySQL,
+grant privileges within the benchmark database; the verified setup uses
+`ALL PRIVILEGES ON <database>.*` without global or account-management grants.
 
-Tests cover password restrictions, literal encoding, engine settings and Tcl
-argument round trips. The round-trip test stubs `diset`; it checks our generated
-commands, not the complete upstream worker/connection path.
-The round-trip test uses `tclsh`, or a required interpreter path supplied through
-`HAMMERDB_TEST_TCLSH`; it skips when neither is available. The local check used
-Tcl 8.6.17. Pinned HammerDB/Tcl 9 checks belong to image verification.
+`BENCH_INITIALIZE=true` prepares an empty database using one schema worker.
+With initialization off, the runner requires an existing TPROC-C schema with
+matching warehouse count and identifier range. It uses the supplied account for
+all phases and creates no database or account. Existing data and partial objects
+from failed preparation remain; cleanup never drops the dataset automatically.
 
-Map `PGSSLMODE` to `diset connection pg_sslmode`. Map `MYSQL_SSL` to
-`diset connection mysql_ssl`, explicitly keep `mysql_ssl_two_way false` and clear
-the default CA directory/file and client certificate/key filenames for one-way
-TLS. The live MySQL preparation probe negotiated `TLS_AES_128_GCM_SHA256` using
-the default `caching_sha2_password` account. A successful run must not silently
-accept an empty negotiated cipher when TLS was requested. Setting `MYSQL_SSL`
-false may prevent a fresh caching-SHA2 login if RSA exchange is unavailable.
+Measurement uses the configured virtual users plus one monitor connection.
+Allow time for startup and schema preparation in addition to
+`(rampupMinutes + durationMinutes) * 60` seconds. A zero CLI exit code alone is
+insufficient: the wrapper checks worker states and private completion records.
+Failed preparation prevents measurement.
 
-These initial settings cover encryption, not verification of server identity or
-mutual TLS. Certificate provisioning and `verify-ca`/`verify-full` are not claimed
-by this contract. Reject unsupported TLS modes explicitly. PostgreSQL's probe
-used `disable` against the disposable server; encrypted PostgreSQL connections
-have not been tested in this step.
+MySQL requests TLS by default and checks the negotiated cipher; its integration
+tests use MySQL 8.4's default authentication. PostgreSQL passes `PGSSLMODE` to
+libpq; integration tests use `disable`. These settings provide encryption controls;
+CA provisioning, server identity verification and mutual TLS are outside this
+runner's current interface.
 
-## Preparation and execution
+## Run directly and collect metrics
 
-The wrapper will optionally prepare an empty requested database, then run a timed
-workload with fail-on-error enabled. It will use the supplied account throughout;
-no separately generated account, role, database or password is part of this
-contract. Existing data is reused only when initialization is off, the schema is
-compatible and its warehouse count matches. Check both the warehouse count and
-identifier range, rather than accepting missing/gapped warehouse rows blindly.
-The current PostgreSQL script requires the default schema to resolve to `public`
-and preparation to use the existing database owner.
+The example assumes an existing PostgreSQL database/account reachable as
+`database-host` on `YOUR_DATABASE_NETWORK`. Replace those names and settings.
+The file mount represents Kubernetes' termination-message file:
 
-PostgreSQL's `pg_superuser`/`pg_superuserpass` settings must refer to the same
-supplied account; their names do not justify requiring superuser privileges.
-`pg_defaultdbase` and `pg_dbase` both target the requested database. Explicitly set
-`pg_vacuum false` to avoid its optional checkpoint/vacuum behavior.
+```bash
+results_dir=$(mktemp -d)
+runner_name="hammerdb-example-${results_dir##*/}"
+touch "$results_dir/metrics.json"
+chmod 666 "$results_dir/metrics.json"
+read -rs -p 'Database password: ' DB_PASSWORD; echo
+export DB_PASSWORD
 
-The pinned PostgreSQL builder queues an `ALTER USER ... PASSWORD` for an existing
-role, but its existing-empty-database branch overwrites the same queued statement
-with `ALTER DATABASE ... OWNER TO`. The live probe succeeded using an existing
-database owner without superuser, `CREATEDB` or `CREATEROLE`; account/password,
-database inventory and ownership were unchanged. The database DDL log confirmed
-an assignment to the current owner, not account creation or password changes.
-This verified path needs no upstream patch. MySQL's existing-empty-database
-branch similarly avoids its `CREATE DATABASE` statement.
+timeout -k 10s 10m docker run --rm --name "$runner_name" \
+  --network YOUR_DATABASE_NETWORK --tmpfs /tmp:rw,exec,mode=1777 \
+  --mount "type=bind,src=$results_dir/metrics.json,dst=/dev/termination-log" \
+  -e DB_TYPE=postgresql -e DB_HOST=database-host -e DB_NAME=hammerdb_test \
+  -e DB_USER=benchmark -e DB_PASSWORD -e PGSSLMODE=prefer \
+  -e BENCH_INITIALIZE=true -e BENCH_WAREHOUSES=1 -e BENCH_VIRTUAL_USERS=1 \
+  -e BENCH_RAMPUP_MINUTES=0 -e BENCH_DURATION_MINUTES=1 \
+  plugin-bench-hammerdb:dev
+cat "$results_dir/metrics.json"
 
-A measured run uses the configured virtual users plus one monitor connection.
-Warm-up and measured duration exclude schema preparation and startup overhead.
-The later backend integration must provide a bounded execution budget beyond
-`(rampupMinutes + durationMinutes) * 60` seconds; the plugin's existing five-minute
-default cannot be assumed sufficient. Database objects remain after a run,
-including partial objects after failed preparation; never drop them implicitly.
+# Remove a surviving container if the Docker client timed out, then local files.
+docker rm -f "$runner_name" 2>/dev/null || true
+rm -rf -- "$results_dir"
+unset DB_PASSWORD
+```
 
-## Completion, logs and metrics
+Only the metrics file is world-writable so UID 10001 can write it; its parent
+remains private. For MySQL, use `DB_TYPE=mysql` and `MYSQL_SSL=true` instead of
+`PGSSLMODE`, with the corresponding host, database and account. To reuse prepared
+data, set `BENCH_INITIALIZE=false`. Database cleanup is a separate explicit action
+by the database owner after results are collected.
 
-`buildschema` and `vurun` wait internally and return a description containing the
-job ID. They catch some worker errors, so a returned job ID or CLI exit status
-zero is not proof of success. Capture the current phase's worker states and Jobs
-status before `vudestroy`, require all expected workers to be `FINISH SUCCESS`, and reject
-missing/incomplete status. `jobs ... status` represents output records, not a
-single Boolean. `jobs format JSON` changes formatting, but `jobs` prints its data;
-it is not an ordinary function returning a decoded result.
+## Logs, credentials and results
 
-Use `exit <status>` in noninteractive scripts. An offline 6.1.1 probe found that
-`quit` traverses readline teardown and can raise `can't rename "::_unknown"`.
-All generated scripts and diagnostic streams may contain connection material;
-redact it before forwarding to stdout/stderr and remove temporary files on exit.
+Generated scripts, completion records and HammerDB state live in a private
+0700 directory with 0600 script files. The child environment omits `DB_PASSWORD`;
+stdout/stderr are redacted before reaching container logs. Temporary state is
+removed on success, failure and handled cancellation. SIGTERM terminates the
+CLI process group with a bounded shutdown wait.
 
-The runner emits `nopm` (`orders/min`) first and `tpm` (`tx/min`) second through the existing
-version-1 `/dev/termination-log` contract. TPM is engine-specific; do not label it
-as pgbench/Sysbench TPS. After worker success, the Tcl script prints the current job’s JSON timing data
-inside a marked stdout block. The collector adds available per-transaction
-average latencies in `ms`, verified against that phase’s completion job ID.
-Missing or malformed timing leaves throughput available; no global average is invented.
-The pinned Jobs timing JSON encodes numbers as strings and exposes `avg_ms` and
-percentile fields per operation. Parse finite, nonnegative numeric values explicitly.
+Successful measurement writes a version-1 JSON record to `/dev/termination-log`
+(maximum 4096 bytes). The runner never creates that file itself.
 
-| Native timing operation | Metric name (unit `ms`) |
+| Metric | Unit |
 | --- | --- |
-| `NEWORD` | `latency_new_order_avg` |
-| `PAYMENT` | `latency_payment_avg` |
-| `DELIVERY` | `latency_delivery_avg` |
-| `OSTAT` | `latency_order_status_avg` |
-| `SLEV` | `latency_stock_level_avg` |
+| `nopm` | `orders/min` |
+| `tpm` | `tx/min` |
+| `latency_new_order_avg`, `latency_payment_avg`, `latency_delivery_avg` | `ms` |
+| `latency_order_status_avg`, `latency_stock_level_avg` | `ms` |
 
-Only measured-run results count. Invalid/missing metrics produce a generic warning
-without changing independently verified benchmark success. Failed/cancelled runs
-must not emit a success record. The complete termination record is limited to
-4096 bytes, independently of retained display logs.
+TPM is engine-specific and is not equivalent to pgbench/Sysbench TPS. Optional
+latencies come from the completed job's timing data; missing timing preserves
+throughput. Missing/invalid metrics produce a warning without failing a verified
+successful workload. Failed or cancelled workloads write no success metrics.
 
-See [the shared result contract](../../docs/runner-result-contract.md) and the
-[verification notes](verification.md) for the checks actually performed.
+Releases build AMD64/ARM64 OCI archives, test the AMD64 image and publish
+`ghcr.io/openeverest/plugin-bench-hammerdb:<version>`. A maintainer must make the
+new GHCR package public for the first release's anonymous-access check to pass.
+See the [shared result contract](../../docs/runner-result-contract.md) and
+[verification notes](verification.md) for details.

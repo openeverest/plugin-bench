@@ -61,9 +61,10 @@ func TestConfigurationScriptSettings(t *testing.T) {
 						`"diset" "connection" "pg_sslmode" "prefer"`)
 				} else {
 					expected = append(expected,
+						`"diset" "connection" "mysql_socket" "/tmp/mysql.sock"`,
 						`"diset" "connection" "mysql_ssl" "true"`,
 						`"diset" "connection" "mysql_ssl_two_way" "false"`)
-					for _, key := range []string{"socket", "ssl_linux_capath", "ssl_windows_capath", "ssl_ca", "ssl_cert", "ssl_key"} {
+					for _, key := range []string{"ssl_linux_capath", "ssl_windows_capath", "ssl_ca", "ssl_cert", "ssl_key"} {
 						expected = append(expected, `"diset" "connection" "mysql_`+key+`" ""`)
 					}
 				}

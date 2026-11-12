@@ -77,12 +77,13 @@ jobs:
     # Temporarily use the 22.04 runner's compatible kernel (SERVER-121912).
     runs-on: ubuntu-22.04
     needs: [prepare, build-frontend]
-    timeout-minutes: 60
+    timeout-minutes: 100
     outputs:
       backend-tags: ${{ steps.backend-meta.outputs.tags }}
       runner-tags: ${{ steps.runner-meta.outputs.tags }}
       sysbench-tags: ${{ steps.sysbench-meta.outputs.tags }}
       ycsb-runner-tags: ${{ steps.ycsb-meta.outputs.tags }}
+      hammerdb-runner-tags: ${{ steps.hammerdb-meta.outputs.tags }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Download frontend bundle
@@ -98,9 +99,14 @@ jobs:
             runners/pgbench/go.mod
             runners/sysbench/go.mod
             runners/go-ycsb/go.sum
+            runners/hammerdb/go.mod
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: "3.14.0"
+      - name: Install Tcl for HammerDB tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tcl
       - name: Test backend and runners
         shell: bash
         run: |
@@ -111,6 +117,7 @@ jobs:
           (cd runners/pgbench && go vet ./... && go test -race ./...)
           (cd runners/sysbench && go vet ./... && go test -race ./...)
           (cd runners/go-ycsb && go vet ./... && go test -race ./...)
+          (cd runners/hammerdb && export HAMMERDB_TEST_TCLSH=/usr/bin/tclsh && go vet ./... && go test -race ./...)
       - run: helm lint charts/plugin-bench/
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -148,6 +155,15 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ needs.prepare.outputs.image }}-go-ycsb
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+      - name: Extract HammerDB runner image metadata
+        id: hammerdb-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ needs.prepare.outputs.image }}-hammerdb
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -195,6 +211,17 @@ jobs:
           labels: ${{ steps.ycsb-meta.outputs.labels }}
           cache-from: type=gha,scope=go-ycsb-runner
           cache-to: type=gha,scope=go-ycsb-runner,mode=max
+      - name: Build HammerDB runner archive
+        timeout-minutes: 15
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: runners/hammerdb
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=image-artifacts/hammerdb-runner.tar
+          tags: ${{ needs.prepare.outputs.image }}-hammerdb:${{ needs.prepare.outputs.version }}
+          labels: ${{ steps.hammerdb-meta.outputs.labels }}
+          cache-from: type=gha,scope=hammerdb-runner
+          cache-to: type=gha,scope=hammerdb-runner,mode=max
       - name: Install image tools
         run: |
           sudo apt-get update
@@ -239,6 +266,24 @@ jobs:
       - name: Integration test go-ycsb runner
         timeout-minutes: 20
         run: bash .github/scripts/test-go-ycsb-runner.sh plugin-bench-go-ycsb:release-test
+      - name: Load HammerDB runner from release archive
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep the native test archive outside the published OCI artifact set.
+          native_archive="$RUNNER_TEMP/hammerdb-native.tar"
+          skopeo --override-os linux --override-arch amd64 copy \
+            oci-archive:image-artifacts/hammerdb-runner.tar \
+            "docker-archive:${native_archive}:plugin-bench-hammerdb:release-test"
+          docker load --input "$native_archive"
+          rm "$native_archive"
+      - name: Check HammerDB release image startup and database libraries
+        timeout-minutes: 3
+        run: bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:release-test linux/amd64
+      - name: Integration test HammerDB runner
+        timeout-minutes: 30
+        run: bash .github/scripts/test-hammerdb-runner.sh plugin-bench-hammerdb:release-test
       - name: Upload tested images
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -286,6 +331,7 @@ jobs:
           RUNNER_TAGS: ${{ needs.build-image.outputs.runner-tags }}
           SYSBENCH_TAGS: ${{ needs.build-image.outputs.sysbench-tags }}
           GO_YCSB_TAGS: ${{ needs.build-image.outputs.ycsb-runner-tags }}
+          HAMMERDB_TAGS: ${{ needs.build-image.outputs.hammerdb-runner-tags }}
         run: |
           set -euo pipefail
           auth="$RUNNER_TEMP/ghcr-auth.json"
@@ -303,11 +349,13 @@ jobs:
           publish image-artifacts/runner.tar "$RUNNER_TEMP/runner.digest" "$RUNNER_TAGS"
           publish image-artifacts/sysbench-runner.tar "$RUNNER_TEMP/sysbench.digest" "$SYSBENCH_TAGS"
           publish image-artifacts/go-ycsb-runner.tar "$RUNNER_TEMP/go-ycsb.digest" "$GO_YCSB_TAGS"
+          publish image-artifacts/hammerdb-runner.tar "$RUNNER_TEMP/hammerdb.digest" "$HAMMERDB_TAGS"
           {
             echo "backend-digest=$(cat "$RUNNER_TEMP/backend.digest")"
             echo "runner-digest=$(cat "$RUNNER_TEMP/runner.digest")"
             echo "sysbench-digest=$(cat "$RUNNER_TEMP/sysbench.digest")"
             echo "ycsb-runner-digest=$(cat "$RUNNER_TEMP/go-ycsb.digest")"
+            echo "hammerdb-runner-digest=$(cat "$RUNNER_TEMP/hammerdb.digest")"
           } >> "$GITHUB_OUTPUT"
       - name: Publish Helm chart to GHCR
         env:
@@ -332,6 +380,8 @@ jobs:
             || not_public "${IMAGE}-sysbench"
           skopeo inspect --no-creds "docker://${IMAGE}-go-ycsb:${VERSION}" > /dev/null \
             || not_public "${IMAGE}-go-ycsb"
+          skopeo inspect --no-creds "docker://${IMAGE}-hammerdb:${VERSION}" > /dev/null \
+            || not_public "${IMAGE}-hammerdb"
           helm show chart "oci://${IMAGE%/*}/charts/plugin-bench" --version "$VERSION" \
             --registry-config "$RUNNER_TEMP/anonymous-helm.json" > /dev/null \
             || not_public "${IMAGE%/*}/charts/plugin-bench"
@@ -342,6 +392,7 @@ jobs:
           RUNNER_DIGEST: ${{ steps.publish.outputs.runner-digest }}
           SYSBENCH_DIGEST: ${{ steps.publish.outputs.sysbench-digest }}
           YCSB_RUNNER_DIGEST: ${{ steps.publish.outputs.ycsb-runner-digest }}
+          HAMMERDB_RUNNER_DIGEST: ${{ steps.publish.outputs.hammerdb-runner-digest }}
         run: |
           cat > release-artifacts/notes.md <<EOF
           ## Plugin Bench v${VERSION}
@@ -355,6 +406,8 @@ jobs:
             - Digest: \`${SYSBENCH_DIGEST}\`
           - go-ycsb runner: \`${IMAGE}-go-ycsb:${VERSION}\`
             - Digest: \`${YCSB_RUNNER_DIGEST}\`
+          - HammerDB runner: \`${IMAGE}-hammerdb:${VERSION}\`
+            - Digest: \`${HAMMERDB_RUNNER_DIGEST}\`
 
           Platforms: \`linux/amd64\`, \`linux/arm64\`.
 

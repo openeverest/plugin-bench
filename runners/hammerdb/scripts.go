@@ -131,7 +131,9 @@ func configurationScript(c config, prepare bool) (string, error) {
 		setting("tpcc", "pg_defaultdbase", c.database)
 		setting("tpcc", "pg_vacuum", "false")
 	} else {
-		setting("connection", "mysql_socket", "")
+		// HammerDB interpolates this argument without quoting in its schema
+		// builder. An empty value disappears and shifts all later arguments.
+		setting("connection", "mysql_socket", "/tmp/mysql.sock")
 		setting("connection", "mysql_ssl", strconv.FormatBool(c.mysqlSSL))
 		setting("connection", "mysql_ssl_two_way", "false")
 		for _, key := range []string{"mysql_ssl_linux_capath", "mysql_ssl_windows_capath", "mysql_ssl_ca", "mysql_ssl_cert", "mysql_ssl_key"} {
