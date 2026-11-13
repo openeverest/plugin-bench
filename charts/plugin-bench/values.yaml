@@ -81,6 +81,17 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  hammerdb:
+    enabled: true
+    image:
+      # Empty fields default to ghcr.io/openeverest/plugin-bench-hammerdb,
+      # appVersion, and IfNotPresent.
+      repository: ""
+      tag: ""
+      pullPolicy: ""
+    # Empty inherits runner.executionTimeout. Preparation and measurement
+    # both count against this per-runner limit.
+    executionTimeout: 30m
 
 # Where benchmark run history is stored.
 storage:
