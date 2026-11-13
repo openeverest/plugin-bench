@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type stubDriver struct {
@@ -128,6 +129,24 @@ func TestRunnerConfigValidPullPolicies(t *testing.T) {
 	for _, policy := range []string{"Always", "IfNotPresent", "Never"} {
 		if err := (RunnerConfig{Image: "registry.example/runner@sha256:abcdef", ImagePullPolicy: policy}).Validate(); err != nil {
 			t.Fatalf("pull policy %q: %v", policy, err)
+		}
+	}
+}
+
+func TestRunnerConfigValidatesOptionalExecutionTimeout(t *testing.T) {
+	base := RunnerConfig{Image: "registry.example/runner:1", ImagePullPolicy: "IfNotPresent"}
+	for _, timeout := range []time.Duration{0, time.Second, 30 * time.Minute} {
+		config := base
+		config.ExecutionTimeout = timeout
+		if err := config.Validate(); err != nil {
+			t.Fatalf("Validate() rejected timeout %s: %v", timeout, err)
+		}
+	}
+	for _, timeout := range []time.Duration{-time.Second, time.Millisecond} {
+		config := base
+		config.ExecutionTimeout = timeout
+		if err := config.Validate(); err == nil {
+			t.Fatalf("Validate() accepted timeout %s", timeout)
 		}
 	}
 }

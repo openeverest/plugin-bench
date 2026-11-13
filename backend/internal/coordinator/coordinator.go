@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openeverest/plugin-bench/backend/internal/driver"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
@@ -32,6 +33,15 @@ type Config struct {
 	// runner Job, e.g. to target a tainted, dedicated benchmark node pool.
 	NodeSelector map[string]string
 	Tolerations  []corev1.Toleration
+}
+
+// effectiveExecutionTimeout applies a trusted per-runner override when set;
+// otherwise it inherits the coordinator-wide execution timeout.
+func effectiveExecutionTimeout(config Config, runner driver.RunnerConfig) time.Duration {
+	if runner.ExecutionTimeout > 0 {
+		return runner.ExecutionTimeout
+	}
+	return config.ExecutionTimeout
 }
 
 func (c Config) Validate() error {
