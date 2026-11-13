@@ -18,6 +18,18 @@ func validConfig() Config {
 	}
 }
 
+func TestEffectiveExecutionTimeout(t *testing.T) {
+	config := validConfig()
+	input := validRunInput()
+	if got := effectiveExecutionTimeout(config, input.Runner); got != config.ExecutionTimeout {
+		t.Fatalf("inherited execution timeout = %s; want %s", got, config.ExecutionTimeout)
+	}
+	input.Runner.ExecutionTimeout = 30 * time.Minute
+	if got := effectiveExecutionTimeout(config, input.Runner); got != 30*time.Minute {
+		t.Fatalf("overridden execution timeout = %s; want 30m", got)
+	}
+}
+
 func TestNewInjectsKubernetesClient(t *testing.T) {
 	client := fake.NewSimpleClientset()
 

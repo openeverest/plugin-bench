@@ -210,6 +210,25 @@ docker_build(
     ],
 )
 
+hammerdb_runner_image = 'plugin-bench-hammerdb:tilt-dev'
+docker_build(
+    hammerdb_runner_image,
+    context='{0}/runners/hammerdb'.format(bench_dir),
+    dockerfile='{0}/runners/hammerdb/Dockerfile'.format(bench_dir),
+    only=[
+        'Dockerfile',
+        'go.mod',
+        'main.go',
+        'config.go',
+        'credentials.go',
+        'execution.go',
+        'metrics.go',
+        'output.go',
+        'scripts.go',
+        'phase.tcl',
+    ],
+)
+
 # ===========================
 # Plugin: Helm chart
 # ===========================
@@ -309,12 +328,13 @@ helm_resource(
     chart_dir,
     namespace=plugin_namespace,
     flags=plugin_flags,
-    image_deps=[plugin_bench_image, pgbench_runner_image, sysbench_runner_image, goycsb_runner_image],
+    image_deps=[plugin_bench_image, pgbench_runner_image, sysbench_runner_image, goycsb_runner_image, hammerdb_runner_image],
     image_keys=[
         ('image.repository', 'image.tag'),
         ('drivers.pgbench.image.repository', 'drivers.pgbench.image.tag'),
         ('drivers.sysbench.image.repository', 'drivers.sysbench.image.tag'),
         ('drivers.go-ycsb.image.repository', 'drivers.go-ycsb.image.tag'),
+        ('drivers.hammerdb.image.repository', 'drivers.hammerdb.image.tag'),
     ],
     resource_deps=plugin_resource_deps,
     labels=['plugin-bench'],

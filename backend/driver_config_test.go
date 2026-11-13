@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 )
@@ -16,6 +17,7 @@ func TestDriverConfigurationOverridesLegacyEnvironment(t *testing.T) {
 		{"default pull policy", `{"pgbench":{"enabled":true,"image":"example.com/runner:v2"}}`, "example.com/runner:v2", "IfNotPresent"},
 		{"never pull", `{"pgbench":{"enabled":true,"image":"runner:local","imagePullPolicy":"Never"}}`, "runner:local", "Never"},
 		{"digest image", `{"pgbench":{"enabled":true,"image":"example.com/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`, "example.com/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "IfNotPresent"},
+		{"execution timeout", `{"pgbench":{"enabled":true,"image":"example.com/runner:v2","executionTimeout":"30m"}}`, "example.com/runner:v2", "IfNotPresent"},
 		{"disabled unknown driver", `{"future-tool":{"enabled":false},"pgbench":{"enabled":true,"image":"runner:v2"}}`, "runner:v2", "IfNotPresent"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -67,6 +69,10 @@ func TestDriverConfigurationRejectsInvalidPayloadWithoutLegacyFallback(t *testin
 		{"missing image", `{"pgbench":{"enabled":true}}`, "runner image is required"},
 		{"blank image", `{"pgbench":{"enabled":true,"image":"  "}}`, "runner image is required"},
 		{"invalid pull policy", `{"pgbench":{"enabled":true,"image":"runner:v2","imagePullPolicy":"Sometimes"}}`, "image pull policy"},
+		{"zero execution timeout", `{"pgbench":{"enabled":true,"image":"runner:v2","executionTimeout":"0s"}}`, "executionTimeout"},
+		{"negative execution timeout", `{"pgbench":{"enabled":true,"image":"runner:v2","executionTimeout":"-1m"}}`, "executionTimeout"},
+		{"fractional execution timeout", `{"pgbench":{"enabled":true,"image":"runner:v2","executionTimeout":"500ms"}}`, "executionTimeout"},
+		{"malformed execution timeout", `{"pgbench":{"enabled":true,"image":"runner:v2","executionTimeout":"soon"}}`, "executionTimeout"},
 		{"empty ID", `{"":{"enabled":true,"image":"runner:v2"}}`, "driver IDs"},
 		{"whitespace ID", `{" pgbench":{"enabled":true,"image":"runner:v2"}}`, "driver IDs"},
 	} {
@@ -111,10 +117,12 @@ func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 		{
 			name: "all drivers",
 			payload: `{"go-ycsb":{"enabled":true,"image":"example.com/go-ycsb:v3","imagePullPolicy":"Always"},` +
+				`"hammerdb":{"enabled":true,"image":"example.com/hammerdb:v4","executionTimeout":"30m"},` +
 				`"pgbench":{"enabled":true,"image":"example.com/pgbench:v1"},` +
 				`"sysbench":{"enabled":true,"image":"example.com/sysbench:v2"}}`,
 			want: map[string]driver.RunnerConfig{
 				"go-ycsb":  {Image: "example.com/go-ycsb:v3", ImagePullPolicy: "Always"},
+				"hammerdb": {Image: "example.com/hammerdb:v4", ImagePullPolicy: "IfNotPresent", ExecutionTimeout: 30 * time.Minute},
 				"pgbench":  {Image: "example.com/pgbench:v1", ImagePullPolicy: "IfNotPresent"},
 				"sysbench": {Image: "example.com/sysbench:v2", ImagePullPolicy: "IfNotPresent"},
 			},
@@ -122,6 +130,11 @@ func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 		{
 			name: "go-ycsb only", payload: `{"go-ycsb":{"enabled":true,"image":"example.com/go-ycsb:v3"}}`,
 			want: map[string]driver.RunnerConfig{"go-ycsb": {Image: "example.com/go-ycsb:v3", ImagePullPolicy: "IfNotPresent"}},
+		},
+		{
+			name:    "hammerdb only",
+			payload: `{"hammerdb":{"enabled":true,"image":"example.com/hammerdb:v4","executionTimeout":"30m"}}`,
+			want:    map[string]driver.RunnerConfig{"hammerdb": {Image: "example.com/hammerdb:v4", ImagePullPolicy: "IfNotPresent", ExecutionTimeout: 30 * time.Minute}},
 		},
 		{
 			name: "go-ycsb explicitly disabled", payload: `{"pgbench":{"enabled":true,"image":"example.com/pgbench:v1"},"go-ycsb":{"enabled":false}}`,
@@ -158,6 +171,12 @@ func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 				var problem *driver.Error
 				if !errors.As(err, &problem) || problem.Kind != driver.UnsupportedConnection {
 					t.Fatalf("driver %s accepted an unsupported database type: %v", id, err)
+				}
+			}
+			if want, enabled := test.want["hammerdb"]; enabled {
+				registration, err := registry.Resolve("hammerdb", driver.TargetInfo{DatabaseType: "mysql"})
+				if err != nil || registration.Runner != want {
+					t.Fatalf("HammerDB registration = %+v, error = %v; want %+v", registration.Runner, err, want)
 				}
 			}
 		})

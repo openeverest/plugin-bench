@@ -476,7 +476,7 @@ func newBenchmarkJob(config Config, name, secretName string, input RunInput, res
 	}
 
 	backoffLimit := int32(0)
-	activeDeadlineSeconds := int64(config.ExecutionTimeout.Seconds())
+	activeDeadlineSeconds := int64(effectiveExecutionTimeout(config, input.Runner).Seconds())
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,

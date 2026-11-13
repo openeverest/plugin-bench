@@ -8,14 +8,16 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 )
 
 type driverDeploymentConfig struct {
-	Enabled         *bool  `json:"enabled"`
-	Image           string `json:"image"`
-	ImagePullPolicy string `json:"imagePullPolicy"`
+	Enabled          *bool  `json:"enabled"`
+	Image            string `json:"image"`
+	ImagePullPolicy  string `json:"imagePullPolicy"`
+	ExecutionTimeout string `json:"executionTimeout"`
 }
 
 // driverRegistrationsFromEnv consumes resolved image references, not Helm's
@@ -73,6 +75,13 @@ func configuredDriverRegistrations(entries map[string]driverDeploymentConfig, co
 			policy = "IfNotPresent"
 		}
 		runner := driver.RunnerConfig{Image: entry.Image, ImagePullPolicy: policy}
+		if rawTimeout := strings.TrimSpace(entry.ExecutionTimeout); rawTimeout != "" {
+			timeout, err := time.ParseDuration(rawTimeout)
+			if err != nil || timeout < time.Second || timeout%time.Second != 0 {
+				return nil, fmt.Errorf("driver %q: executionTimeout must be a positive whole number of seconds", id)
+			}
+			runner.ExecutionTimeout = timeout
+		}
 		if err := runner.Validate(); err != nil {
 			return nil, fmt.Errorf("driver %q: %w", id, err)
 		}

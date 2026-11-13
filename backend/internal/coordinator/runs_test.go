@@ -273,7 +273,7 @@ func (c diagnosticClient) CoreV1() typedcorev1.CoreV1Interface {
 }
 
 func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
-	for _, scenario := range []string{"failed job", "cancelled", "deadline", "missing pod", "execution timeout", "caller deadline"} {
+	for _, scenario := range []string{"failed job", "cancelled", "deadline", "missing pod", "execution timeout", "runner timeout", "caller deadline"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -312,7 +312,7 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 				if jobDeleted {
 					return false, nil, nil
 				}
-				if scenario == "execution timeout" || scenario == "caller deadline" {
+				if scenario == "execution timeout" || scenario == "runner timeout" || scenario == "caller deadline" {
 					originalErr = context.DeadlineExceeded
 					// Leave the Job pending so Run must stop itself via its context.
 					return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{UID: "job-uid"}}, nil
@@ -343,7 +343,19 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 				}}}}}}, nil
 			})
 			diagnosticLookups := 0
+			var executionStarted time.Time
+			executionDeadlineChecked := false
 			c, err := New(config, diagnosticClient{Clientset: client, check: func(lookupCtx context.Context) {
+				if scenario == "runner timeout" && !executionDeadlineChecked {
+					// Inspect the first scheduling lookup's execution context, so
+					// ignoring the override fails immediately instead of waiting
+					// for the global one-minute timeout.
+					deadline, ok := lookupCtx.Deadline()
+					if !ok || deadline.Before(executionStarted.Add(time.Second)) || deadline.After(time.Now().Add(time.Second)) {
+						t.Fatalf("execution deadline = %v (present=%t); want a one-second runner timeout", deadline, ok)
+					}
+					executionDeadlineChecked = true
+				}
 				// Monitoring also lists Pods; only the diagnostic lookup gets a fresh failureLogTimeout budget.
 				deadline, ok := lookupCtx.Deadline()
 				remaining := time.Until(deadline)
@@ -354,9 +366,20 @@ func TestRunCollectsLogsBeforeCleanupOnFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := c.Run(ctx, validRunInput())
+			input := validRunInput()
+			if scenario == "runner timeout" {
+				input.Runner.ExecutionTimeout = time.Second
+			}
+			executionStarted = time.Now()
+			result, err := c.Run(ctx, input)
+			if scenario == "runner timeout" && !executionDeadlineChecked {
+				t.Fatal("Run did not expose its execution deadline to scheduling lookup")
+			}
 			if scenario == "execution timeout" && ctx.Err() != nil {
 				t.Fatal("execution timeout cancelled the caller context")
+			}
+			if scenario == "runner timeout" && ctx.Err() != nil {
+				t.Fatal("runner execution timeout cancelled the caller context")
 			}
 			if scenario == "caller deadline" && time.Since(callerDeadline) > 500*time.Millisecond {
 				t.Fatal("Run did not honor the earlier caller deadline")
