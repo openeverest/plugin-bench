@@ -103,7 +103,7 @@ func (c *Coordinator) Run(ctx context.Context, input RunInput) (result Result, r
 
 	// Bound the coordinator's API calls and waiting, independently of the
 	// Kubernetes Job deadline. An earlier caller deadline still takes priority.
-	ctx, cancelExecution := context.WithTimeout(ctx, c.config.ExecutionTimeout)
+	ctx, cancelExecution := context.WithTimeout(ctx, effectiveExecutionTimeout(c.config, input.Runner))
 	defer cancelExecution()
 
 	resources, err := c.createBenchmarkResources(ctx, input, c.runLabels(input.RunID))
