@@ -2,7 +2,8 @@
 
 OpenEverest Plugin Bench runs PostgreSQL (pgbench), MySQL (Sysbench), and MongoDB (go-ycsb)
 benchmarks as temporary Kubernetes Jobs from the database cluster tab or backend API.
-All three drivers are enabled by default in the Helm chart.
+HammerDB TPROC-C is also available through the API for PostgreSQL and MySQL.
+All four drivers are enabled by default in the Helm chart.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
 > launching, and inspecting benchmark runs.
@@ -24,7 +25,7 @@ The plugin backend coordinates a benchmark run:
 
 The benchmark tab is built with MUI and themed from the host through
 `@openeverest/plugin-theme`.
-The backend uses a shared driver interface with pgbench, Sysbench, and go-ycsb implementations.
+The backend uses a shared driver interface with pgbench, Sysbench, go-ycsb, and HammerDB implementations.
 Additional benchmark tools can supply their own option validation and workload
 preparation while sharing the Kubernetes execution lifecycle.
 
@@ -51,7 +52,7 @@ target's `databaseType` as reported by OpenEverest.
 `GET /api/status` returns generic backend readiness with `status`, `runnerReady`,
 `storage` (`ephemeral` for in-memory history, `postgresql` when persistent),
 `message`, and a sorted `drivers` array of enabled driver IDs, such as
-`["go-ycsb", "pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
+`["go-ycsb", "hammerdb", "pgbench", "sysbench"]`. Disabled drivers are excluded. The former PostgreSQL-only
 `database` field has been removed. This endpoint does not test database
 connectivity or runner-image availability.
 
@@ -108,6 +109,14 @@ leaves the data in MongoDB; drop the collection separately when finished.
 Poll `GET /api/runs/{id}` for logs and optional `ops_per_second` (`ops/s`) and
 `latency_avg` (`ms`). See the [runner reference](runners/go-ycsb/README.md)
 for defaults.
+
+### HammerDB through the API
+
+Send `driver: "hammerdb"` with TPROC-C options for an authorized PostgreSQL or
+MySQL target. See the
+[HammerDB request contract](docs/runner-result-contract.md#hammerdb-requests)
+for an example and setup requirements.
+The UI does not yet offer a HammerDB options form.
 
 ### Using the benchmark tab
 
@@ -249,7 +258,7 @@ If the cluster already exists, run:
 tilt up -f dev/Tiltfile
 ```
 
-Tilt builds the frontend, backend image, and pgbench, Sysbench, and go-ycsb runner
+Tilt builds the frontend, backend image, and pgbench, Sysbench, go-ycsb, and HammerDB runner
 images. It injects each runner's repository and tag
 through `drivers.<id>.image.repository` and `drivers.<id>.image.tag`. Runner images
 are used when the coordinator starts benchmark Jobs; no published runner image
@@ -351,6 +360,13 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  hammerdb:
+    enabled: true
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: ""
+    executionTimeout: 30m
 ```
 
 Empty image fields use the defaults below after any legacy pgbench overrides.
@@ -359,7 +375,7 @@ With no overrides, pgbench uses
 `appVersion` comes from the chart being installed, including metadata set by
 `helm package --app-version` during a release.
 
-All three drivers are enabled by default and use their matching release images.
+All four drivers are enabled by default and use their matching release images.
 To use a custom Sysbench image, override its repository or tag:
 
 ```yaml
@@ -398,11 +414,16 @@ Legacy `runner.image` overrides apply only to pgbench. Migrate them to
 node selectors, and tolerations remain under `runner`; the backend Deployment's
 own image remains under the top-level `image` settings.
 
+An optional `drivers.<id>.executionTimeout` overrides `runner.executionTimeout`
+for that driver; empty inherits the shared limit. HammerDB defaults to `30m`.
+Set `--set drivers.hammerdb.executionTimeout=45m` to allow 45 minutes, including
+pending time, startup, preparation, ramp-up and measurement.
+
 Helm serializes the resolved settings into one backend environment variable.
 For a chart with `appVersion: 0.2.0`:
 
 ```json
-{"go-ycsb":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-go-ycsb:0.2.0","imagePullPolicy":"IfNotPresent"},"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.2.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-sysbench:0.2.0","imagePullPolicy":"IfNotPresent"}}
+{"go-ycsb":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-go-ycsb:0.2.0","imagePullPolicy":"IfNotPresent"},"hammerdb":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-hammerdb:0.2.0","imagePullPolicy":"IfNotPresent","executionTimeout":"30m"},"pgbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-pgbench:0.2.0","imagePullPolicy":"IfNotPresent"},"sysbench":{"enabled":true,"image":"ghcr.io/openeverest/plugin-bench-sysbench:0.2.0","imagePullPolicy":"IfNotPresent"}}
 ```
 
 The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
@@ -410,7 +431,9 @@ The variable is named `BENCHMARK_DRIVERS`. Each entry requires an explicit
 policy must be `Always`, `IfNotPresent`, or `Never` (omitted/empty defaults to
 `IfNotPresent`). Only drivers compiled into the backend can be enabled; adding
 a Helm entry does not install an implementation. The compiled drivers are
-pgbench, Sysbench, and go-ycsb. At least one must remain enabled with a usable image.
+pgbench, Sysbench, go-ycsb, and HammerDB. At least one must remain enabled with a usable image.
+When supplied, `executionTimeout` must be a duration representing a positive
+whole number of seconds, such as `30m`; zero and negative values are rejected.
 
 For deployments setting environment variables directly, `RUNNER_IMAGE` and
 `RUNNER_IMAGE_PULL_POLICY` remain deprecated pgbench fallbacks **only when
@@ -457,6 +480,11 @@ The go-ycsb runner receives `MONGODB_URI` and, when the provider publishes one,
 `MONGODB_TLS_CA` through Secret references and ordinary
 `BENCH_*` options through environment values. See its
 [configuration reference](runners/go-ycsb/README.md#runner-configuration).
+
+HammerDB receives `DB_TYPE`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and
+ordinary `BENCH_*` settings through environment values. `DB_PASSWORD` uses a
+Secret reference. The driver maps upstream URI transport settings to `PGSSLMODE`
+or `MYSQL_SSL`; see the [runner reference](runners/hammerdb/README.md#environment).
 
 ## Useful commands
 
@@ -513,7 +541,7 @@ release workflow. It publishes:
 - a GitHub release with the chart archive and release notes
 
 The workflow tests all four runners from their built AMD64 archives before publishing.
-HammerDB is currently a standalone runner; API/UI integration is a separate task.
+HammerDB supports backend API runs; its options editor is a separate UI task.
 See its [runner reference](runners/hammerdb/README.md) for direct usage.
 Release notes include each image reference and digest.
 
