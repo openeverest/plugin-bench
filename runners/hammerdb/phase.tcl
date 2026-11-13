@@ -23,7 +23,7 @@ proc runner_preflight {} {
     if {$runner_engine eq "postgresql"} {
         package require Pgtcl
         set fields {}
-        foreach {key value} [list host $runner_host port $runner_port user $runner_user password $runner_password dbname $runner_database sslmode $runner_pg_sslmode] {
+        foreach {key value} [list host $runner_host port $runner_port user $runner_user password $runner_password dbname $runner_database sslmode $runner_pg_sslmode connect_timeout 10] {
             lappend fields "$key=[runner_pg_literal $value]"
         }
         set connection [pg_connect -conninfo [join $fields " "]]
@@ -37,7 +37,9 @@ proc runner_preflight {} {
                 if {[runner_pg_query $connection {SELECT CASE WHEN pg_get_userbyid(datdba) = current_user THEN 1 ELSE 0 END FROM pg_database WHERE datname = current_database()}] ne "1"} {
                     error "preparation requires the existing database owner"
                 }
-                set objects [runner_pg_query $connection {SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p','v','m','S','f')) + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema')}]
+                # Installed extensions may own relations and functions in user
+                # schemas. Only user-created objects make this database nonempty.
+                set objects [runner_pg_query $connection {SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p','v','m','S','f') AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')) + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))}]
                 if {$objects ne "0"} {error "preparation requires an empty database"}
             } else {
                 set tables [runner_pg_query $connection "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' AND table_name IN ($names)"]
@@ -49,6 +51,8 @@ proc runner_preflight {} {
         }
     } else {
         package require mysqltcl
+        # mysqltcl reads connect-timeout from the private HOME/.my.cnf staged
+        # by writeScripts; its connection command has no -timeout option.
         # Use Tcl arguments directly; credentials must not be joined and eval'd.
         set connection [mysqlconnect -host $runner_host -port $runner_port -user $runner_user -password $runner_password -ssl $runner_mysql_ssl]
         try {

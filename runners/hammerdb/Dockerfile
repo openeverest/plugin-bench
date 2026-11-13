@@ -4,7 +4,7 @@ ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod ./
-COPY main.go config.go credentials.go execution.go metrics.go output.go scripts.go phase.tcl ./
+COPY *.go phase.tcl ./
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
     -trimpath \
     -ldflags="-s -w" \
@@ -36,12 +36,15 @@ RUN set -eu; \
     install -d -m 0755 /etc/apt/keyrings; \
     curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
       https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/postgresql.asc; \
+    fingerprint="$(gpg --batch --with-colons --show-keys /tmp/postgresql.asc | awk -F: '$1 == "fpr" {print $10; exit}')"; \
+    test "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8; \
     gpg --batch --dearmor -o /etc/apt/keyrings/postgresql.gpg /tmp/postgresql.asc; \
     rm /tmp/postgresql.asc; \
     echo 'deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt noble-pgdg main 17' > /etc/apt/sources.list.d/pgdg.list; \
     printf 'Package: libpq5\nPin: version 17.*\nPin-Priority: 1001\n' > /etc/apt/preferences.d/libpq17; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends 'libpq5=17.*'; \
+    apt-get purge -y --auto-remove curl gnupg; \
     rm -rf /var/lib/apt/lists/*; \
     groupadd --gid 10001 runner; \
     useradd --uid 10001 --gid runner --no-create-home \

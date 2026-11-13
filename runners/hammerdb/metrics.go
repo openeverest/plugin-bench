@@ -132,11 +132,15 @@ func summaryNumber(text string) (float64, bool) {
 	return value, err == nil && value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-func (s *summaryCollector) result() (resultRecord, error) {
+// flush consumes a final unterminated line before timing and result collection.
+func (s *summaryCollector) flush() {
 	if len(s.line) > 0 && !s.discarding {
 		s.parseLine()
 		s.line = s.line[:0]
 	}
+}
+
+func (s *summaryCollector) result() (resultRecord, error) {
 	if s.invalid || !s.haveResult {
 		return resultRecord{}, errors.New("HammerDB summary metrics are unavailable")
 	}

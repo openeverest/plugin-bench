@@ -30,6 +30,7 @@ func TestSummaryCollectorNativePostgreSQLFixture(t *testing.T) {
 		for offset := 0; offset < len(input); offset += size {
 			io.WriteString(&collector, input[offset:min(offset+size, len(input))])
 		}
+		collector.flush()
 		got, err := collector.result()
 		want := resultRecord{Version: 1, Metrics: []metric{{"nopm", "orders/min", 3115}, {"tpm", "tx/min", 7280}}}
 		if err != nil || !reflect.DeepEqual(got, want) {
@@ -42,6 +43,7 @@ func TestSummaryCollectorMySQLFormat(t *testing.T) {
 	// Format example, not a successful live MySQL workload fixture.
 	collector := summaryCollector{engine: "mysql"}
 	io.WriteString(&collector, "unrelated progress\nVuser 1:TEST RESULT : System achieved 4275 NOPM from 9936 MySQL TPM\r\n")
+	collector.flush()
 	record, err := collector.result()
 	if err != nil || record.Metrics[0].Value != 4275 || record.Metrics[1].Value != 9936 {
 		t.Fatalf("record=%+v err=%v", record, err)
@@ -64,6 +66,7 @@ func TestSummaryCollectorRejectsInvalidAndAmbiguousResults(t *testing.T) {
 		if n, err := io.WriteString(&collector, input); n != len(input) || err != nil {
 			t.Fatal("collector interrupted output")
 		}
+		collector.flush()
 		if _, err := collector.result(); err == nil {
 			t.Fatal("accepted invalid or ambiguous summary")
 		}
@@ -73,6 +76,7 @@ func TestSummaryCollectorRejectsInvalidAndAmbiguousResults(t *testing.T) {
 	}
 	collector := summaryCollector{engine: "mysql"}
 	io.WriteString(&collector, "TEST RESULT : System achieved 0 NOPM from 0 MySQL TPM")
+	collector.flush()
 	if _, err := collector.result(); err != nil {
 		t.Fatal(err)
 	}
@@ -149,10 +153,11 @@ func TestTimingNativeFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	collector := summaryCollector{engine: "postgresql"}
-	input := "TEST RESULT : System achieved 3115 NOPM from 7280 PostgreSQL TPM\nRUNNER TIMING BEGIN JOB123\n" + string(fixture.Phases["run"].Timing) + "\nRUNNER TIMING END\n"
+	input := "TEST RESULT : System achieved 3115 NOPM from 7280 PostgreSQL TPM\nRUNNER TIMING BEGIN JOB123\n" + string(fixture.Phases["run"].Timing) + "\nRUNNER TIMING END"
 	for _, b := range []byte(input) {
 		collector.Write([]byte{b})
 	}
+	collector.flush()
 	collector.collectTiming("JOB123")
 	record, err := collector.result()
 	if err != nil || len(record.Metrics) != 7 {
@@ -175,6 +180,7 @@ func TestOptionalTimingFailuresKeepThroughput(t *testing.T) {
 	} {
 		collector := summaryCollector{engine: "mysql"}
 		io.WriteString(&collector, "TEST RESULT : System achieved 1 NOPM from 2 MySQL TPM\nRUNNER TIMING BEGIN JOB123\n"+body+"\nRUNNER TIMING END\n")
+		collector.flush()
 		collector.collectTiming("JOB123")
 		record, err := collector.result()
 		if err != nil || len(record.Metrics) != 2 {
@@ -184,6 +190,7 @@ func TestOptionalTimingFailuresKeepThroughput(t *testing.T) {
 	for _, suffix := range []string{"", "RUNNER TIMING END\n", "RUNNER TIMING END\nRUNNER TIMING BEGIN JOB123\n{}\nRUNNER TIMING END\n"} {
 		collector := summaryCollector{engine: "mysql"}
 		io.WriteString(&collector, "TEST RESULT : System achieved 1 NOPM from 2 MySQL TPM\nRUNNER TIMING BEGIN OTHERJOB\n{\"NEWORD\":{\"avg_ms\":\"1\"}}\n"+suffix)
+		collector.flush()
 		collector.collectTiming("JOB123")
 		record, err := collector.result()
 		if err != nil || len(record.Metrics) != 2 {

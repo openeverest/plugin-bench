@@ -31,8 +31,7 @@ bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev linux/amd
 bash .github/scripts/check-hammerdb-image.sh plugin-bench-hammerdb:dev linux/arm64
 ```
 
-Startup checks passed on native AMD64 and emulated ARM64; live database checks
-passed on AMD64. Foreign-platform execution requires emulation. The Dockerfile
+Foreign-platform execution requires emulation. The Dockerfile
 pins upstream base/MySQL image indexes, installs PostgreSQL `libpq` 17 and keeps
 upstream licenses. HammerDB uses Tcl 9, `Pgtcl` and `mysqltcl`. The wrapper runs as
 UID/GID 10001 from `/home/hammerdb`. `/tmp` must be writable and permit executable
@@ -82,6 +81,8 @@ Allow time for startup and schema preparation in addition to
 `(rampupMinutes + durationMinutes) * 60` seconds. A zero CLI exit code alone is
 insufficient: the wrapper checks worker states and private completion records.
 Failed preparation prevents measurement.
+
+Preflight uses a 10-second connection timeout for both engines.
 
 MySQL requests TLS by default and checks the negotiated cipher; its integration
 tests use MySQL 8.4's default authentication. PostgreSQL passes `PGSSLMODE` to

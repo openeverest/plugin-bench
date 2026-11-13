@@ -34,6 +34,9 @@ proc query_row {sql} {
     return [expr {$mode eq "nonempty" ? 1 : 0}]
 }
 proc pg_connect {args} {
+    if {[llength $args] != 2 || [lindex $args 0] ne "-conninfo" || [string first "connect_timeout='10'" [lindex $args 1]] < 0} {
+        error "missing PostgreSQL connection timeout"
+    }
     if {$::mode eq "missing_database"} {error "private connection error"}
     return connection
 }
@@ -101,6 +104,17 @@ func TestPhaseScript(t *testing.T) {
 		if err != nil {
 			t.Skip("Tcl unavailable; set HAMMERDB_TEST_TCLSH to exercise phase scripts")
 		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	probe := exec.CommandContext(ctx, interpreter)
+	probe.Stdin = strings.NewReader("puts [package vcompare [info tclversion] 8.6]\n")
+	version, err := probe.CombinedOutput()
+	cancel()
+	if err != nil {
+		t.Fatal("could not determine Tcl version")
+	}
+	if strings.TrimSpace(string(version)) == "-1" {
+		t.Skip("phase-script tests require Tcl 8.6 or newer")
 	}
 	for _, engine := range []string{"postgresql", "mysql"} {
 		for _, prepare := range []bool{true, false} {

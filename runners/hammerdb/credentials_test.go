@@ -23,6 +23,17 @@ func TestWriteScriptsPrivateFilesAndCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(cleanup)
+			if engine == "mysql" {
+				defaults := filepath.Join(paths.state, ".my.cnf")
+				data, err := os.ReadFile(defaults)
+				if err != nil || string(data) != "[mysqltcl]\nconnect-timeout=10\n" {
+					t.Fatal("MySQL connection timeout was not configured")
+				}
+				info, err := os.Stat(defaults)
+				if err != nil || info.Mode().Perm() != 0600 {
+					t.Fatal("MySQL defaults file is not private")
+				}
+			}
 			for _, path := range []string{paths.directory, paths.state} {
 				info, err := os.Stat(path)
 				if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {

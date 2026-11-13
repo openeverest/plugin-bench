@@ -46,6 +46,14 @@ func writeScripts(c config) (scriptPaths, func(), error) {
 		cleanup()
 		return scriptPaths{}, nil, errors.New("could not create the private HammerDB state directory")
 	}
+	if c.databaseType == "mysql" {
+		// mysqltcl loads the mysqltcl option group through libmysqlclient.
+		// HOME points at this private state directory for both phase processes.
+		if err := writePrivateFile(filepath.Join(paths.state, ".my.cnf"), []byte("[mysqltcl]\nconnect-timeout=10\n")); err != nil {
+			cleanup()
+			return scriptPaths{}, nil, errors.New("could not write the MySQL connection timeout settings")
+		}
+	}
 	if err := writePrivateFile(paths.run, []byte(run)); err != nil {
 		cleanup()
 		return scriptPaths{}, nil, errors.New("could not write the private HammerDB run script")

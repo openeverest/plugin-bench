@@ -82,10 +82,7 @@ func runWithMetrics(ctx context.Context, c config, paths scriptPaths,
 		return err
 	}
 	// Flush an unterminated final stdout line before examining optional timing.
-	if len(collector.line) > 0 && !collector.discarding {
-		collector.parseLine()
-		collector.line = collector.line[:0]
-	}
+	collector.flush()
 	if data, readErr := os.ReadFile(paths.runDone); readErr == nil {
 		fields := strings.Fields(string(data))
 		if len(fields) == 3 {
@@ -109,10 +106,6 @@ func runnerMain() int {
 		return 1
 	}
 	executable, err := exec.LookPath("hammerdbcli")
-	if err != nil {
-		// The upstream image keeps the CLI in its working directory.
-		executable, err = exec.LookPath("./hammerdbcli")
-	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "runner error: HammerDB CLI was not found")
 		return 1

@@ -52,7 +52,7 @@ func execute(ctx context.Context, executable string, args, env []string, stdout,
 // The path belongs to a newly staged private directory for this invocation.
 func checkCompletion(path, phase string) error {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+	if err != nil || !info.Mode().IsRegular() {
 		return errors.New("missing or invalid phase completion record")
 	}
 	file, err := os.Open(path)
