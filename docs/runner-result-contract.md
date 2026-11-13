@@ -138,7 +138,7 @@ mutable tags do not guarantee identical runner binaries across runs.
 ## Runner transport and wire format
 
 Each runner writes one final JSON record to `/dev/termination-log` after obtaining
-its measurements. All three runners write it after a successful,
+its measurements. Runners write it after a successful,
 uncancelled benchmark and after measured stdout has been drained. The record
 uses this version-1 format:
 
@@ -155,6 +155,15 @@ uses this version-1 format:
   and units; shared code does not enforce pgbench-specific names or positive values.
 - Unknown fields, malformed JSON, trailing JSON/text, unsupported versions,
   invalid metrics, or oversized messages invalidate the entire record.
+
+The standalone HammerDB runner parses measured stdout alongside redacted logs
+and emits `nopm` (`orders/min`) and `tpm` (`tx/min`). Its TPM is engine-specific;
+it is not equivalent to pgbench/Sysbench TPS. Optional Jobs timing JSON from the
+completed measured job adds average latency (`ms`) for New Order, Payment,
+Delivery, Order Status and Stock Level. Invalid or missing timing preserves
+throughput. Preparation output is
+excluded, and missing/invalid throughput produces a warning without failing a
+verified successful workload. HammerDB plugin integration is a separate task.
 
 The runner Job explicitly sets `terminationMessagePath: /dev/termination-log`
 and `terminationMessagePolicy: File`. Keep `File`: `FallbackToLogsOnError` can
