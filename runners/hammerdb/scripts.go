@@ -6,11 +6,29 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 //go:embed phase.tcl
 var phaseSupport string
+
+// HammerDB 6.1.1 re-parses passwords in quoted worker scripts and unquoted
+// schema-builder arguments. Encode punctuation before diset; keep preflight raw.
+func hammerdbPassword(password string) string {
+	var b strings.Builder
+	for _, r := range password {
+		switch {
+		case r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r)):
+			b.WriteRune(r)
+		case r <= 0xffff:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			fmt.Fprintf(&b, `\U%08x`, r)
+		}
+	}
+	return b.String()
+}
 
 // phaseScript wraps configuration in a checked, noninteractive phase. Completion
 // is a fresh private file, never inferred from the CLI's exit status alone.
@@ -100,7 +118,7 @@ func configurationScript(c config, prepare bool) (string, error) {
 	if err := validatePassword(c.password); err != nil {
 		return "", err
 	}
-	for _, value := range []string{c.host, c.database, c.user, c.password, c.pgSSLMode} {
+	for _, value := range []string{c.host, c.database, c.user, c.pgSSLMode} {
 		if !utf8.ValidString(value) || strings.ContainsRune(value, '\x00') {
 			return "", errors.New("HammerDB settings must be valid UTF-8 without NUL bytes")
 		}
@@ -127,7 +145,7 @@ func configurationScript(c config, prepare bool) (string, error) {
 	if prefix == "pg" {
 		setting("connection", "pg_sslmode", c.pgSSLMode)
 		setting("tpcc", "pg_superuser", c.user)
-		setting("tpcc", "pg_superuserpass", c.password)
+		setting("tpcc", "pg_superuserpass", hammerdbPassword(c.password))
 		setting("tpcc", "pg_defaultdbase", c.database)
 		setting("tpcc", "pg_vacuum", "false")
 	} else {
@@ -142,12 +160,14 @@ func configurationScript(c config, prepare bool) (string, error) {
 		setting("tpcc", "mysql_storage_engine", "innodb")
 	}
 	setting("tpcc", prefix+"_user", c.user)
-	setting("tpcc", prefix+"_pass", c.password)
+	setting("tpcc", prefix+"_pass", hammerdbPassword(c.password))
 	setting("tpcc", prefix+"_dbase", c.database)
 	setting("tpcc", prefix+"_count_ware", strconv.Itoa(c.warehouses))
 	// Schema loading uses one worker independently of measured concurrency.
 	setting("tpcc", prefix+"_num_vu", "1")
 	if !prepare {
+		// Keep connect_pool false: upstream's pool path does not Tcl-decode
+		// stored passwords and would send the encoded value to the database.
 		for _, entry := range []struct{ key, value string }{
 			{"driver", "timed"}, {"rampup", strconv.Itoa(c.rampupMinutes)},
 			{"duration", strconv.Itoa(c.durationMinutes)}, {"raiseerror", "true"},

@@ -15,8 +15,8 @@ work=$(mktemp -d)
 network="hammerdb-test-${work##*/}"
 server="hammerdb-db-${work##*/}"
 runner="hammerdb-runner-${work##*/}"
-# Braces exercise Tcl literal handling with a real account password.
-password='hdb{test}-password'
+# Exercise spaces, quotes, substitutions and backslashes through real HammerDB.
+password=$' hdb"test"\\path $HOME[exec id]{x};# '
 wrong_password='wrong-hdb-password'
 admin_password='hdb-admin-password'
 network_id=''
@@ -37,7 +37,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 safe_log() {
-  if grep -Fq -e "$password" -e 'hdb\{test\}-password' -e "$admin_password" -e "$wrong_password" "$1"; then
+  if grep -Fq -e "$password" -e 'hdb\u0022test\u0022' -e 'hdb\\u0022test\\u0022' -e "$admin_password" -e "$wrong_password" "$1"; then
     echo 'Credentials found in runner output or metrics' >&2
     exit 1
   fi
@@ -257,7 +257,8 @@ for engine in postgresql mysql; do
     admin_query 'CREATE DATABASE hdb_denied;' > /dev/null
     admin_query 'GRANT CONNECT ON DATABASE hdb_denied TO hdb_readonly;' > /dev/null
   else
-    admin_query "CREATE DATABASE hdb_probe;
+    admin_query "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES';
+      CREATE DATABASE hdb_probe;
       CREATE USER 'hdb_user'@'%' IDENTIFIED BY '$password';
       GRANT ALL PRIVILEGES ON hdb_probe.* TO 'hdb_user'@'%';
       CREATE DATABASE hdb_denied;

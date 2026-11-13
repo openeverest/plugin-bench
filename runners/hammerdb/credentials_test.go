@@ -112,7 +112,7 @@ func TestWriteScriptsRejectsUnsupportedPasswords(t *testing.T) {
 	t.Setenv("TMPDIR", root)
 	for _, engine := range []string{"postgresql", "mysql"} {
 		for _, initialize := range []bool{false, true} {
-			for _, password := range []string{" secret", "secret\t", `ab"cd`} {
+			for _, password := range []string{"", string([]byte{0xff})} {
 				c, err := loadConfig(func(key string) string { return validEnvironment(engine)[key] })
 				if err != nil {
 					t.Fatal(err)

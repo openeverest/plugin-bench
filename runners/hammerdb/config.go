@@ -52,7 +52,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		if value == "" {
 			return config{}, fmt.Errorf("%s is required", field.name)
 		}
-		if strings.ContainsRune(value, '\x00') {
+		if field.name != "DB_PASSWORD" && strings.ContainsRune(value, '\x00') {
 			return config{}, fmt.Errorf("%s must not contain NUL bytes", field.name)
 		}
 		*field.target = value
@@ -125,21 +125,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 	return c, nil
 }
 
-// HammerDB 6.1.1's diset uses concat, which trims surrounding whitespace.
-// Its worker templates quote passwords again without escaping double quotes.
-// Reject those forms rather than changing credentials or emitting broken Tcl.
 func validatePassword(value string) error {
 	if value == "" {
 		return errors.New("DB_PASSWORD is required")
 	}
-	if !utf8.ValidString(value) || strings.ContainsRune(value, '\x00') {
-		return errors.New("DB_PASSWORD must be valid UTF-8 without NUL bytes")
-	}
-	if value != strings.TrimSpace(value) {
-		return errors.New("DB_PASSWORD cannot have leading or trailing whitespace with HammerDB 6.1.1")
-	}
-	if strings.ContainsRune(value, '"') {
-		return errors.New("DB_PASSWORD cannot contain double quotes with HammerDB 6.1.1")
+	if !utf8.ValidString(value) {
+		return errors.New("DB_PASSWORD must be valid UTF-8")
 	}
 	return nil
 }

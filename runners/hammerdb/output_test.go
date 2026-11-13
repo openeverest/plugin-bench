@@ -16,7 +16,7 @@ func TestOutputRedactsFragmentsAndEncodedSettings(t *testing.T) {
 	c := executionConfig(t)
 	c.password = "secret$[x]\\'value\nsecondpart"
 	literal := tclLiteral(c.password)
-	variants := []string{c.password, literal[1 : len(literal)-1], strings.ReplaceAll(strings.ReplaceAll(c.password, `\`, `\\`), `'`, `\'`)}
+	variants := []string{hammerdbPassword(c.password), strings.ReplaceAll(hammerdbPassword(c.password), `\`, `\\`), c.password, literal[1 : len(literal)-1], strings.ReplaceAll(strings.ReplaceAll(c.password, `\`, `\\`), `'`, `\'`)}
 	for _, value := range variants {
 		var destination bytes.Buffer
 		out, diagnostic := newOutput(c, &destination, &destination)

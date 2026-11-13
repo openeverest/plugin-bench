@@ -55,7 +55,7 @@ func TestConfigurationScriptSettings(t *testing.T) {
 				if engine == "postgresql" {
 					expected = append(expected,
 						`"diset" "tpcc" "pg_superuser" "inst-h7w"`,
-						`"diset" "tpcc" "pg_superuserpass" "dummy-secret"`,
+						`"diset" "tpcc" "pg_superuserpass" `+tclLiteral(hammerdbPassword(c.password)),
 						`"diset" "tpcc" "pg_defaultdbase" "benchmark"`,
 						`"diset" "tpcc" "pg_vacuum" "false"`,
 						`"diset" "connection" "pg_sslmode" "prefer"`)
@@ -87,7 +87,7 @@ func TestConfigurationScriptSettings(t *testing.T) {
 }
 
 func TestConfigurationScriptRejectsUnencodableValues(t *testing.T) {
-	for _, field := range []string{"host", "database", "user", "password", "pgSSLMode"} {
+	for _, field := range []string{"host", "database", "user", "pgSSLMode"} {
 		for _, value := range []string{"a\x00b", string([]byte{0xff})} {
 			env := validEnvironment("postgresql")
 			c, err := loadConfig(func(key string) string { return env[key] })
@@ -117,9 +117,20 @@ func TestConfigurationScriptTclRoundTrip(t *testing.T) {
 			t.Skip("Tcl interpreter unavailable; set HAMMERDB_TEST_TCLSH to run the round-trip check")
 		}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	probe := exec.CommandContext(ctx, interpreter)
+	probe.Stdin = strings.NewReader("puts [package vcompare [info tclversion] 8.6]\n")
+	version, err := probe.CombinedOutput()
+	cancel()
+	if err != nil {
+		t.Fatal("could not determine Tcl version")
+	}
+	if strings.TrimSpace(string(version)) == "-1" {
+		t.Skip("password round-trip requires Tcl 8.6 or newer")
+	}
 	for _, engine := range []string{"postgresql", "mysql"} {
 		for _, prepare := range []bool{true, false} {
-			for _, password := range []string{`x]; set ::injected 1; #`, `x\;$HOME{[set ::injected 1]}\\`, "päss密碼\r\nlast\\"} {
+			for _, password := range []string{"a b", " leading ", `a"b`, "a'b", `a\b`, `trailing\`, `$HOME`, `[set ::injected 1]`, `;#{}%20`, "päss密碼\r\nlast\\"} {
 				env := validEnvironment(engine)
 				env["DB_PASSWORD"] = password
 				c, err := loadConfig(func(key string) string { return env[key] })
@@ -130,14 +141,26 @@ func TestConfigurationScriptTclRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// Real Tcl evaluates the generated commands. Only HammerDB commands
-				// are stubbed; captured credentials must survive exactly as one word.
+				// Reproduce HammerDB gentpcc.tcl quotemeta and gencli.tcl diset
+				// storage, then evaluate both worker and schema-builder contexts.
 				script = `set ::injected 0
+# From HammerDB gentpcc.tcl, with quote_passwords enabled.
+proc quotemeta {str} {
+    regsub -all -- {[][#$\;{}]} $str {\\\0} str
+    regsub -all {\\\\} $str "\\" str
+    return $str
+}
+proc capture {value} {
+    puts [binary encode base64 -maxlen 0 [encoding convertto utf-8 $value]]
+}
 proc dbset {args} {}
 proc vuset {args} {}
 proc diset {section key value} {
     if {[string match *_pass $key] || $key eq "pg_superuserpass"} {
-        puts [binary encode base64 -maxlen 0 [encoding convertto utf-8 $value]]
+        set stored [concat [quotemeta $value]]
+        eval "set password \"$stored\""
+        capture $password
+        eval "capture $stored"
     }
 }
 ` + script + `if {$::injected != 0} {error "Tcl injection executed"}`
@@ -152,9 +175,9 @@ proc diset {section key value} {
 					t.Fatalf("Tcl evaluation failed: %v", err)
 				}
 				lines := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
-				wantCount := 1
+				wantCount := 2
 				if engine == "postgresql" {
-					wantCount = 2
+					wantCount = 4
 				}
 				if len(lines) != wantCount {
 					t.Fatal("unexpected Tcl output or missing credentials")
@@ -167,5 +190,11 @@ proc diset {section key value} {
 				}
 			}
 		}
+	}
+}
+
+func TestHammerDBPasswordEncoding(t *testing.T) {
+	if got := hammerdbPassword("Az09 \"'\\密😀"); got != `Az09\u0020\u0022\u0027\u005c\u5bc6\U0001f600` {
+		t.Fatalf("unexpected password encoding: %q", got)
 	}
 }

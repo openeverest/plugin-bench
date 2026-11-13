@@ -30,10 +30,16 @@ func newOutput(c config, stdout, stderr io.Writer) (*outputStream, *outputStream
 	// HammerDB can echo generated settings or connection diagnostics.
 	literal := tclLiteral(c.password)
 	secrets := []string{c.password, literal[1 : len(literal)-1],
+		hammerdbPassword(c.password),
+		strings.ReplaceAll(hammerdbPassword(c.password), `\`, `\\`),
 		strings.ReplaceAll(strings.ReplaceAll(c.password, `\`, `\\`), `'`, `\'`)}
 	// An upstream diagnostic may render embedded line breaks as separate lines.
 	for _, representation := range append([]string(nil), secrets...) {
-		secrets = append(secrets, strings.FieldsFunc(representation, func(r rune) bool { return r == '\r' || r == '\n' })...)
+		for _, fragment := range strings.FieldsFunc(representation, func(r rune) bool { return r == '\r' || r == '\n' }) {
+			if len(fragment) >= 4 {
+				secrets = append(secrets, fragment)
+			}
+		}
 	}
 	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
 	var pairs []string

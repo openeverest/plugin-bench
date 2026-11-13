@@ -96,7 +96,6 @@ func TestLoadConfigRejectsInvalidInput(t *testing.T) {
 		{"invalid boolean", "BENCH_INITIALIZE", "TRUE"},
 		{"secret boolean", "BENCH_INITIALIZE", "sentinel-private"},
 		{"unsupported TLS mode", "PGSSLMODE", "verify-full"},
-		{"NUL password", "DB_PASSWORD", "sentinel-private\x00"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,11 +154,15 @@ func TestLoadConfigConnectionConstraints(t *testing.T) {
 
 func TestLoadConfigPasswordConstraints(t *testing.T) {
 	for _, engine := range []string{"postgresql", "mysql"} {
-		for _, password := range []string{
-			" sentinel-private", "sentinel-private ", "\tsentinel-private", "sentinel-private\t",
-			"\nsentinel-private", "sentinel-private\r\n", " \t\n ",
-			`sentinel-"private`, string([]byte{0xff}),
-		} {
+		for _, password := range []string{" leading ", "\t\n ", `a"b`, `a\b`, "a\x00b", "密碼😀"} {
+			env := validEnvironment(engine)
+			env["DB_PASSWORD"] = password
+			got, err := loadConfig(func(key string) string { return env[key] })
+			if err != nil || got.password != password {
+				t.Fatal("valid password was rejected or changed")
+			}
+		}
+		for _, password := range []string{"", string([]byte{0xff})} {
 			env := validEnvironment(engine)
 			env["DB_PASSWORD"] = password
 			assertConfigError(t, env, "DB_PASSWORD")
