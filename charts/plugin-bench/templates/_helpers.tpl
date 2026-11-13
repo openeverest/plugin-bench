@@ -77,6 +77,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   {{- end -}}
   {{- $entry := dict "enabled" $config.enabled -}}
   {{- if $config.enabled -}}
+    {{- if hasKey $config "executionTimeout" -}}
+      {{- if not (kindIs "string" $config.executionTimeout) -}}
+        {{- fail (printf "drivers.%s.executionTimeout must be a duration string" $id) -}}
+      {{- end -}}
+      {{- $executionTimeout := trim $config.executionTimeout -}}
+      {{- if ne $executionTimeout "" -}}
+        {{- $_ := set $entry "executionTimeout" $executionTimeout -}}
+      {{- end -}}
+    {{- end -}}
     {{- $image := $config.image | default dict -}}
     {{- if not (kindIs "map" $image) -}}
       {{- fail (printf "drivers.%s.image must be an object with repository, tag, and pullPolicy" $id) -}}

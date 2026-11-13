@@ -112,6 +112,38 @@ image integration tests on AMD64. The Sysbench runner has also been verified
 natively on Linux/ARM64 against MySQL 8.4. The UI offers Sysbench for `percona-server-mysql`
 and `percona-xtradb-cluster` instances. MariaDB-specific verification remains a follow-up.
 
+### HammerDB requests
+
+HammerDB runs TPROC-C against authorized targets reporting `postgresql` or
+`mysql`, matched case-insensitively. Send an explicit driver ID:
+
+```json
+{
+  "target": {"k8sCluster": "main", "namespace": "default", "instance": "my-postgres"},
+  "database": "hammerdb_test",
+  "driver": "hammerdb",
+  "options": {"warehouses": 1, "virtualUsers": 1, "rampupMinutes": 0, "durationMinutes": 1, "initialize": true}
+}
+```
+
+Defaults are one warehouse, one virtual user, zero ramp-up minutes, one measured
+minute and `initialize: false`. Timing uses whole minutes; virtual users cannot
+exceed warehouses, and measurement adds one monitor connection.
+
+Provide an existing disposable database and account. Initialization requires an
+empty database; reuse requires matching TPROC-C data. Cleanup preserves datasets.
+See the [runner reference](../runners/hammerdb/README.md#database-setup-and-execution)
+for permissions and credential restrictions.
+
+Upstream URI transport settings map to PostgreSQL `sslmode` (`disable`, `prefer`,
+`require`; default `prefer`) or MySQL `tls` (`true`/`false`; default `true`).
+PostgreSQL `allow` and certificate-verification settings are unsupported.
+
+Helm defaults `drivers.hammerdb.executionTimeout` to `30m`; empty inherits
+`runner.executionTimeout`. Pending time, startup, preparation, ramp-up and
+measurement all count against it. Runs retain effective options, image, logs
+and metrics. A HammerDB UI options editor is a separate task.
+
 ### Admission and stored settings
 
 Successful admission returns `202` with `id` and `status: "running"`. Running
@@ -163,7 +195,8 @@ completed measured job adds average latency (`ms`) for New Order, Payment,
 Delivery, Order Status and Stock Level. Invalid or missing timing preserves
 throughput. Preparation output is
 excluded, and missing/invalid throughput produces a warning without failing a
-verified successful workload. HammerDB plugin integration is a separate task.
+verified successful workload. The HammerDB API driver uses the same shared
+termination-message collection and run history as the other drivers.
 
 The runner Job explicitly sets `terminationMessagePath: /dev/termination-log`
 and `terminationMessagePolicy: File`. Keep `File`: `FallbackToLogsOnError` can
