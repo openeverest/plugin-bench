@@ -199,11 +199,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
+      # Skopeo writes a Docker-save archive; Docker loads it locally. This avoids
+      # using Skopeo's docker-daemon destination while retaining the OCI release archive.
       - name: Load runner from release archive
         run: |
           skopeo --override-os linux --override-arch amd64 copy \
             oci-archive:image-artifacts/runner.tar \
-            docker-daemon:plugin-bench-pgbench:release-test
+            "docker-archive:$RUNNER_TEMP/runner-test.tar:plugin-bench-pgbench:release-test"
+          docker load --input "$RUNNER_TEMP/runner-test.tar"
       - name: Integration test runner
         timeout-minutes: 3
         run: bash .github/scripts/test-runner.sh plugin-bench-pgbench:release-test
@@ -211,7 +214,8 @@ jobs:
         run: |
           skopeo --override-os linux --override-arch amd64 copy \
             oci-archive:image-artifacts/sysbench-runner.tar \
-            docker-daemon:plugin-bench-sysbench:release-test
+            "docker-archive:$RUNNER_TEMP/sysbench-runner-test.tar:plugin-bench-sysbench:release-test"
+          docker load --input "$RUNNER_TEMP/sysbench-runner-test.tar"
       - name: Test credential encoding inside Sysbench release image
         timeout-minutes: 2
         working-directory: runners/sysbench
@@ -235,7 +239,8 @@ jobs:
         run: |
           skopeo --override-os linux --override-arch amd64 copy \
             oci-archive:image-artifacts/go-ycsb-runner.tar \
-            docker-daemon:plugin-bench-go-ycsb:release-test
+            "docker-archive:$RUNNER_TEMP/go-ycsb-runner-test.tar:plugin-bench-go-ycsb:release-test"
+          docker load --input "$RUNNER_TEMP/go-ycsb-runner-test.tar"
       - name: Integration test go-ycsb runner
         timeout-minutes: 20
         run: bash .github/scripts/test-go-ycsb-runner.sh plugin-bench-go-ycsb:release-test
