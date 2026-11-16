@@ -156,8 +156,22 @@ proc quotemeta {str} {
     regsub -all {\\\\} $str "\\" str
     return $str
 }
-proc capture {value} {
+proc emit {value} {
     puts [binary encode base64 -maxlen 0 [encoding convertto utf-8 $value]]
+}
+proc mysqlconnect {args} {
+    emit [dict get $args -password]
+}
+proc capture {key value} {
+    if {$key eq "mysql_pass"} {
+        # ConnectToMySQL assembles a string, list-parses it with dict get,
+        # then evals the resulting mysqlconnect command.
+        set connectstring " -host localhost -port 3306 -user test -password $value"
+        set login_command "mysqlconnect [dict get $connectstring]"
+        eval $login_command
+    } else {
+        emit $value
+    }
 }
 proc dbset {args} {}
 proc vuset {args} {}
@@ -165,8 +179,8 @@ proc diset {section key value} {
     if {[string match *_pass $key] || $key eq "pg_superuserpass"} {
         set stored [concat [quotemeta $value]]
         eval "set password \"$stored\""
-        capture $password
-        eval "capture $stored"
+        capture $key $password
+        eval "capture $key $stored"
     }
 }
 ` + script + `if {$::injected != 0} {error "Tcl injection executed"}`
@@ -191,7 +205,7 @@ proc diset {section key value} {
 				for _, line := range lines {
 					decoded, err := base64.StdEncoding.DecodeString(strings.TrimSuffix(line, "\r"))
 					if err != nil || string(decoded) != password {
-						t.Fatal("password did not round-trip through Tcl unchanged")
+						t.Fatalf("password did not round-trip through Tcl unchanged (engine=%s prepare=%t password=%q decoded=%q)", engine, prepare, password, decoded)
 					}
 				}
 			}
