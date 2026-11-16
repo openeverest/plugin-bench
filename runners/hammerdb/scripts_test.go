@@ -134,6 +134,11 @@ func TestConfigurationScriptTclRoundTrip(t *testing.T) {
 			for _, password := range []string{"a b", " leading ", `a"b`, "a'b", `a\b`, `trailing\`, `$HOME`, `[set ::injected 1]`, `;#{}%20`, "päss密碼\r\nlast\\"} {
 				env := validEnvironment(engine)
 				env["DB_PASSWORD"] = password
+				// PostgreSQL's HammerDB connection path supports a narrower set
+				// than MySQL. Unsupported values are covered by config tests.
+				if engine == "postgresql" && validatePostgreSQLPassword(password) != nil {
+					continue
+				}
 				c, err := loadConfig(func(key string) string { return env[key] })
 				if err != nil {
 					t.Fatal(err)
