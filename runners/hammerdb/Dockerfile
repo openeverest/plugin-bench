@@ -34,7 +34,9 @@ RUN set -eu; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg libssl3t64 libzstd1 zlib1g libstdc++6; \
     install -d -m 0755 /etc/apt/keyrings; \
-    curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
+    curl --fail --location --silent --show-error \
+      --retry 3 --retry-delay 2 --retry-max-time 180 \
+      --connect-timeout 15 --max-time 45 \
       https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/postgresql.asc; \
     fingerprint="$(gpg --batch --with-colons --show-keys /tmp/postgresql.asc | awk -F: '$1 == "fpr" {print $10; exit}')"; \
     test "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8; \
