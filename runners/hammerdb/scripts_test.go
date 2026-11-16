@@ -61,6 +61,7 @@ func TestConfigurationScriptSettings(t *testing.T) {
 						`"diset" "connection" "pg_sslmode" "prefer"`)
 				} else {
 					expected = append(expected,
+						`"diset" "tpcc" "mysql_pass" `+tclLiteral(hammerdbPassword(tclListElement(c.password))),
 						`"diset" "connection" "mysql_socket" "/tmp/mysql.sock"`,
 						`"diset" "connection" "mysql_ssl" "true"`,
 						`"diset" "connection" "mysql_ssl_two_way" "false"`)
@@ -196,5 +197,20 @@ proc diset {section key value} {
 func TestHammerDBPasswordEncoding(t *testing.T) {
 	if got := hammerdbPassword("Az09 \"'\\密😀"); got != `Az09\u0020\u0022\u0027\u005c\u5bc6\U0001f600` {
 		t.Fatalf("unexpected password encoding: %q", got)
+	}
+}
+
+func TestTclListElement(t *testing.T) {
+	for _, tc := range []struct{ value, want string }{
+		{"plain123", "plain123"},
+		{"a b", `a\ b`},
+		{`a\b`, `a\\b`},
+		{"a;b", `a\;b`},
+		{"päss密碼", "päss密碼"},
+		{"line\nbreak", `line\u000abreak`},
+	} {
+		if got := tclListElement(tc.value); got != tc.want {
+			t.Errorf("tclListElement(%q) = %q, want %q", tc.value, got, tc.want)
+		}
 	}
 }

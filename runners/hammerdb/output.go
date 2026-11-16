@@ -33,6 +33,10 @@ func newOutput(c config, stdout, stderr io.Writer) (*outputStream, *outputStream
 		hammerdbPassword(c.password),
 		strings.ReplaceAll(hammerdbPassword(c.password), `\`, `\\`),
 		strings.ReplaceAll(strings.ReplaceAll(c.password, `\`, `\\`), `'`, `\'`)}
+	if c.databaseType == "mysql" {
+		listPassword := hammerdbPassword(tclListElement(c.password))
+		secrets = append(secrets, listPassword, strings.ReplaceAll(listPassword, `\`, `\\`))
+	}
 	// An upstream diagnostic may render embedded line breaks as separate lines.
 	for _, representation := range append([]string(nil), secrets...) {
 		for _, fragment := range strings.FieldsFunc(representation, func(r rune) bool { return r == '\r' || r == '\n' }) {
@@ -76,7 +80,12 @@ func (s *outputStream) Write(data []byte) (int, error) {
 func (s *outputStream) flush(newline bool) {
 	text := "[runner output line omitted]"
 	if !s.discarding {
-		text = s.filter.redact.Replace(string(s.line))
+		line := string(s.line)
+		if strings.Contains(line, `missing "=" after`) {
+			text = "[database connection diagnostic omitted]"
+		} else {
+			text = s.filter.redact.Replace(line)
+		}
 	}
 	if newline {
 		text += "\n"

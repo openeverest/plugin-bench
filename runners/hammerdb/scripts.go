@@ -30,6 +30,25 @@ func hammerdbPassword(password string) string {
 	return b.String()
 }
 
+// tclListElement encodes a value as one Tcl list element. HammerDB's MySQL
+// connection code parses its assembled options as a key/value list after it
+// has decoded the stored password.
+func tclListElement(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 128 || unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+		case r < 32 || r == 127:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // phaseScript wraps configuration in a checked, noninteractive phase. Completion
 // is a fresh private file, never inferred from the CLI's exit status alone.
 func phaseScript(c config, prepare bool, completion string) (string, error) {
@@ -160,7 +179,11 @@ func configurationScript(c config, prepare bool) (string, error) {
 		setting("tpcc", "mysql_storage_engine", "innodb")
 	}
 	setting("tpcc", prefix+"_user", c.user)
-	setting("tpcc", prefix+"_pass", hammerdbPassword(c.password))
+	password := c.password
+	if prefix == "mysql" {
+		password = tclListElement(password)
+	}
+	setting("tpcc", prefix+"_pass", hammerdbPassword(password))
 	setting("tpcc", prefix+"_dbase", c.database)
 	setting("tpcc", prefix+"_count_ware", strconv.Itoa(c.warehouses))
 	// Schema loading uses one worker independently of measured concurrency.

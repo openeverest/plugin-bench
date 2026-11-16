@@ -15,8 +15,11 @@ work=$(mktemp -d)
 network="hammerdb-test-${work##*/}"
 server="hammerdb-db-${work##*/}"
 runner="hammerdb-runner-${work##*/}"
-# Exercise spaces, quotes, substitutions and backslashes through real HammerDB.
-password=$' hdb"test"\\path $HOME[exec id]{x};# '
+# Exercise hostile characters through MySQL; PostgreSQL uses characters
+# supported by HammerDB's Tcl-list to libpq connection-string path.
+postgres_password='hdb-test-password'
+mysql_password=$' hdb"test"\\path $HOME[exec id]{x};# '
+password=$postgres_password
 wrong_password='wrong-hdb-password'
 admin_password='hdb-admin-password'
 network_id=''
@@ -37,7 +40,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 safe_log() {
-  if grep -Fq -e "$password" -e 'hdb\u0022test\u0022' -e 'hdb\\u0022test\\u0022' -e "$admin_password" -e "$wrong_password" "$1"; then
+  if grep -Fq -e "$postgres_password" -e "$mysql_password" -e 'hdb"test"' \
+    -e 'hdb\u0022test\u0022' -e 'hdb\\u0022test\\u0022' \
+    -e "$admin_password" -e "$wrong_password" "$1"; then
     echo 'Credentials found in runner output or metrics' >&2
     exit 1
   fi
@@ -233,6 +238,7 @@ with tarfile.open(fileobj=sys.stdin.buffer, mode="r|") as files:
 network_id=$(timeout -k 5s 20s docker network create "$network")
 for engine in postgresql mysql; do
   [[ "$selected" == all || "$selected" == "$engine" ]] || continue
+  if [[ "$engine" == postgresql ]]; then password=$postgres_password; else password=$mysql_password; fi
   echo "Starting disposable $engine"
   if [[ "$engine" == postgresql ]]; then
     timeout -k 10s 180s docker run -d --name "$server" --network "$network_id" \
@@ -274,6 +280,9 @@ for engine in postgresql mysql; do
   expect_failure authentication false 'HammerDB phase failed' -e DB_PASSWORD="$wrong_password"
   expect_failure unreachable false 'HammerDB phase failed' -e DB_HOST=127.0.0.1
   expect_failure invalid-config false 'BENCH_VIRTUAL_USERS must be an integer' -e BENCH_VIRTUAL_USERS=0
+  if [[ "$engine" == postgresql ]]; then
+    expect_failure unsupported-password false 'DB_PASSWORD contains characters unsupported' -e 'DB_PASSWORD=hdb test'
+  fi
   expect_failure privileges true 'HammerDB phase failed' -e DB_NAME=hdb_denied -e DB_USER=hdb_readonly
   run_success initialized true 480
   # Persist a recognizable field to prove reuse did not rebuild the schema.

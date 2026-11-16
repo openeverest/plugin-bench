@@ -47,6 +47,9 @@ func TestLoadConfigOverrides(t *testing.T) {
 			} {
 				env[key] = value
 			}
+			if engine == "postgresql" {
+				env["DB_PASSWORD"] = "safe-hdb-password"
+			}
 			got, err := loadConfig(func(key string) string { return env[key] })
 			if err != nil {
 				t.Fatalf("valid overrides rejected: %v", err)
@@ -153,15 +156,28 @@ func TestLoadConfigConnectionConstraints(t *testing.T) {
 }
 
 func TestLoadConfigPasswordConstraints(t *testing.T) {
-	for _, engine := range []string{"postgresql", "mysql"} {
-		for _, password := range []string{" leading ", "\t\n ", `a"b`, `a\b`, "a\x00b", "密碼😀"} {
-			env := validEnvironment(engine)
-			env["DB_PASSWORD"] = password
-			got, err := loadConfig(func(key string) string { return env[key] })
-			if err != nil || got.password != password {
-				t.Fatal("valid password was rejected or changed")
-			}
+	for _, password := range []string{"a b", " leading ", `a"b`, `a\b`, "a$b", "a[b", "a;b", "密碼😀"} {
+		env := validEnvironment("mysql")
+		env["DB_PASSWORD"] = password
+		got, err := loadConfig(func(key string) string { return env[key] })
+		if err != nil || got.password != password {
+			t.Fatal("valid MySQL password was rejected or changed")
 		}
+	}
+	for _, password := range []string{"safe-hdb-password", "a]b", "a\"b"} {
+		env := validEnvironment("postgresql")
+		env["DB_PASSWORD"] = password
+		got, err := loadConfig(func(key string) string { return env[key] })
+		if err != nil || got.password != password {
+			t.Fatal("supported PostgreSQL password was rejected or changed")
+		}
+	}
+	for _, password := range []string{"a b", " leading ", "a\tb", `a\b`, "a$b", "a[b", "a;b", `"leading`} {
+		env := validEnvironment("postgresql")
+		env["DB_PASSWORD"] = password
+		assertConfigError(t, env, "DB_PASSWORD")
+	}
+	for _, engine := range []string{"postgresql", "mysql"} {
 		for _, password := range []string{"", string([]byte{0xff})} {
 			env := validEnvironment(engine)
 			env["DB_PASSWORD"] = password

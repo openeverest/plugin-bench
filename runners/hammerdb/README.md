@@ -46,7 +46,7 @@ mappings because bundled Tcl libraries are extracted there.
 | `DB_PORT` | 5432 for PostgreSQL; 3306 for MySQL; range 1–65535 |
 | `DB_NAME` | Required existing disposable database |
 | `DB_USER` | Required existing account with database privileges |
-| `DB_PASSWORD` | Required nonempty valid UTF-8 |
+| `DB_PASSWORD` | Required nonempty valid UTF-8; PostgreSQL has additional character restrictions below |
 | `BENCH_WORKLOAD` | `tproc-c`; no other workloads supported |
 | `BENCH_WAREHOUSES` | 1; positive integer |
 | `BENCH_VIRTUAL_USERS` | 1; positive integer, at most the warehouse count |
@@ -60,7 +60,10 @@ Database and user names accept ASCII letters, digits, underscores, hyphens and
 dots. PostgreSQL names are limited to 63 bytes; MySQL database names to 64 and
 usernames to 32. Numeric settings must fit the validated bounds and the combined
 minute duration must fit Go's `time.Duration`. Passwords are Tcl-encoded for
-HammerDB settings while preflight uses the original value.
+HammerDB settings while preflight uses the original value. PostgreSQL passwords
+must not contain whitespace, backslashes, `$`, `[`, or `;`, and must not start
+with `"`; HammerDB's Tcl list formatting is incompatible with libpq's connection
+string quoting for those forms. MySQL accepts any nonempty valid UTF-8 password.
 
 ## Database setup and execution
 

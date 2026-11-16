@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -59,6 +60,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if err := validatePassword(c.password); err != nil {
 		return config{}, err
+	}
+	if c.databaseType == "postgresql" {
+		if err := validatePostgreSQLPassword(c.password); err != nil {
+			return config{}, err
+		}
 	}
 	if !validHost(c.host) {
 		return config{}, errors.New("DB_HOST must be one IP address or DNS hostname without a port")
@@ -131,6 +137,15 @@ func validatePassword(value string) error {
 	}
 	if !utf8.ValidString(value) {
 		return errors.New("DB_PASSWORD must be valid UTF-8")
+	}
+	return nil
+}
+
+// HammerDB formats PostgreSQL credentials as a Tcl list before passing them
+// to libpq, whose connection-string quoting rules differ from Tcl's.
+func validatePostgreSQLPassword(value string) error {
+	if strings.ContainsAny(value, "\\$[;") || strings.HasPrefix(value, `"`) || strings.ContainsFunc(value, unicode.IsSpace) {
+		return errors.New("DB_PASSWORD contains characters unsupported by HammerDB PostgreSQL connections")
 	}
 	return nil
 }

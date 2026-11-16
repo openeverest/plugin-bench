@@ -14,9 +14,11 @@ import (
 
 func TestOutputRedactsFragmentsAndEncodedSettings(t *testing.T) {
 	c := executionConfig(t)
+	c.databaseType = "mysql"
 	c.password = "secret$[x]\\'value\nsecondpart"
 	literal := tclLiteral(c.password)
-	variants := []string{hammerdbPassword(c.password), strings.ReplaceAll(hammerdbPassword(c.password), `\`, `\\`), c.password, literal[1 : len(literal)-1], strings.ReplaceAll(strings.ReplaceAll(c.password, `\`, `\\`), `'`, `\'`)}
+	listPassword := hammerdbPassword(tclListElement(c.password))
+	variants := []string{hammerdbPassword(c.password), strings.ReplaceAll(hammerdbPassword(c.password), `\`, `\\`), listPassword, strings.ReplaceAll(listPassword, `\`, `\\`), c.password, literal[1 : len(literal)-1], strings.ReplaceAll(strings.ReplaceAll(c.password, `\`, `\\`), `'`, `\'`)}
 	for _, value := range variants {
 		var destination bytes.Buffer
 		out, diagnostic := newOutput(c, &destination, &destination)
@@ -34,6 +36,22 @@ func TestOutputRedactsFragmentsAndEncodedSettings(t *testing.T) {
 		if !strings.Contains(destination.String(), "[REDACTED]") {
 			t.Fatal("missing redaction")
 		}
+	}
+}
+
+func TestOutputHidesMalformedLibpqConnectionDiagnostic(t *testing.T) {
+	c := executionConfig(t)
+	var destination bytes.Buffer
+	out, diagnostic := newOutput(c, &destination, &destination)
+	_, _ = io.WriteString(diagnostic, `FATAL: missing "=" after "hdb"test"\\path" in connection info string`+"\n")
+	if err := finishOutput(out, diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(destination.String(), `hdb"test"`) || strings.Contains(destination.String(), `connection info string`) {
+		t.Fatal("connection diagnostic exposed password content")
+	}
+	if !strings.Contains(destination.String(), "[database connection diagnostic omitted]") {
+		t.Fatal("connection diagnostic was not replaced with a generic message")
 	}
 }
 
