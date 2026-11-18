@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 )
@@ -43,6 +44,7 @@ func prepareRunner(connection resolvedConnection, options Options) (driver.Runne
 		return driver.RunnerSpec{}, invalidOptions("could not encode effective pgbench options")
 	}
 	spec := driver.RunnerSpec{
+		MinimumDuration: time.Duration(options.DurationSeconds) * time.Second,
 		Env: map[string]string{
 			"PGHOST":           connection.Host,
 			"PGPORT":           strconv.Itoa(connection.Port),
