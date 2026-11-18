@@ -119,7 +119,7 @@ func TestRunStagedExecutionAndCleanup(t *testing.T) {
 			t.Setenv("TMPDIR", root)
 			executable := filepath.Join(t.TempDir(), "hammerdbcli")
 			script := `#!/bin/sh
-test "$PWD" = "$(dirname "$0")" || exit 2
+test "$(pwd -P)" = "$(cd "$(dirname "$0")" && pwd -P)" || exit 2
 test -z "${DB_PASSWORD+x}" || exit 3
 test "$TMP" = "$TMPDIR" && test "$TMP" = "$TEMP" && test "$TMP" = "$HOME" || exit 4
 test -d "$TMP" || exit 5
@@ -143,9 +143,10 @@ printf '1 %s JOB123\n' "$phase" > "$(dirname "$2")/$phase.done"
 				timer := time.AfterFunc(100*time.Millisecond, cancel)
 				defer timer.Stop()
 			}
-			err := runStaged(ctx, c, executable, append(os.Environ(), "SCENARIO="+scenario, "DB_PASSWORD=private"), io.Discard, io.Discard, filepath.Join(root, "absent"))
+			var diagnostic bytes.Buffer
+			err := runStaged(ctx, c, executable, append(os.Environ(), "SCENARIO="+scenario, "DB_PASSWORD=private"), io.Discard, &diagnostic, filepath.Join(root, "absent"))
 			if (scenario == "success") != (err == nil) {
-				t.Fatalf("unexpected result: %v", err)
+				t.Fatalf("unexpected result: %v; diagnostic: %s", err, diagnostic.String())
 			}
 			if scenario == "cancellation" && !errors.Is(err, context.Canceled) {
 				t.Fatalf("lost cancellation: %v", err)
