@@ -162,8 +162,8 @@ func TestResolveConnectionRejectsUnsupportedOrInvalidDetails(t *testing.T) {
 		{"unsupported username characters", "mysql", "", func(c *driver.ConnectionDetails) { c.Username = "user name" }, driver.InvalidCredentials},
 		{"MySQL username too long", "mysql", "", func(c *driver.ConnectionDetails) { c.Username = strings.Repeat("u", 33) }, driver.InvalidCredentials},
 		{"missing password", "mysql", "", func(c *driver.ConnectionDetails) { c.Password = "" }, driver.InvalidCredentials},
-		{"password edge whitespace", "mysql", "", func(c *driver.ConnectionDetails) { c.Password = " secret " }, driver.InvalidCredentials},
-		{"password double quote", "mysql", "", func(c *driver.ConnectionDetails) { c.Password = `secret"value` }, driver.InvalidCredentials},
+		{"PostgreSQL password whitespace", "postgresql", "", func(c *driver.ConnectionDetails) { c.Password = "secret value" }, driver.InvalidCredentials},
+		{"PostgreSQL password leading double quote", "postgresql", "", func(c *driver.ConnectionDetails) { c.Password = `"secret` }, driver.InvalidCredentials},
 		{"password NUL", "mysql", "", func(c *driver.ConnectionDetails) { c.Password += "\x00" }, driver.InvalidCredentials},
 		{"URI-only credentials", "mysql", "", func(c *driver.ConnectionDetails) {
 			*c = driver.ConnectionDetails{URI: "mysql://u:uri-credential-sentinel%21@host/app"}

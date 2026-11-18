@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
@@ -23,7 +24,7 @@ func resolveConnection(target driver.TargetInfo, requestedDatabase string, detai
 	if databaseType != "postgresql" && databaseType != "mysql" {
 		return resolvedConnection{}, &driver.Error{Kind: driver.UnsupportedConnection, Message: "HammerDB requires a PostgreSQL or MySQL target"}
 	}
-	if strings.TrimSpace(details.Password) == "" && strings.TrimSpace(details.URI) != "" {
+	if details.Password == "" && strings.TrimSpace(details.URI) != "" {
 		return resolvedConnection{}, &driver.Error{Kind: driver.UnsupportedConnection, Message: "URI-only credentials are not supported by the HammerDB runner"}
 	}
 	var err error
@@ -44,8 +45,8 @@ func resolveConnection(target driver.TargetInfo, requestedDatabase string, detai
 	if strings.TrimSpace(details.Username) == "" || !validName(details.Username, usernameLimit(databaseType)) {
 		return resolvedConnection{}, invalidCredentials("database username is missing or unsupported by the HammerDB runner")
 	}
-	if !validPassword(details.Password) {
-		return resolvedConnection{}, invalidCredentials("database password is unsupported by the HammerDB runner")
+	if err := validatePassword(databaseType, details.Password); err != nil {
+		return resolvedConnection{}, err
 	}
 	port, err := strconv.Atoi(strings.TrimSpace(details.Port))
 	if err != nil || port < 1 || port > 65535 {
@@ -284,14 +285,23 @@ func usernameLimit(databaseType string) int {
 	return 63
 }
 
-func validPassword(password string) bool {
-	if password == "" || !utf8.ValidString(password) || strings.ContainsRune(password, '\x00') {
-		return false
+func validatePassword(databaseType, password string) error {
+	if password == "" {
+		return invalidCredentials("database password is required")
 	}
-	if password != strings.TrimSpace(password) || strings.ContainsRune(password, '"') {
-		return false
+	if !utf8.ValidString(password) {
+		return invalidCredentials("database password must be valid UTF-8")
 	}
-	return true
+	// The Job passes the password through an environment variable.
+	if strings.ContainsRune(password, '\x00') {
+		return invalidCredentials("database password must not contain NUL bytes")
+	}
+	// Match the runner's PostgreSQL check for HammerDB's libpq quoting limits.
+	if databaseType == "postgresql" &&
+		(strings.ContainsAny(password, "\\$[;") || strings.HasPrefix(password, `"`) || strings.ContainsFunc(password, unicode.IsSpace)) {
+		return invalidCredentials(`HammerDB PostgreSQL passwords cannot contain whitespace, backslashes, $, [, or ;, or begin with "`)
+	}
+	return nil
 }
 
 func invalidCredentials(message string) error {
