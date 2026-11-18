@@ -82,6 +82,8 @@ type OptionSnapshot struct {
 // record. SecretData and SensitiveValues contain credentials: never log this value.
 // Empty Command/Args preserve the runner image's entrypoint and arguments.
 type RunnerSpec struct {
+	// MinimumDuration is the requested measurement and ramp-up time, excluding preparation.
+	MinimumDuration time.Duration
 	Command         []string
 	Args            []string
 	Env             map[string]string // Literal values; the coordinator escapes Kubernetes environment expansion.

@@ -188,7 +188,7 @@ func run() error {
 	if cleanupPending {
 		go retryOrphanCleanup(lifecycleCtx, benchmarkCoordinator, orphanCleanupRetry, orphanCleanupMaxRetry)
 	}
-	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, store, lifecycleCtx, config.Resources, registry, everest.ListInstances)
+	benchmarkAPI := api.NewAPI(everest.GetCredentials, everest.CheckInstanceAccess, benchmarkCoordinator, store, lifecycleCtx, config.Resources, registry, everest.ListInstances, config.ExecutionTimeout)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /main.js", handleBundle)
