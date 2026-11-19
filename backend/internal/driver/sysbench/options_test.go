@@ -33,7 +33,7 @@ func TestDecodeOptionsAppliesDefaults(t *testing.T) {
 		{"whitespace", " \n {\"tableSize\":2} \t", Options{DurationSeconds: 60, Threads: 1, Tables: 1, TableSize: 2}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := decodeOptions(json.RawMessage(test.input))
+			got, err := decodeOptions(json.RawMessage(test.input), "sysbench")
 			if err != nil || got != test.want {
 				t.Fatalf("decodeOptions() = %+v, %v; want %+v", got, err, test.want)
 			}
@@ -55,7 +55,7 @@ func TestDecodeOptionsRejectsInvalidPayloads(t *testing.T) {
 	}
 	for _, input := range inputs {
 		t.Run(input, func(t *testing.T) {
-			got, err := decodeOptions(json.RawMessage(input))
+			got, err := decodeOptions(json.RawMessage(input), "sysbench")
 			assertErrorKind(t, err, driver.InvalidOptions)
 			if got != (Options{}) {
 				t.Fatal("invalid options returned a usable configuration")

@@ -147,6 +147,33 @@ func TestLoadConfigInitialization(t *testing.T) {
 	}
 }
 
+func TestLoadConfigMySQLTLS(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  bool
+		bad   bool
+	}{
+		{value: ""},
+		{value: "false"},
+		{value: "true", want: true},
+		{value: "TRUE", bad: true},
+		{value: "required", bad: true},
+	} {
+		env := validEnvironment()
+		env["MYSQL_SSL"] = test.value
+		got, err := loadConfig(func(key string) string { return env[key] })
+		if test.bad {
+			if err == nil || !strings.Contains(err.Error(), "MYSQL_SSL") {
+				t.Fatalf("loadConfig(%q) error = %v; want MYSQL_SSL validation error", test.value, err)
+			}
+			continue
+		}
+		if err != nil || got.ssl != test.want {
+			t.Fatalf("loadConfig(%q) ssl = %t, error = %v; want %t", test.value, got.ssl, err, test.want)
+		}
+	}
+}
+
 func assertConfigError(t *testing.T, env map[string]string, field string) {
 	t.Helper()
 	got, err := loadConfig(func(key string) string { return env[key] })
@@ -171,17 +198,19 @@ func TestRunWorkflow(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		initialize bool
+		ssl        bool
 		failAt     int
 		phases     []string
 	}{
-		{"reuse", false, 0, []string{"run"}},
-		{"initialize", true, 0, []string{"prepare", "run"}},
-		{"preparation fails", true, 1, []string{"prepare"}},
-		{"benchmark fails", true, 2, []string{"prepare", "run"}},
+		{"reuse", false, false, 0, []string{"run"}},
+		{"TLS enabled", false, true, 0, []string{"run"}},
+		{"initialize", true, false, 0, []string{"prepare", "run"}},
+		{"preparation fails", true, false, 1, []string{"prepare"}},
+		{"benchmark fails", true, false, 2, []string{"prepare", "run"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := testConfig(t)
-			c.duration, c.threads, c.tables, c.tableSize, c.initialize = 7, 4, 2, 500, tc.initialize
+			c.duration, c.threads, c.tables, c.tableSize, c.initialize, c.ssl = 7, 4, 2, 500, tc.initialize, tc.ssl
 			var output bytes.Buffer
 			var calls [][]string
 			err := run(context.Background(), c, "/private/connection.conf", func(_ context.Context, args []string, stdout io.Writer) error {
@@ -204,8 +233,11 @@ func TestRunWorkflow(t *testing.T) {
 					"--config-file=/private/connection.conf", "--db-driver=mysql",
 					"--threads=" + threads, "--tables=2", "--table-size=500", "--time=7",
 					"--events=0", "--report-interval=0", "--db-debug=off", "--mysql-debug=off",
-					"oltp_read_write", phase,
 				}
+				if tc.ssl {
+					want = append(want, "--mysql-ssl=on")
+				}
+				want = append(want, "oltp_read_write", phase)
 				if !reflect.DeepEqual(calls[i], want) || strings.Contains(strings.Join(calls[i], " "), c.password) {
 					t.Fatal("wrong arguments or credentials present in command arguments")
 				}

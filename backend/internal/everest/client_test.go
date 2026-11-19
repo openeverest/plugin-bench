@@ -81,6 +81,26 @@ func TestGetCredentialsSuccessfulRetrieval(t *testing.T) {
 	}
 }
 
+func TestGetCredentialsReadsMariaDBTLSSetting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/clusters/cluster-a/namespaces/database/instances/mariadb/connection" {
+			t.Errorf("path = %s; want MariaDB connection endpoint", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type":"mariadb","tls":"true"}`))
+	}))
+	defer server.Close()
+	t.Setenv("EVEREST_API_URL", server.URL)
+
+	credentials, err := GetCredentials(context.Background(), "test-token", "cluster-a", "database", "mariadb")
+	if err != nil {
+		t.Fatalf("GetCredentials() error = %v", err)
+	}
+	if credentials == nil || credentials.TLS != "true" {
+		t.Fatal("GetCredentials() did not preserve the provider TLS setting")
+	}
+}
+
 func TestCheckInstanceAccess(t *testing.T) {
 	tests := []struct {
 		name      string
