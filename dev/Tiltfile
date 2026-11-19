@@ -313,7 +313,10 @@ helm_resource(
     image_keys=[
         ('image.repository', 'image.tag'),
         ('drivers.pgbench.image.repository', 'drivers.pgbench.image.tag'),
-        ('drivers.sysbench.image.repository', 'drivers.sysbench.image.tag'),
+        [
+            ('drivers.sysbench.image.repository', 'drivers.sysbench.image.tag'),
+            ('drivers.mariadb.image.repository', 'drivers.mariadb.image.tag'),
+        ],
         ('drivers.go-ycsb.image.repository', 'drivers.go-ycsb.image.tag'),
     ],
     resource_deps=plugin_resource_deps,
