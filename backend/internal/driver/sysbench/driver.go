@@ -1,4 +1,4 @@
-// Package sysbench prepares MySQL workloads for the sysbench runner image.
+// Package sysbench prepares MySQL-compatible workloads for the Sysbench runner image.
 package sysbench
 
 import (
@@ -9,22 +9,35 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 )
 
-type sysbenchDriver struct{}
+type sysbenchDriver struct {
+	id           string
+	databaseType string
+}
 
 // New returns a stateless driver that can be shared across concurrent runs.
-func New() driver.Driver { return sysbenchDriver{} }
+func New() driver.Driver {
+	return sysbenchDriver{id: "sysbench", databaseType: "mysql"}
+}
 
-func (sysbenchDriver) ID() string { return "sysbench" }
+// NewMariaDB returns the MariaDB-facing driver, using the same Sysbench runner.
+func NewMariaDB() driver.Driver {
+	return sysbenchDriver{id: "mariadb", databaseType: "mariadb"}
+}
 
-func (sysbenchDriver) Supports(target driver.TargetInfo) bool {
-	return strings.EqualFold(strings.TrimSpace(target.DatabaseType), "mysql")
+func (d sysbenchDriver) ID() string { return d.id }
+
+func (d sysbenchDriver) Supports(target driver.TargetInfo) bool {
+	return strings.EqualFold(strings.TrimSpace(target.DatabaseType), d.databaseType)
 }
 
 func (d sysbenchDriver) Prepare(input driver.PrepareInput) (driver.RunnerSpec, error) {
 	if !d.Supports(input.Target) {
-		return driver.RunnerSpec{}, &driver.Error{Kind: driver.UnsupportedConnection, Message: "sysbench requires a MySQL target"}
+		return driver.RunnerSpec{}, &driver.Error{
+			Kind:    driver.UnsupportedConnection,
+			Message: d.id + " requires a " + d.databaseType + " target",
+		}
 	}
-	options, err := decodeOptions(input.Options)
+	options, err := decodeOptions(input.Options, d.id)
 	if err != nil {
 		return driver.RunnerSpec{}, err
 	}
@@ -59,6 +72,9 @@ func prepareRunner(connection resolvedConnection, options Options) (driver.Runne
 		SecretData: map[string][]byte{"MYSQL_PASSWORD": []byte(connection.Password)},
 		SecretEnv:  map[string]string{"MYSQL_PASSWORD": "MYSQL_PASSWORD"},
 		Snapshot:   driver.OptionSnapshot{Database: connection.Database, Options: snapshot},
+	}
+	if connection.TLS {
+		spec.Env["MYSQL_SSL"] = "true"
 	}
 	if strings.TrimSpace(connection.URI) != "" {
 		// The URI may contain an encoded representation of the password.

@@ -18,6 +18,7 @@ import (
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/sysbench"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	batchv1 "k8s.io/api/batch/v1"
@@ -382,5 +383,28 @@ func testPreparedDriverExecution(t *testing.T, message string, wantMetrics []run
 	}
 	if !jobDeleted || !secretDeleted || len(a.runSlots) != 0 {
 		t.Fatal("execution did not clean up and release capacity")
+	}
+}
+func TestPrepareRunPassesProviderTLSIntoMariaDBRunnerSpec(t *testing.T) {
+	registry, err := driver.NewRegistry(driver.Registration{
+		Driver: sysbench.NewMariaDB(),
+		Runner: driver.RunnerConfig{Image: "sysbench:test", ImagePullPolicy: "Never"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &API{registry: registry}
+	credentials := &everest.Credentials{
+		Host: "mariadb.example.com", Port: "3306", Username: "bench-user", Password: "secret",
+		Type: "mariadb", Database: "bench", TLS: "true",
+	}
+	prepared, err := a.prepareRun(CreateRunRequest{
+		Driver: "mariadb", Database: "bench", Options: json.RawMessage(`{}`),
+	}, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Input.Spec.Env["MYSQL_SSL"] != "true" {
+		t.Fatalf("prepared MYSQL_SSL = %q; want true", prepared.Input.Spec.Env["MYSQL_SSL"])
 	}
 }
