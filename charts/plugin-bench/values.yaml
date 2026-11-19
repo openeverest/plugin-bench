@@ -73,6 +73,13 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  mariadb:
+    enabled: true
+    image:
+      # MariaDB reuses the Sysbench runner; an empty tag uses appVersion.
+      repository: ghcr.io/openeverest/plugin-bench-sysbench
+      tag: ""
+      pullPolicy: ""
   go-ycsb:
     enabled: true
     image:

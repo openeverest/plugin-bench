@@ -147,6 +147,7 @@ func benchmarkRegistryFromEnv() (*driver.Registry, error) {
 		"go-ycsb":  goycsb.New,
 		"pgbench":  pgbench.New,
 		"sysbench": sysbench.New,
+		"mariadb":  sysbench.NewMariaDB,
 	})
 	if err != nil {
 		return nil, err

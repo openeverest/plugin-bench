@@ -97,6 +97,10 @@ func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 			},
 		},
 		{
+			name: "MariaDB uses shared runner", payload: `{"mariadb":{"enabled":true,"image":"example.com/sysbench:v2"}}`,
+			want: map[string]driver.RunnerConfig{"mariadb": {Image: "example.com/sysbench:v2", ImagePullPolicy: "IfNotPresent"}},
+		},
+		{
 			name: "sysbench only", payload: `{"sysbench":{"enabled":true,"image":"example.com/sysbench:v2"}}`,
 			want: map[string]driver.RunnerConfig{"sysbench": {Image: "example.com/sysbench:v2", ImagePullPolicy: "IfNotPresent"}},
 		},
@@ -137,7 +141,7 @@ func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for id, databaseType := range map[string]string{"pgbench": "postgresql", "sysbench": "mysql", "go-ycsb": "mongodb"} {
+			for id, databaseType := range map[string]string{"pgbench": "postgresql", "sysbench": "mysql", "go-ycsb": "mongodb", "mariadb": "mariadb"} {
 				registration, err := registry.Resolve(id, driver.TargetInfo{DatabaseType: databaseType, Provider: "unfamiliar-provider"})
 				want, enabled := test.want[id]
 				if !enabled {
