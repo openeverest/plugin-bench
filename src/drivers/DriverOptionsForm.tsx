@@ -17,6 +17,7 @@ export interface DriverOptionsFormProps<K extends BenchmarkDriverId = BenchmarkD
 const optionsForms: { [K in BenchmarkDriverId]: (props: DriverOptionsFormProps<K>) => ReactElement } = {
   pgbench: PgbenchOptionsForm,
   sysbench: SysbenchOptionsForm,
+  mariadb: SysbenchOptionsForm,
   'go-ycsb': GoYCSBOptionsForm,
 };
 
