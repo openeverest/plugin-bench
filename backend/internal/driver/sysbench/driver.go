@@ -12,6 +12,7 @@ import (
 type sysbenchDriver struct {
 	id           string
 	databaseType string
+	provider     string
 }
 
 // New returns a stateless driver that can be shared across concurrent runs.
@@ -21,13 +22,21 @@ func New() driver.Driver {
 
 // NewMariaDB returns the MariaDB-facing driver, using the same Sysbench runner.
 func NewMariaDB() driver.Driver {
-	return sysbenchDriver{id: "mariadb", databaseType: "mariadb"}
+	return sysbenchDriver{id: "mariadb", databaseType: "mariadb", provider: "provider-mariadb"}
 }
 
 func (d sysbenchDriver) ID() string { return d.id }
 
 func (d sysbenchDriver) Supports(target driver.TargetInfo) bool {
-	return strings.EqualFold(strings.TrimSpace(target.DatabaseType), d.databaseType)
+	databaseType := strings.TrimSpace(target.DatabaseType)
+	if strings.EqualFold(databaseType, d.databaseType) {
+		return true
+	}
+	// The current OpenEverest MariaDB provider reports its engine as "mysql".
+	// Require the provider identity as well, so the MariaDB driver doesn't
+	// become eligible for ordinary MySQL targets.
+	return d.provider != "" && strings.EqualFold(databaseType, "mysql") &&
+		strings.EqualFold(strings.TrimSpace(target.Provider), d.provider)
 }
 
 func (d sysbenchDriver) Prepare(input driver.PrepareInput) (driver.RunnerSpec, error) {
