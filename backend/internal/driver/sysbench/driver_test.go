@@ -78,7 +78,7 @@ func TestMariaDBDriverUsesSharedSysbenchPreparation(t *testing.T) {
 	}
 }
 
-func TestPrepareRequestsSysbenchTLSWhenProviderEnablesIt(t *testing.T) {
+func TestPrepareDisablesSysbenchTLSForNow(t *testing.T) {
 	input := driver.PrepareInput{
 		Target:     driver.TargetInfo{DatabaseType: "mariadb"},
 		Connection: validConnectionDetails(),
@@ -90,8 +90,8 @@ func TestPrepareRequestsSysbenchTLSWhenProviderEnablesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Env["MYSQL_SSL"] != "true" {
-		t.Fatalf("MYSQL_SSL = %q; want true", spec.Env["MYSQL_SSL"])
+	if spec.Env["MYSQL_SSL"] != "false" {
+		t.Fatalf("MYSQL_SSL = %q; want false when provider TLS is enabled", spec.Env["MYSQL_SSL"])
 	}
 
 	input.Connection.TLS = "false"
@@ -99,8 +99,8 @@ func TestPrepareRequestsSysbenchTLSWhenProviderEnablesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := spec.Env["MYSQL_SSL"]; exists {
-		t.Fatal("disabled TLS should preserve the runner's default behavior")
+	if spec.Env["MYSQL_SSL"] != "false" {
+		t.Fatalf("MYSQL_SSL = %q; want false when provider TLS is disabled", spec.Env["MYSQL_SSL"])
 	}
 
 	input.Connection.TLS = ""
@@ -109,8 +109,8 @@ func TestPrepareRequestsSysbenchTLSWhenProviderEnablesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Env["MYSQL_SSL"] != "true" {
-		t.Fatalf("URI MYSQL_SSL = %q; want true", spec.Env["MYSQL_SSL"])
+	if spec.Env["MYSQL_SSL"] != "false" {
+		t.Fatalf("URI MYSQL_SSL = %q; want false when URI TLS is enabled", spec.Env["MYSQL_SSL"])
 	}
 }
 

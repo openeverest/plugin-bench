@@ -146,10 +146,13 @@ a fresh dataset; existing table names cause preparation to fail. To reuse
 tables, turn preparation off and match **Tables** and **Rows per table** to the
 existing dataset. Tables remain after Job cleanup. Sysbench must be enabled with
 an accessible runner image; see [Driver configuration](#driver-configuration).
+The current Sysbench integration always connects without TLS, even when the
+provider reports TLS enabled. Targets that require encrypted connections are
+not supported until TLS support is added to the runner.
 
-The backend also accepts MariaDB targets reported by OpenEverest as `mariadb`
-with `driver: "mariadb"`. It uses the same Sysbench workload and options as
-MySQL, including boolean TLS support. The database is taken from the request,
+The backend also accepts MariaDB targets identified by OpenEverest's `mariadb`
+provider with `driver: "mariadb"` (the provider reports database type `mysql`).
+It uses the same Sysbench workload and options as MySQL. The database is taken from the request,
 provider details, or connection URI in that order; a database name is required
 when none is available. It requires separate host, port, username, and password
 fields; URI-only credentials and custom CA certificates are not supported.
@@ -238,7 +241,7 @@ For local development, install:
 
 An OpenEverest installation and a provider for the selected database type are
 required when running the plugin in a cluster. Sysbench matches database type
-`mysql`; the MariaDB driver matches `mariadb` and uses the same runner image. A
+`mysql`; the MariaDB driver matches the `mariadb` provider and uses the same runner image. A
 live benchmark against a PXC (`percona-xtradb-cluster`) instance has been
 verified. The Sysbench runner has been verified against MySQL 8.4 on Linux/ARM64
 and exercised locally against MariaDB 11.4.13.

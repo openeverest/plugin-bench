@@ -23,7 +23,7 @@ const mariadbRunBody = `{"target":{"k8sCluster":"local","namespace":"dbs","insta
 func mariadbCredentials() *everest.Credentials {
 	return &everest.Credentials{
 		Host: "mariadb.example.com", Port: "3306", Username: "bench-user", Password: "mariadb-password",
-		Database: "benchdb", Type: "MariaDB", Provider: "provider-mariadb",
+		Database: "benchdb", Type: "mysql", Provider: "mariadb",
 		URI: "mysql://bench-user:mariadb-password@mariadb.example.com:3306/benchdb?tls=true", TLS: "true",
 	}
 }
@@ -117,10 +117,10 @@ func TestMariaDBRunThroughAPI(t *testing.T) {
 			if input.Runner != (driver.RunnerConfig{Image: mariadbRunnerImage, ImagePullPolicy: "Never"}) {
 				t.Fatalf("unexpected registered runner: %+v", input.Runner)
 			}
-			if input.Spec.Env["MYSQL_DATABASE"] != test.wantDatabase || input.Spec.Env["MYSQL_SSL"] != "true" ||
+			if input.Spec.Env["MYSQL_DATABASE"] != test.wantDatabase || input.Spec.Env["MYSQL_SSL"] != "false" ||
 				string(input.Spec.SecretData["MYSQL_PASSWORD"]) != credentials.Password ||
 				input.Spec.SecretEnv["MYSQL_PASSWORD"] != "MYSQL_PASSWORD" {
-				t.Fatal("MariaDB preparation lost the resolved database, TLS, or Secret mapping")
+				t.Fatal("MariaDB preparation lost the resolved database, Sysbench TLS setting, or Secret mapping")
 			}
 			if _, exists := input.Spec.Env["MYSQL_PASSWORD"]; exists {
 				t.Fatal("password was included in literal environment settings")
@@ -130,7 +130,7 @@ func TestMariaDBRunThroughAPI(t *testing.T) {
 				t.Fatalf("runner did not receive effective MariaDB options: %v", err)
 			}
 			if run.Status != RunStatusSucceeded || run.Snapshot.Driver != "mariadb" ||
-				run.Snapshot.DatabaseType != "mariadb" || run.Snapshot.RunnerImage != mariadbRunnerImage ||
+				run.Snapshot.DatabaseType != "mysql" || run.Snapshot.RunnerImage != mariadbRunnerImage ||
 				run.Snapshot.Database != test.wantDatabase || string(run.Snapshot.Options) != string(input.Spec.Snapshot.Options) {
 				t.Fatalf("unexpected persisted MariaDB run: %+v", run)
 			}
@@ -158,7 +158,7 @@ func TestMariaDBRunThroughAPI(t *testing.T) {
 				t.Fatal(err)
 			}
 			if w.Code != http.StatusOK || response.Driver != "mariadb" || response.Status != RunStatusSucceeded ||
-				response.DatabaseType != "mariadb" || response.Database != test.wantDatabase || response.Output != wantOutput ||
+				response.DatabaseType != "mysql" || response.Database != test.wantDatabase || response.Output != wantOutput ||
 				len(response.Metrics) != 2 || response.Metrics[0].Value != 1200.5 {
 				t.Fatalf("GET did not return MariaDB results: %s", w.Body.String())
 			}
@@ -185,8 +185,7 @@ func TestMariaDBRejectedBeforeRunAdmission(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			credentials := mariadbCredentials()
 			if test.name == "target type mismatch" {
-				credentials.Type = "mysql"
-				credentials.Provider = "provider-mysql"
+				credentials.Provider = "percona-server-mysql"
 			}
 			var called atomic.Bool
 			a := newMariaDBAPI(t, credentials, testRunnerFunc(func(context.Context, coordinator.RunInput) (coordinator.Result, error) {

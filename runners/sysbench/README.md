@@ -70,6 +70,11 @@ must be integers from 1 to 2147483647. Host, database, and user cannot be blank.
 Only the bundled `oltp_read_write` workload is supported, with sysbench's default
 transaction mix. Custom scripts and additional workloads are outside this contract.
 
+The backend currently launches this runner with `MYSQL_SSL=false`, even when
+OpenEverest reports TLS enabled. Consequently, targets that require encrypted
+connections are not supported yet. The runner image uses Sysbench 1.0.20 and the
+plugin does not currently provide the TLS files needed by that version.
+
 The database and account must already exist. Preparation is not idempotent:
 existing table names cause an error, and the measured phase is then skipped.
 The runner never automatically drops tables, including after a failed or

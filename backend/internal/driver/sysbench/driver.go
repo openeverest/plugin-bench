@@ -22,7 +22,7 @@ func New() driver.Driver {
 
 // NewMariaDB returns the MariaDB-facing driver, using the same Sysbench runner.
 func NewMariaDB() driver.Driver {
-	return sysbenchDriver{id: "mariadb", databaseType: "mariadb", provider: "provider-mariadb"}
+	return sysbenchDriver{id: "mariadb", databaseType: "mariadb", provider: "mariadb"}
 }
 
 func (d sysbenchDriver) ID() string { return d.id }
@@ -76,14 +76,14 @@ func prepareRunner(connection resolvedConnection, options Options) (driver.Runne
 			"BENCH_TABLES":     strconv.Itoa(options.Tables),
 			"BENCH_TABLE_SIZE": strconv.Itoa(options.TableSize),
 			"BENCH_INITIALIZE": strconv.FormatBool(options.Initialize),
+			// The current Sysbench image cannot use OpenEverest's TLS
+			// configuration, so keep its database connection unencrypted.
+			"MYSQL_SSL": "false",
 		},
 		// Every SecretData value becomes an output redaction candidate.
 		SecretData: map[string][]byte{"MYSQL_PASSWORD": []byte(connection.Password)},
 		SecretEnv:  map[string]string{"MYSQL_PASSWORD": "MYSQL_PASSWORD"},
 		Snapshot:   driver.OptionSnapshot{Database: connection.Database, Options: snapshot},
-	}
-	if connection.TLS {
-		spec.Env["MYSQL_SSL"] = "true"
 	}
 	if strings.TrimSpace(connection.URI) != "" {
 		// The URI may contain an encoded representation of the password.
