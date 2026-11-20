@@ -205,6 +205,7 @@ func TestPrepareRunnerMapsEnvironmentAndSnapshot(t *testing.T) {
 			name: "defaults", options: defaultOptions(),
 			wantEnv: map[string]string{
 				"MYSQL_HOST": "mysql.example.com", "MYSQL_PORT": "3306", "MYSQL_DATABASE": "sbtest", "MYSQL_USER": "sbuser",
+				"MYSQL_SSL": "false",
 				"BENCH_DURATION": "60", "BENCH_THREADS": "1", "BENCH_TABLES": "1", "BENCH_TABLE_SIZE": "10000", "BENCH_INITIALIZE": "false",
 			},
 		},
@@ -213,6 +214,7 @@ func TestPrepareRunnerMapsEnvironmentAndSnapshot(t *testing.T) {
 			uri: "mysql://sbuser:credential-sentinel@mysql.example.com/sbtest",
 			wantEnv: map[string]string{
 				"MYSQL_HOST": "mysql.example.com", "MYSQL_PORT": "3306", "MYSQL_DATABASE": "sbtest", "MYSQL_USER": "sbuser",
+				"MYSQL_SSL": "false",
 				"BENCH_DURATION": "30", "BENCH_THREADS": "4", "BENCH_TABLES": "2", "BENCH_TABLE_SIZE": "500", "BENCH_INITIALIZE": "true",
 			},
 		},
