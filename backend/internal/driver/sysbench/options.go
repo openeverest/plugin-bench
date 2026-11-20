@@ -39,8 +39,8 @@ func (o Options) Validate() error {
 	return nil
 }
 
-func decodeOptions(raw json.RawMessage) (Options, error) {
-	options, err := driver.DecodeStrictOptions(raw, defaultOptions(), "sysbench")
+func decodeOptions(raw json.RawMessage, driverID string) (Options, error) {
+	options, err := driver.DecodeStrictOptions(raw, defaultOptions(), driverID)
 	if err != nil {
 		return Options{}, err
 	}

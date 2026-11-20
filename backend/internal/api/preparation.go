@@ -60,7 +60,7 @@ func (a *API) prepareRun(request CreateRunRequest, credentials *everest.Credenti
 		Target: target,
 		Connection: driver.ConnectionDetails{Host: credentials.Host, Port: credentials.Port, Username: credentials.Username,
 			Password: credentials.Password, URI: credentials.URI, Database: credentials.Database,
-			CACertificate: credentials.CACertificate},
+			TLS: credentials.TLS, CACertificate: credentials.CACertificate},
 		RequestedDatabase: request.Database,
 		Options:           request.Options,
 	})

@@ -119,6 +119,9 @@ jobs:
       - name: Integration test runner
         timeout-minutes: 10
         run: bash .github/scripts/test-sysbench-runner.sh plugin-bench-sysbench:ci
+      - name: Integration test runner against MariaDB
+        timeout-minutes: 6
+        run: bash .github/scripts/test-sysbench-runner.sh plugin-bench-sysbench:ci mariadb
 
   go-ycsb-runner:
     name: go-ycsb Runner

@@ -111,6 +111,9 @@ type Credentials struct {
 	Type     string `json:"type"`
 	// Database is a provider-specific key; not every provider publishes it.
 	Database string `json:"database"`
+	// TLS is a provider-specific setting indicating whether the connection
+	// should request TLS. Providers may omit it when TLS is not configured.
+	TLS string `json:"tls"`
 	// CACertificate is a provider-specific PEM CA for instances whose
 	// certificates are not publicly trusted.
 	CACertificate string `json:"ca.crt"`

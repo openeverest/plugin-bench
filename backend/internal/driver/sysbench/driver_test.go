@@ -27,6 +27,93 @@ func TestDriverSupportsDatabaseType(t *testing.T) {
 	}
 }
 
+func TestMariaDBDriverUsesSharedSysbenchPreparation(t *testing.T) {
+	d := NewMariaDB()
+	if d.ID() != "mariadb" {
+		t.Fatalf("ID() = %q; want mariadb", d.ID())
+	}
+	for _, databaseType := range []string{"mariadb", "MariaDB", " MARIADB "} {
+		if !d.Supports(driver.TargetInfo{DatabaseType: databaseType}) {
+			t.Fatalf("MariaDB type %q was not supported", databaseType)
+		}
+	}
+	for _, databaseType := range []string{"", "mysql", "postgresql", "mongodb"} {
+		if d.Supports(driver.TargetInfo{DatabaseType: databaseType}) {
+			t.Fatalf("non-MariaDB type %q was supported", databaseType)
+		}
+	}
+	if _, err := d.Prepare(driver.PrepareInput{
+		Target: driver.TargetInfo{DatabaseType: "mysql"},
+	}); err == nil {
+		t.Fatal("MariaDB driver accepted a MySQL target")
+	} else {
+		assertErrorKind(t, err, driver.UnsupportedConnection)
+	}
+
+	input := driver.PrepareInput{
+		Target:     driver.TargetInfo{DatabaseType: "MariaDB"},
+		Connection: validConnectionDetails(),
+		Options:    json.RawMessage(`{}`),
+	}
+	input.Connection.URI = ""
+	spec, err := d.Prepare(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("MariaDB runner spec is invalid: %v", err)
+	}
+	if spec.Env["MYSQL_HOST"] != "mysql.example.com" || spec.Env["MYSQL_DATABASE"] != "sbtest" ||
+		spec.Env["BENCH_DURATION"] != "60" || spec.Snapshot.Database != "sbtest" {
+		t.Fatalf("MariaDB driver did not prepare the shared Sysbench runner configuration: %+v", spec)
+	}
+	if string(spec.SecretData["MYSQL_PASSWORD"]) != "credential-sentinel" ||
+		spec.SecretEnv["MYSQL_PASSWORD"] != "MYSQL_PASSWORD" {
+		t.Fatal("MariaDB driver did not retain the password in the runner Secret")
+	}
+
+	input.Options = json.RawMessage(`{"unknown":true}`)
+	if _, err := d.Prepare(input); err == nil || !strings.Contains(err.Error(), "mariadb fields") {
+		t.Fatalf("MariaDB option error = %v; want a MariaDB-specific strict decoding error", err)
+	}
+}
+
+func TestPrepareDisablesSysbenchTLSForNow(t *testing.T) {
+	input := driver.PrepareInput{
+		Target:     driver.TargetInfo{DatabaseType: "mariadb"},
+		Connection: validConnectionDetails(),
+		Options:    json.RawMessage(`{}`),
+	}
+	input.Connection.URI = ""
+	input.Connection.TLS = "true"
+	spec, err := NewMariaDB().Prepare(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Env["MYSQL_SSL"] != "false" {
+		t.Fatalf("MYSQL_SSL = %q; want false when provider TLS is enabled", spec.Env["MYSQL_SSL"])
+	}
+
+	input.Connection.TLS = "false"
+	spec, err = NewMariaDB().Prepare(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Env["MYSQL_SSL"] != "false" {
+		t.Fatalf("MYSQL_SSL = %q; want false when provider TLS is disabled", spec.Env["MYSQL_SSL"])
+	}
+
+	input.Connection.TLS = ""
+	input.Connection.URI = "mysql://bench-user:secret@mariadb.example.com/bench?tls=true"
+	spec, err = NewMariaDB().Prepare(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Env["MYSQL_SSL"] != "false" {
+		t.Fatalf("URI MYSQL_SSL = %q; want false when URI TLS is enabled", spec.Env["MYSQL_SSL"])
+	}
+}
+
 func TestPrepareCombinesOptionsAndConnectionResolution(t *testing.T) {
 	for _, test := range []struct {
 		name, requested, database, uri, rawOptions, wantDatabase string
@@ -118,6 +205,7 @@ func TestPrepareRunnerMapsEnvironmentAndSnapshot(t *testing.T) {
 			name: "defaults", options: defaultOptions(),
 			wantEnv: map[string]string{
 				"MYSQL_HOST": "mysql.example.com", "MYSQL_PORT": "3306", "MYSQL_DATABASE": "sbtest", "MYSQL_USER": "sbuser",
+				"MYSQL_SSL": "false",
 				"BENCH_DURATION": "60", "BENCH_THREADS": "1", "BENCH_TABLES": "1", "BENCH_TABLE_SIZE": "10000", "BENCH_INITIALIZE": "false",
 			},
 		},
@@ -126,6 +214,7 @@ func TestPrepareRunnerMapsEnvironmentAndSnapshot(t *testing.T) {
 			uri: "mysql://sbuser:credential-sentinel@mysql.example.com/sbtest",
 			wantEnv: map[string]string{
 				"MYSQL_HOST": "mysql.example.com", "MYSQL_PORT": "3306", "MYSQL_DATABASE": "sbtest", "MYSQL_USER": "sbuser",
+				"MYSQL_SSL": "false",
 				"BENCH_DURATION": "30", "BENCH_THREADS": "4", "BENCH_TABLES": "2", "BENCH_TABLE_SIZE": "500", "BENCH_INITIALIZE": "true",
 			},
 		},
