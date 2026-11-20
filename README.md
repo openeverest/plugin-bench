@@ -147,6 +147,14 @@ tables, turn preparation off and match **Tables** and **Rows per table** to the
 existing dataset. Tables remain after Job cleanup. Sysbench must be enabled with
 an accessible runner image; see [Driver configuration](#driver-configuration).
 
+The backend also accepts MariaDB targets reported by OpenEverest as `mariadb`
+with `driver: "mariadb"`. It uses the same Sysbench workload and options as
+MySQL, including boolean TLS support. The database is taken from the request,
+provider details, or connection URI in that order; a database name is required
+when none is available. It requires separate host, port, username, and password
+fields; URI-only credentials and custom CA certificates are not supported.
+Frontend selection is tracked separately.
+
 **go-ycsb** fixes Database to the read-only value `ycsb`. It starts with collection
 `usertable`, 10,000 records, 20,000 operations, one thread, and **Load benchmark data**
 checked. Workload A performs equal reads and updates. Use a fresh disposable
@@ -230,10 +238,10 @@ For local development, install:
 
 An OpenEverest installation and a provider for the selected database type are
 required when running the plugin in a cluster. Sysbench matches database type
-`mysql` rather than provider name. A live benchmark against a PXC
-(`percona-xtradb-cluster`) instance has been verified. The API also accepts
-`provider-mariadb` targets reporting `mysql`, but MariaDB compatibility has not
-been verified. The Sysbench runner has been verified against MySQL 8.4 on Linux/ARM64.
+`mysql`; the MariaDB driver matches `mariadb` and uses the same runner image. A
+live benchmark against a PXC (`percona-xtradb-cluster`) instance has been
+verified. The Sysbench runner has been verified against MySQL 8.4 on Linux/ARM64
+and exercised locally against MariaDB 11.4.13.
 
 ## Local development
 
