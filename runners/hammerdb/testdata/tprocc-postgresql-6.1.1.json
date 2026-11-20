@@ -1,0 +1,174 @@
+{
+  "hammerdbVersion": "6.1.1",
+  "engine": "postgresql",
+  "notes": "Native CLI records from disposable step-1 probes; performance values are not baselines.",
+  "phases": {
+    "prepare": {
+      "cliExitCode": 0,
+      "workerStates": "1 {FINISH SUCCESS}",
+      "status": [
+        "0",
+        "Vuser 1:RUNNING",
+        "0",
+        "Vuser 1:FINISHED SUCCESS",
+        "0",
+        "ALL VIRTUAL USERS COMPLETE"
+      ],
+      "result": [
+        "6AF1E1864F8403E273136303",
+        "Jobid has no test result"
+      ]
+    },
+    "run": {
+      "cliExitCode": 0,
+      "workerStates": "1 {FINISH SUCCESS} 2 {FINISH SUCCESS}",
+      "status": [
+        "0",
+        "Vuser 1:RUNNING",
+        "0",
+        "Vuser 2:RUNNING",
+        "0",
+        "Vuser 2:FINISHED SUCCESS",
+        "0",
+        "Vuser 1:FINISHED SUCCESS",
+        "0",
+        "ALL VIRTUAL USERS COMPLETE"
+      ],
+      "result": [
+        "6AF1E204570803E293339343",
+        "2026-11-09 15:08:52",
+        "1 Active Virtual Users configured",
+        "TEST RESULT : System achieved 3115 NOPM from 7280 PostgreSQL TPM"
+      ],
+      "timing": {
+        "NEWORD": {
+          "elapsed_ms": "60891.0",
+          "calls": "3134",
+          "min_ms": "1.879",
+          "avg_ms": "9.61",
+          "max_ms": "246.227",
+          "total_ms": "30118.581",
+          "p99_ms": "63.466",
+          "p95_ms": "27.366",
+          "p75_ms": "9.515",
+          "p50_ms": "5.777",
+          "p25_ms": "4.477",
+          "sd": "12.865",
+          "ratio_pct": "49.463"
+        },
+        "PAYMENT": {
+          "elapsed_ms": "60891.0",
+          "calls": "3204",
+          "min_ms": "2.697",
+          "avg_ms": "7.754",
+          "max_ms": "278.982",
+          "total_ms": "24844.383",
+          "p99_ms": "53.494",
+          "p95_ms": "21.827",
+          "p75_ms": "7.093",
+          "p50_ms": "4.473",
+          "p25_ms": "3.688",
+          "sd": "12.059",
+          "ratio_pct": "40.801"
+        },
+        "DELIVERY": {
+          "elapsed_ms": "60891.0",
+          "calls": "290",
+          "min_ms": "4.1",
+          "avg_ms": "11.404",
+          "max_ms": "106.33",
+          "total_ms": "3307.07",
+          "p99_ms": "62.048",
+          "p95_ms": "33.391",
+          "p75_ms": "11.901",
+          "p50_ms": "7.656",
+          "p25_ms": "5.492",
+          "sd": "11.546",
+          "ratio_pct": "5.431"
+        },
+        "SLEV": {
+          "elapsed_ms": "60891.0",
+          "calls": "335",
+          "min_ms": "0.935",
+          "avg_ms": "3.771",
+          "max_ms": "290.298",
+          "total_ms": "1263.242",
+          "p99_ms": "19.6",
+          "p95_ms": "7.06",
+          "p75_ms": "2.913",
+          "p50_ms": "2.232",
+          "p25_ms": "1.575",
+          "sd": "16.001",
+          "ratio_pct": "2.075"
+        },
+        "OSTAT": {
+          "elapsed_ms": "60891.0",
+          "calls": "333",
+          "min_ms": "0.38",
+          "avg_ms": "1.149",
+          "max_ms": "16.451",
+          "total_ms": "382.623",
+          "p99_ms": "7.915",
+          "p95_ms": "2.489",
+          "p75_ms": "1.075",
+          "p50_ms": "0.842",
+          "p25_ms": "0.669",
+          "sd": "1.373",
+          "ratio_pct": "0.628"
+        }
+      }
+    },
+    "nonempty": {
+      "cliExitCode": 0,
+      "workerStates": "1 {FINISH FAILED}",
+      "status": [
+        "0",
+        "Vuser 1:RUNNING",
+        "0",
+        "Vuser 1:FINISHED FAILED",
+        "0",
+        "ALL VIRTUAL USERS COMPLETE"
+      ],
+      "result": [
+        "6AF1E2585C0803E213435373",
+        "Jobid has no test result"
+      ]
+    },
+    "auth-failure": {
+      "cliExitCode": 0,
+      "workerStates": "1 {FINISH FAILED}",
+      "status": [
+        "0",
+        "Vuser 1:RUNNING",
+        "0",
+        "Vuser 1:FINISHED FAILED",
+        "0",
+        "ALL VIRTUAL USERS COMPLETE"
+      ],
+      "result": [
+        "6AF1E2775DDD03E203530323",
+        "Jobid has no test result"
+      ]
+    },
+    "missing-schema": {
+      "cliExitCode": 0,
+      "workerStates": "1 {FINISH FAILED} 2 {FINISH FAILED}",
+      "status": [
+        "0",
+        "Vuser 1:RUNNING",
+        "0",
+        "Vuser 2:RUNNING",
+        "0",
+        "Vuser 2:FINISHED FAILED",
+        "0",
+        "Vuser 1:FINISHED FAILED",
+        "0",
+        "ALL VIRTUAL USERS COMPLETE"
+      ],
+      "result": [
+        "6AF1E2875ED203E243635343",
+        "Jobid has no test result"
+      ]
+    }
+  }
+}

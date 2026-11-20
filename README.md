@@ -506,17 +506,20 @@ Push a `vX.Y.Z` tag, or `vX.Y.Z-<pre-release>` for a pre-release, to run the
 release workflow. It publishes:
 
 - `ghcr.io/openeverest/plugin-bench`, `ghcr.io/openeverest/plugin-bench-pgbench`,
-  `ghcr.io/openeverest/plugin-bench-sysbench`, and `ghcr.io/openeverest/plugin-bench-go-ycsb`
+  `ghcr.io/openeverest/plugin-bench-sysbench`, `ghcr.io/openeverest/plugin-bench-go-ycsb`,
+  and `ghcr.io/openeverest/plugin-bench-hammerdb`
   images for `linux/amd64` and `linux/arm64`
 - the `oci://ghcr.io/openeverest/charts/plugin-bench` Helm chart
 - a GitHub release with the chart archive and release notes
 
-The workflow tests all three runners from their built AMD64 archives before publishing.
+The workflow tests all four runners from their built AMD64 archives before publishing.
+HammerDB is currently a standalone runner; API/UI integration is a separate task.
+See its [runner reference](runners/hammerdb/README.md) for direct usage.
 Release notes include each image reference and digest.
 
 GHCR creates new packages as private, so the first release fails at the
 "Verify public access" step. Make each new package, including
-`plugin-bench-sysbench` and `plugin-bench-go-ycsb`, public in its GHCR package
+`plugin-bench-sysbench`, `plugin-bench-go-ycsb` and `plugin-bench-hammerdb`, public in its GHCR package
 settings, then re-run the failed job. Publishing is idempotent, so re-runs are safe.
 
 ## Project structure
@@ -533,6 +536,7 @@ backend/internal/pgstore/    PostgreSQL run history storage and migrations
 runners/pgbench/             pgbench runner image
 runners/sysbench/            MySQL Sysbench runner image
 runners/go-ycsb/             MongoDB go-ycsb runner image
+runners/hammerdb/            Standalone PostgreSQL/MySQL HammerDB runner image
 charts/plugin-bench/         Helm chart and Plugin resource
 dev/                         Tilt and k3d configuration
 spec.md                      MVP requirements
