@@ -186,6 +186,7 @@ func TestMariaDBRejectedBeforeRunAdmission(t *testing.T) {
 			credentials := mariadbCredentials()
 			if test.name == "target type mismatch" {
 				credentials.Type = "mysql"
+				credentials.Provider = "provider-mysql"
 			}
 			var called atomic.Bool
 			a := newMariaDBAPI(t, credentials, testRunnerFunc(func(context.Context, coordinator.RunInput) (coordinator.Result, error) {
