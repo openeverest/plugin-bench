@@ -3,16 +3,19 @@ import { benchmarkClusterFromBasePath, benchmarkInstanceHref, benchmarkInstanceK
 
 const pg = { k8sCluster: 'main', namespace: 'default', name: 'db', provider: 'provider-percona-postgresql' };
 const mysql = { ...pg, name: 'mysql', provider: 'percona-server-mysql' };
+const maria = { ...pg, name: 'mariadb', provider: 'mariadb' };
 const pxc = { ...mysql, name: 'pxc', provider: 'percona-xtradb-cluster' };
 const mongo = { ...pg, name: 'mongo', provider: 'percona-server-mongodb' };
 
 describe('instance filtering and identity', () => {
   it('intersects supported providers with enabled drivers', () => {
-    const instances = [pg, mysql, pxc, mongo, { ...pg, provider: 'unknown' }];
+    const instances = [pg, mysql, maria, pxc, mongo, { ...pg, provider: 'unknown' }];
     expect(filterBenchmarkInstances(instances, ['pgbench', 'unknown'])).toEqual([pg]);
     expect(filterBenchmarkInstances(instances, ['sysbench'])).toEqual([mysql, pxc]);
+    expect(filterBenchmarkInstances(instances, ['mariadb'])).toEqual([maria]);
     expect(filterBenchmarkInstances(instances, ['go-ycsb'])).toEqual([mongo]);
-    expect(filterBenchmarkInstances(instances, ['pgbench', 'sysbench', 'go-ycsb'])).toEqual([pg, mysql, pxc, mongo]);
+    expect(filterBenchmarkInstances(instances, ['pgbench', 'sysbench', 'mariadb', 'go-ycsb']))
+      .toEqual([pg, mysql, maria, pxc, mongo]);
     expect(filterBenchmarkInstances(instances, [])).toEqual([]);
     expect(filterBenchmarkInstances(instances, ['unknown'])).toEqual([]);
   });
@@ -21,6 +24,8 @@ describe('instance filtering and identity', () => {
     expect(enabledDriversForInstance(pg, ['pgbench', 'sysbench'])).toEqual(['pgbench']);
     expect(enabledDriversForInstance(pxc, ['pgbench', 'sysbench'])).toEqual(['sysbench']);
     expect(enabledDriversForInstance(pxc, ['pgbench'])).toEqual([]);
+    expect(enabledDriversForInstance(maria, ['sysbench', 'mariadb'])).toEqual(['mariadb']);
+    expect(enabledDriversForInstance(maria, ['sysbench'])).toEqual([]);
     expect(enabledDriversForInstance(mongo, ['pgbench', 'sysbench', 'go-ycsb'])).toEqual(['go-ycsb']);
     expect(enabledDriversForInstance(mongo, ['pgbench', 'sysbench', 'future'])).toEqual([]);
   });

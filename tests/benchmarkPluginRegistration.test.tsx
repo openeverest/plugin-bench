@@ -30,7 +30,7 @@ function setup() {
       if (path.startsWith('/api/instances?')) return new Response(JSON.stringify({ instances: [] }));
       if (path.startsWith('/api/runs?')) return new Response(JSON.stringify({ runs: [] }));
       if (path === '/api/status') {
-        return new Response(JSON.stringify({ drivers: ['pgbench', 'sysbench', 'go-ycsb'] }), { status: 200 });
+        return new Response(JSON.stringify({ drivers: ['pgbench', 'sysbench', 'mariadb', 'go-ycsb'] }), { status: 200 });
       }
       return new Response(JSON.stringify({ error: 'selected driver is disabled' }), { status: 400 });
     },
@@ -71,6 +71,7 @@ describe('benchmark plugin registration', () => {
       path: 'performance-benchmark', label: 'Performance Benchmark', providers: benchmarkProviderNames,
     });
     expect(tab?.providers).toContain('percona-server-mysql');
+    expect(tab?.providers).toContain('mariadb');
     expect(tab?.providers).toContain('percona-server-mongodb');
   });
 
@@ -97,6 +98,29 @@ describe('benchmark plugin registration', () => {
     expect(JSON.parse(String(submission?.init?.body))).toMatchObject({
       target: { k8sCluster: 'secondary', namespace: 'dbs', instance: 'mysql-1' },
       driver: 'sysbench', database: 'sbtest',
+    });
+  });
+
+  it('submits MariaDB runs with the MariaDB driver and shared Sysbench options', async () => {
+    const { api, extensions, requests } = setup();
+    const tab = extensions.find(extension => extension.type === 'clusterDetailTab');
+    if (!tab) throw new Error('Benchmark tab was not registered');
+    const Component = tab.component;
+    await act(async () => {
+      render(<Component cluster={{ clusterName: 'secondary', spec: { providerRef: { name: 'mariadb' } } }}
+        namespace="dbs" instanceName="mariadb-1" />);
+    });
+    expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe('Sysbench (MariaDB)');
+    expect(screen.getByText('Runs the bundled oltp_read_write workload against MariaDB.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'benchdb' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Start benchmark' })); });
+    expect(requests.every(request => request.context === api)).toBe(true);
+    const submission = requests.find(request => request.path === '/api/runs');
+    expect(submission?.init?.method).toBe('POST');
+    expect(JSON.parse(String(submission?.init?.body))).toEqual({
+      target: { k8sCluster: 'secondary', namespace: 'dbs', instance: 'mariadb-1' },
+      driver: 'mariadb', database: 'benchdb',
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
     });
   });
 
