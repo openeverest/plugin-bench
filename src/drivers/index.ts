@@ -16,6 +16,7 @@ import type { GoYCSBOptions, GoYCSBOptionsDraft } from './goycsb';
 type DriverTypes = {
   pgbench: { draft: PgbenchOptionsDraft; options: PgbenchOptions };
   sysbench: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
+  mariadb: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
   'go-ycsb': { draft: GoYCSBOptionsDraft; options: GoYCSBOptions };
 };
 
@@ -67,6 +68,19 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
       const prepared = prepareSysbenchOptions(options);
       if (prepared.ok === false) return prepared;
       return { ok: true, request: { driver: 'sysbench', options: prepared.options } };
+    },
+    validateDatabase: validateSysbenchDatabase,
+    describeRunOptions: describeSysbenchRunOptions,
+  },
+  mariadb: {
+    label: 'Sysbench (MariaDB)',
+    providers: ['mariadb'],
+    databaseRequiredProviders: ['mariadb'],
+    createDraft: () => ({ driver: 'mariadb', options: { ...initialSysbenchOptionsDraft } }),
+    prepare: ({ options }) => {
+      const prepared = prepareSysbenchOptions(options);
+      if (prepared.ok === false) return prepared;
+      return { ok: true, request: { driver: 'mariadb', options: prepared.options } };
     },
     validateDatabase: validateSysbenchDatabase,
     describeRunOptions: describeSysbenchRunOptions,
