@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
 )
@@ -51,6 +52,7 @@ func prepareRunner(connection resolvedConnection, options Options) (driver.Runne
 		return driver.RunnerSpec{}, invalidOptions("could not encode effective HammerDB options")
 	}
 	spec := driver.RunnerSpec{
+		MinimumDuration: (time.Duration(options.RampupMinutes) + time.Duration(options.DurationMinutes)) * time.Minute,
 		Env: map[string]string{
 			"DB_TYPE":                connection.DatabaseType,
 			"DB_HOST":                connection.Host,
