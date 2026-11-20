@@ -385,7 +385,7 @@ func testPreparedDriverExecution(t *testing.T, message string, wantMetrics []run
 		t.Fatal("execution did not clean up and release capacity")
 	}
 }
-func TestPrepareRunPassesProviderTLSIntoMariaDBRunnerSpec(t *testing.T) {
+func TestPrepareRunDisablesSysbenchTLSForMariaDB(t *testing.T) {
 	registry, err := driver.NewRegistry(driver.Registration{
 		Driver: sysbench.NewMariaDB(),
 		Runner: driver.RunnerConfig{Image: "sysbench:test", ImagePullPolicy: "Never"},
@@ -404,7 +404,7 @@ func TestPrepareRunPassesProviderTLSIntoMariaDBRunnerSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.Input.Spec.Env["MYSQL_SSL"] != "true" {
-		t.Fatalf("prepared MYSQL_SSL = %q; want true", prepared.Input.Spec.Env["MYSQL_SSL"])
+	if prepared.Input.Spec.Env["MYSQL_SSL"] != "false" {
+		t.Fatalf("prepared MYSQL_SSL = %q; want false", prepared.Input.Spec.Env["MYSQL_SSL"])
 	}
 }
