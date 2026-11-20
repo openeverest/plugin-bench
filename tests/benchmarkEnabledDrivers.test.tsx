@@ -27,8 +27,11 @@ describe('backend-enabled benchmark drivers', () => {
     expect(fetch).toHaveBeenCalledWith('/api/status', expect.objectContaining({ method: 'GET' }));
   });
 
-  it.each(['percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb'].flatMap(provider =>
-    [[], ['pgbench'], ['future']].map(ids => ({ provider, ids }))))(
+  it.each([
+    ...['percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb'].flatMap(provider =>
+      [[], ['pgbench'], ['future']].map(ids => ({ provider, ids }))),
+    { provider: 'mariadb', ids: ['sysbench'] },
+  ])(
     'hides a disabled driver for $provider and enabled IDs $ids', async ({ provider, ids }) => {
       const fetch = vi.fn<PluginApi['fetch']>(async () => response({ drivers: ids }));
       await act(async () => { render(tab(fetch, provider)); });

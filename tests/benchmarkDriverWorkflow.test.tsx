@@ -21,7 +21,7 @@ const run = (id: string, status: BenchmarkRunStatus, extra: Partial<BenchmarkRun
 const fetchWrappers = new WeakMap<PluginApi['fetch'], PluginApi['fetch']>();
 const withEnabledDrivers = (fetch: PluginApi['fetch']): PluginApi['fetch'] => {
   if (!fetchWrappers.has(fetch)) fetchWrappers.set(fetch, (path, init) =>
-    path === '/api/status' ? Promise.resolve(response({ drivers: ['pgbench', 'sysbench', 'go-ycsb'] }))
+    path === '/api/status' ? Promise.resolve(response({ drivers: ['pgbench', 'sysbench', 'mariadb', 'go-ycsb'] }))
       : path.startsWith('/api/runs?') ? Promise.resolve(response({ runs: [] })) : fetch(path, init));
   return fetchWrappers.get(fetch)!;
 };
@@ -38,6 +38,8 @@ const workflowTargets = [
   { driver: 'pgbench', provider: 'provider-cloudnative-pg', instanceName: 'pg-1',
     options: { durationSeconds: 30, clients: 1, threads: 1, scale: 1, initialize: true } },
   { driver: 'sysbench', provider: 'percona-server-mysql', instanceName: 'mysql-1',
+    options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true } },
+  { driver: 'mariadb', provider: 'mariadb', instanceName: 'mariadb-1',
     options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true } },
   { driver: 'go-ycsb', provider: 'percona-server-mongodb', instanceName: 'mongo-1',
     options: { collection: 'usertable', recordCount: 10000, operationCount: 20000, threads: 1, initialize: true } },
@@ -58,6 +60,7 @@ describe('benchmark driver workflow', () => {
     { provider: 'provider-cloudnative-pg', driver: 'pgbench' },
     { provider: 'provider-percona-postgresql', driver: 'pgbench' },
     { provider: 'percona-server-mysql', driver: 'Sysbench' },
+    { provider: 'mariadb', driver: 'Sysbench (MariaDB)' },
     { provider: 'percona-xtradb-cluster', driver: 'Sysbench' },
     { provider: 'percona-server-mongodb', driver: 'go-ycsb' },
   ])('offers only $driver for $provider', async ({ provider, driver }) => {
@@ -87,6 +90,7 @@ describe('benchmark driver workflow', () => {
 
   it.each([
     { provider: 'percona-server-mysql', label: 'Sysbench', databaseRequired: true },
+    { provider: 'mariadb', label: 'Sysbench (MariaDB)', databaseRequired: true },
     { provider: 'percona-server-mongodb', label: 'go-ycsb', databaseRequired: false },
   ])('initializes $label when provider metadata arrives', async ({ provider, label, databaseRequired }) => {
     const fetch = vi.fn<PluginApi['fetch']>();
@@ -104,6 +108,7 @@ describe('benchmark driver workflow', () => {
 
   it.each([
     { provider: 'percona-server-mysql', label: 'Sysbench', field: 'Duration (seconds)', value: '30' },
+    { provider: 'mariadb', label: 'Sysbench (MariaDB)', field: 'Duration (seconds)', value: '30' },
     { provider: 'percona-server-mongodb', label: 'go-ycsb', field: 'Records', value: '10000' },
   ])('preserves refresh edits but aborts and resets on a change to $provider', async ({ provider, label, field, value }) => {
     const accepted = deferred<Response>();
@@ -164,11 +169,15 @@ describe('benchmark driver workflow', () => {
       }));
     };
     await renderReady(tab(fetch, instanceName, provider));
-    if (driver === 'sysbench') fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'sbtest' } });
+    if (driver === 'sysbench' || driver === 'mariadb') {
+      fireEvent.change(screen.getByLabelText('Database'), { target: { value: driver === 'mariadb' ? 'benchdb' : 'sbtest' } });
+    }
     await act(async () => { fireEvent.click(start()); });
     await act(async () => { fireEvent.click(start()); });
     const expected = { target: { k8sCluster: 'main', namespace: 'default', instance: instanceName },
-      ...(driver === 'sysbench' ? { database: 'sbtest' } : driver === 'go-ycsb' ? { database: 'ycsb' } : {}), driver, options };
+      ...(driver === 'sysbench' ? { database: 'sbtest' }
+        : driver === 'mariadb' ? { database: 'benchdb' }
+          : driver === 'go-ycsb' ? { database: 'ycsb' } : {}), driver, options };
     expect(requests.filter(request => request.method === 'POST').map(request => request.body)).toEqual([expected, expected]);
     expect([...gets.values()]).toEqual([1, 1]);
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
@@ -217,7 +226,9 @@ describe('benchmark driver workflow', () => {
       return accepted.promise;
     };
     const view = await renderReady(tab(fetch, instanceName, provider));
-    if (provider === 'percona-server-mysql') fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'sbtest' } });
+    if (provider === 'percona-server-mysql' || provider === 'mariadb') {
+      fireEvent.change(screen.getByLabelText('Database'), { target: { value: provider === 'mariadb' ? 'benchdb' : 'sbtest' } });
+    }
     await act(async () => { fireEvent.click(start()); });
     expect((start() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.submit(start().closest('form')!);
@@ -392,7 +403,7 @@ describe('MongoDB go-ycsb workflow', () => {
   });
 });
 
-describe('MySQL Sysbench workflow', () => {
+describe('Sysbench workflow', () => {
   const options = { durationSeconds: 5, threads: 2, tables: 3, tableSize: 500, initialize: false };
   const snapshot = (id: string, status: BenchmarkRunStatus, extra: Partial<BenchmarkRun> = {}) => run(id, status, {
     driver: 'sysbench', runnerImage: 'registry/sysbench:v2', database: 'sbtest', options, ...extra,
@@ -400,20 +411,26 @@ describe('MySQL Sysbench workflow', () => {
   const mysqlTab = (fetch: PluginApi['fetch']) => tab(fetch, 'mysql-1', 'percona-server-mysql');
   const change = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
-  it('submits the edited driver envelope with shared settings and displays returned effective results', async () => {
+  it.each([
+    { driver: 'sysbench', provider: 'percona-server-mysql', instance: 'mysql-1', database: 'sbtest' },
+    { driver: 'mariadb', provider: 'mariadb', instance: 'mariadb-1', database: 'benchdb' },
+  ])('$driver submits edited options and shared settings and displays returned effective results', async ({ driver, provider, instance, database }) => {
     const requests: Array<{ path: string; init?: RequestInit }> = [];
+    const runnerImage = 'registry/sysbench:v2';
+    const runId = 'edited-run';
     let gets = 0;
     const fetch: PluginApi['fetch'] = async (path, init) => {
       requests.push({ path, init });
-      if (init?.method === 'POST') return response({ id: 'mysql-run', status: 'running' }, 202);
-      return response(snapshot('mysql-run', ++gets === 1 ? 'running' : 'succeeded', {
+      if (init?.method === 'POST') return response({ id: runId, status: 'running' }, 202);
+      return response(run(runId, ++gets === 1 ? 'running' : 'succeeded', {
+        driver, runnerImage, database, options,
         metrics: [{ name: 'tps', unit: 'tx/s', value: 1234.5 }, { name: 'latency_avg', unit: 'ms', value: 3.2 }],
         output: 'oltp_read_write completed',
       }));
     };
-    await renderReady(mysqlTab(fetch));
+    await renderReady(tab(fetch, instance, provider));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Prepare Sysbench tables' }));
-    change('Database', ' sbtest ');
+    change('Database', ` ${database} `);
     change('Duration (seconds)', '5');
     change('Threads', '2');
     change('Tables', '3');
@@ -427,11 +444,11 @@ describe('MySQL Sysbench workflow', () => {
     change('Label value 1', 'benchmark');
     await act(async () => { fireEvent.click(start()); });
     expect(requests.map(request => [request.path, request.init?.method])).toEqual([
-      ['/api/runs', 'POST'], ['/api/runs/mysql-run', 'GET'],
+      ['/api/runs', 'POST'], [`/api/runs/${runId}`, 'GET'],
     ]);
     expect(JSON.parse(String(requests[0].init?.body))).toEqual({
-      target: { k8sCluster: 'main', namespace: 'default', instance: 'mysql-1' }, database: 'sbtest',
-      driver: 'sysbench', options, resources: { cpuRequest: '500m', memoryLimit: '1024Mi' },
+      target: { k8sCluster: 'main', namespace: 'default', instance }, database,
+      driver, options, resources: { cpuRequest: '500m', memoryLimit: '1024Mi' },
       nodeAffinity: { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [{
         matchExpressions: [{ key: 'pool', operator: 'In', values: ['benchmark'] }],
       }] } },
@@ -442,7 +459,7 @@ describe('MySQL Sysbench workflow', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
     const card = within(screen.getByRole('region', { name: 'Benchmark run result' }));
     expect(card.getByRole('status').textContent).toContain('Succeeded');
-    expect(card.getByText('registry/sysbench:v2')).toBeTruthy();
+    expect(card.getByText(runnerImage)).toBeTruthy();
     const effective = within(card.getByRole('region', { name: 'Effective benchmark options' }));
     expect(effective.getByText('500')).toBeTruthy();
     expect(effective.getByText('3')).toBeTruthy();
@@ -520,6 +537,7 @@ describe('MySQL Sysbench workflow', () => {
   it.each([
     { formProvider: 'percona-server-mysql', driver: 'pgbench', options: { scale: 1, initialize: false }, displayed: 'From existing tables' },
     { formProvider: 'provider-cloudnative-pg', driver: 'sysbench', options, displayed: '500' },
+    { formProvider: 'mariadb', driver: 'mariadb', options, displayed: '500' },
     { formProvider: 'percona-server-mysql', driver: 'future-driver', options: { workers: 7 }, displayed: '7' },
     { formProvider: 'provider-cloudnative-pg', driver: 'go-ycsb', options: { collection: 'saved_mongo', recordCount: 123, initialize: false }, displayed: 'saved_mongo' },
     { formProvider: 'percona-server-mongodb', driver: 'pgbench', options: { scale: 1, initialize: false }, displayed: 'From existing tables' },
