@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Driver implementations must support concurrent calls and must not mutate
@@ -50,6 +51,9 @@ type PrepareInput struct {
 type RunnerConfig struct {
 	Image           string
 	ImagePullPolicy string
+	// ExecutionTimeout is an operator-configured override. Zero inherits the
+	// shared coordinator timeout.
+	ExecutionTimeout time.Duration
 }
 
 func (c RunnerConfig) Validate() error {
@@ -58,10 +62,13 @@ func (c RunnerConfig) Validate() error {
 	}
 	switch c.ImagePullPolicy {
 	case "Always", "IfNotPresent", "Never":
-		return nil
 	default:
 		return errors.New("image pull policy must be Always, IfNotPresent, or Never")
 	}
+	if c.ExecutionTimeout < 0 || (c.ExecutionTimeout > 0 && c.ExecutionTimeout%time.Second != 0) {
+		return errors.New("runner execution timeout must be a positive whole number of seconds when set")
+	}
+	return nil
 }
 
 // OptionSnapshot contains only safe, effective settings after driver defaults

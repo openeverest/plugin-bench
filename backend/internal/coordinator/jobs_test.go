@@ -1053,6 +1053,19 @@ func TestNewBenchmarkJobBuildsRunnerManifest(t *testing.T) {
 	}
 }
 
+func TestNewBenchmarkJobUsesRunnerExecutionTimeout(t *testing.T) {
+	config := validConfig()
+	input := validRunInput()
+	input.Runner.ExecutionTimeout = 90 * time.Second
+	job, err := newBenchmarkJob(config, "hammerdb-run-1", "hammerdb-secret-1", input, config.Resources, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := *job.Spec.ActiveDeadlineSeconds; got != 90 {
+		t.Fatalf("activeDeadlineSeconds = %d; want per-runner override 90", got)
+	}
+}
+
 func TestResourceRequirementsValidation(t *testing.T) {
 	for _, test := range []struct {
 		name      string
