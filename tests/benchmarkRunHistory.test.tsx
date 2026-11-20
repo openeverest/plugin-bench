@@ -34,6 +34,7 @@ describe('benchmark run history', () => {
     const fetch = vi.fn<PluginApi['fetch']>(async () => response({ runs: [
       summary('fast', { metrics: [{ name: 'tps', unit: 'tx/s', value: 12 }, { name: 'latency_avg', unit: 'ms', value: 0.5 }] }),
       summary('broken', { status: 'failed', driver: 'sysbench', error: 'benchmark execution failed', completedAt: '2026-11-01T10:00:20Z' }),
+      summary('maria', { driver: 'mariadb', metrics: [{ name: 'tps', unit: 'tx/s', value: 25 }] }),
       summary('active', { status: 'running', completedAt: undefined, driver: 'future-tool' }),
     ] }));
     await renderHistory(fetch);
@@ -43,6 +44,7 @@ describe('benchmark run history', () => {
     expect(within(results).getByText('tps 12 tx/s')).toBeTruthy();
     expect(within(results).getByText('latency_avg 0.5 ms')).toBeTruthy();
     expect(cells('broken')).toEqual(['Sysbench', 'Failed', '20 s', 'benchmark execution failed', 'View']);
+    expect(cells('maria')).toEqual(['Sysbench (MariaDB)', 'Succeeded', '1 min 15 s', 'tps 25 tx/s', 'View']);
     expect(cells('active')).toEqual(['future-tool', 'Running', '—', '—', 'View']);
   });
 

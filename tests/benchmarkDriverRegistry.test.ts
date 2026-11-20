@@ -7,14 +7,15 @@ import { createInitialBenchmarkFormValues, toCreateBenchmarkRunRequest, validate
 
 describe('benchmark driver registry', () => {
   it('registers all drivers and their provider metadata', () => {
-    expect(benchmarkDriverIds).toEqual(['pgbench', 'sysbench', 'go-ycsb']);
+    expect(benchmarkDriverIds).toEqual(['pgbench', 'sysbench', 'mariadb', 'go-ycsb']);
     expect(benchmarkProviderNames).toEqual([
-      'provider-cloudnative-pg', 'provider-percona-postgresql', 'percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb',
+      'provider-cloudnative-pg', 'provider-percona-postgresql', 'percona-server-mysql', 'percona-xtradb-cluster', 'mariadb', 'percona-server-mongodb',
     ]);
     expect(getBenchmarkDriversForProvider('provider-cloudnative-pg')).toEqual(['pgbench']);
     expect(getBenchmarkDriversForProvider('provider-percona-postgresql')).toEqual(['pgbench']);
     expect(getBenchmarkDriversForProvider('percona-server-mysql')).toEqual(['sysbench']);
     expect(getBenchmarkDriversForProvider('percona-xtradb-cluster')).toEqual(['sysbench']);
+    expect(getBenchmarkDriversForProvider('mariadb')).toEqual(['mariadb']);
     expect(getBenchmarkDriversForProvider('percona-server-mongodb')).toEqual(['go-ycsb']);
     for (const provider of [undefined, '', 'unknown', 'provider-mariadb', 'provider-percona-xtradb-cluster']) {
       expect(getBenchmarkDriversForProvider(provider)).toEqual([]);
@@ -81,6 +82,15 @@ describe('benchmark driver registry', () => {
     expect(toCreateBenchmarkRunRequest({ ...values, database: 'bad\nname' }, target)).toBeUndefined();
     draft.options.tableSize = '';
     expect(prepareDriver(draft)).toEqual({ ok: false, errors: { tableSize: 'Rows per table must be a positive whole number.' } });
+  });
+
+  it('prepares MariaDB with the shared Sysbench options and its own driver ID', () => {
+    const values = { ...createInitialBenchmarkFormValues('mariadb'), database: 'benchdb' };
+    const target = { k8sCluster: 'main', namespace: 'default', instance: 'mariadb-1' };
+    expect(toCreateBenchmarkRunRequest(values, target)).toEqual({
+      target, database: 'benchdb', driver: 'mariadb',
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
+    });
   });
 
   it('uses each recorded driver to adapt its own options', () => {
