@@ -1,0 +1,37 @@
+{
+  "ALL STATS": {
+    "Totals": {
+      "Count": 28894,
+      "Ops/sec": 9630.35,
+      "Hits/sec": 8666.78,
+      "Misses/sec": 0.00,
+      "Average Latency": 0.204,
+      "Percentile Latencies": {
+        "p95.00": 0.375,
+        "p99.00": 0.687
+      }
+    },
+    "Gets": {
+      "Count": 26003,
+      "Ops/sec": 8666.78,
+      "Hits/sec": 8666.78,
+      "Misses/sec": 0.00,
+      "Average Latency": 0.204,
+      "Percentile Latencies": {
+        "p95.00": 0.375,
+        "p99.00": 0.687
+      }
+    },
+    "Sets": {
+      "Count": 2891,
+      "Ops/sec": 963.57,
+      "Hits/sec": 0.00,
+      "Misses/sec": 0.00,
+      "Average Latency": 0.203,
+      "Percentile Latencies": {
+        "p95.00": 0.375,
+        "p99.00": 0.639
+      }
+    }
+  }
+}
