@@ -149,11 +149,10 @@ run_runner() {
   touch "$metrics_file"
   chmod 666 "$metrics_file"
   runner_status=0
-  # These checks exercise the runner without provisioning TLS files.
   timeout -k 10s 45s docker run --rm --name "$runner_name" --network "$network_id" \
     --mount "type=bind,src=$metrics_file,dst=/dev/termination-log" \
     -e MYSQL_HOST=sysbench-db -e MYSQL_DATABASE=sbtest -e MYSQL_USER=sbuser \
-    -e MYSQL_PASSWORD="$database_password" -e MYSQL_SSL=false -e BENCH_DURATION=2 \
+    -e MYSQL_PASSWORD="$database_password" -e BENCH_DURATION=2 \
     -e BENCH_THREADS=2 -e BENCH_TABLES=1 -e BENCH_TABLE_SIZE=1000 \
     "$@" "$runner_image" > "$log_file" 2>&1 || runner_status=$?
   check_no_credentials "$log_file" "$metrics_file"
@@ -253,10 +252,6 @@ fi
 if [[ $(query "SELECT COUNT(*) FROM sbtest1 WHERE id = 2001 AND c = 'preserved'") != 1 ]]; then
   echo "Reusing the benchmark table removed existing benchmark data" >&2
   exit 1
-fi
-
-if [[ "$engine" == mariadb ]]; then
-  exit 0
 fi
 
 expect_failure existing-tables 'already exists' -e BENCH_INITIALIZE=true
