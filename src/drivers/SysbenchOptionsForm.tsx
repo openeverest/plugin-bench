@@ -22,6 +22,9 @@ export function SysbenchOptionsForm<K extends 'sysbench' | 'mariadb'>({
       <Typography variant="body2" color="text.secondary">
         Runs the bundled oltp_read_write workload against {selection.driver === 'mariadb' ? 'MariaDB' : 'MySQL'}.
       </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Sysbench connects without TLS. Instances that require encrypted connections are not supported yet.
+      </Typography>
       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
         {NUMERIC_FIELDS.map(({ field, label, hint }) => (
           <TextField
