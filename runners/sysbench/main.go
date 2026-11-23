@@ -17,7 +17,7 @@ import (
 type config struct {
 	host, database, user, password             string
 	port, duration, threads, tables, tableSize int
-	initialize, ssl                            bool
+	initialize                                 bool
 }
 
 // loadConfig validates the runner's environment without opening a connection.
@@ -76,13 +76,6 @@ func loadConfig(getenv func(string) string) (config, error) {
 	default:
 		return config{}, fmt.Errorf("BENCH_INITIALIZE must be true or false")
 	}
-	switch getenv("MYSQL_SSL") {
-	case "", "false":
-	case "true":
-		c.ssl = true
-	default:
-		return config{}, fmt.Errorf("MYSQL_SSL must be true or false")
-	}
 	return c, nil
 }
 
@@ -134,11 +127,8 @@ func run(ctx context.Context, c config, connectionPath string, invoke func(conte
 			"--report-interval=0",
 			"--db-debug=off",
 			"--mysql-debug=off",
+			"oltp_read_write", phase,
 		}
-		if c.ssl {
-			args = append(args, "--mysql-ssl=on")
-		}
-		args = append(args, "oltp_read_write", phase)
 		if err := invoke(ctx, args, stdout); err != nil {
 			return fmt.Errorf("%s failed: %w", phase, err)
 		}

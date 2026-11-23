@@ -33,9 +33,6 @@ type ConnectionDetails struct {
 	Password string
 	URI      string
 	Database string
-	// TLS is an optional provider setting. Drivers may translate "true" into
-	// their runner's TLS option; an empty value preserves runner defaults.
-	TLS string
 	// CACertificate is a PEM CA that verifies the instance's TLS certificate.
 	CACertificate string
 }

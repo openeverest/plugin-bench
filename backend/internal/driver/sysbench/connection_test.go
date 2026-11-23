@@ -120,40 +120,6 @@ func TestResolveConnectionPreservesConnectionValues(t *testing.T) {
 	}
 }
 
-func TestResolveConnectionTLSSetting(t *testing.T) {
-	for _, test := range []struct {
-		name, tls, uri string
-		want           bool
-		bad            bool
-	}{
-		{name: "omitted"},
-		{name: "false", tls: "false"},
-		{name: "true", tls: "true", want: true},
-		{name: "case and whitespace", tls: " TRUE ", want: true},
-		{name: "MySQL URI true", uri: "mysql://user:pass@db.example/bench?tls=true", want: true},
-		{name: "MySQL URI false", uri: "mysql://user:pass@db.example/bench?tls=false"},
-		{name: "matching structured and URI values", tls: "true", uri: "mysql://user:pass@db.example/bench?tls=true", want: true},
-		{name: "conflicting structured and URI values", tls: "true", uri: "mysql://user:pass@db.example/bench?tls=false", bad: true},
-		{name: "duplicate URI values", uri: "mysql://user:pass@db.example/bench?tls=true&tls=false", bad: true},
-		{name: "empty URI value", uri: "mysql://user:pass@db.example/bench?tls=", bad: true},
-		{name: "malformed URI query", uri: "mysql://user:pass@db.example/bench?tls=%GG", bad: true},
-		{name: "invalid", tls: "required", bad: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			details := validConnectionDetails()
-			details.TLS, details.URI = test.tls, test.uri
-			got, err := resolveConnection("", details)
-			if test.bad {
-				assertErrorKind(t, err, driver.InvalidCredentials)
-				return
-			}
-			if err != nil || got.TLS != test.want {
-				t.Fatalf("resolveConnection TLS = %t, error = %v; want %t", got.TLS, err, test.want)
-			}
-		})
-	}
-}
-
 func TestResolveConnectionMatchesRunnerEncoding(t *testing.T) {
 	for _, field := range []struct {
 		name, option string

@@ -24,7 +24,7 @@ func mariadbCredentials() *everest.Credentials {
 	return &everest.Credentials{
 		Host: "mariadb.example.com", Port: "3306", Username: "bench-user", Password: "mariadb-password",
 		Database: "benchdb", Type: "mysql", Provider: "mariadb",
-		URI: "mysql://bench-user:mariadb-password@mariadb.example.com:3306/benchdb?tls=true", TLS: "true",
+		URI: "mysql://bench-user:mariadb-password@mariadb.example.com:3306/benchdb",
 	}
 }
 
@@ -117,10 +117,10 @@ func TestMariaDBRunThroughAPI(t *testing.T) {
 			if input.Runner != (driver.RunnerConfig{Image: mariadbRunnerImage, ImagePullPolicy: "Never"}) {
 				t.Fatalf("unexpected registered runner: %+v", input.Runner)
 			}
-			if input.Spec.Env["MYSQL_DATABASE"] != test.wantDatabase || input.Spec.Env["MYSQL_SSL"] != "false" ||
+			if input.Spec.Env["MYSQL_DATABASE"] != test.wantDatabase ||
 				string(input.Spec.SecretData["MYSQL_PASSWORD"]) != credentials.Password ||
 				input.Spec.SecretEnv["MYSQL_PASSWORD"] != "MYSQL_PASSWORD" {
-				t.Fatal("MariaDB preparation lost the resolved database, Sysbench TLS setting, or Secret mapping")
+				t.Fatal("MariaDB preparation lost the resolved database or Secret mapping")
 			}
 			if _, exists := input.Spec.Env["MYSQL_PASSWORD"]; exists {
 				t.Fatal("password was included in literal environment settings")

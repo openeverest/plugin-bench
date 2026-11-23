@@ -76,9 +76,6 @@ func prepareRunner(connection resolvedConnection, options Options) (driver.Runne
 			"BENCH_TABLES":     strconv.Itoa(options.Tables),
 			"BENCH_TABLE_SIZE": strconv.Itoa(options.TableSize),
 			"BENCH_INITIALIZE": strconv.FormatBool(options.Initialize),
-			// The current Sysbench image cannot use OpenEverest's TLS
-			// configuration, so keep its database connection unencrypted.
-			"MYSQL_SSL": "false",
 		},
 		// Every SecretData value becomes an output redaction candidate.
 		SecretData: map[string][]byte{"MYSQL_PASSWORD": []byte(connection.Password)},

@@ -78,42 +78,6 @@ func TestMariaDBDriverUsesSharedSysbenchPreparation(t *testing.T) {
 	}
 }
 
-func TestPrepareDisablesSysbenchTLSForNow(t *testing.T) {
-	input := driver.PrepareInput{
-		Target:     driver.TargetInfo{DatabaseType: "mariadb"},
-		Connection: validConnectionDetails(),
-		Options:    json.RawMessage(`{}`),
-	}
-	input.Connection.URI = ""
-	input.Connection.TLS = "true"
-	spec, err := NewMariaDB().Prepare(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Env["MYSQL_SSL"] != "false" {
-		t.Fatalf("MYSQL_SSL = %q; want false when provider TLS is enabled", spec.Env["MYSQL_SSL"])
-	}
-
-	input.Connection.TLS = "false"
-	spec, err = NewMariaDB().Prepare(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Env["MYSQL_SSL"] != "false" {
-		t.Fatalf("MYSQL_SSL = %q; want false when provider TLS is disabled", spec.Env["MYSQL_SSL"])
-	}
-
-	input.Connection.TLS = ""
-	input.Connection.URI = "mysql://bench-user:secret@mariadb.example.com/bench?tls=true"
-	spec, err = NewMariaDB().Prepare(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec.Env["MYSQL_SSL"] != "false" {
-		t.Fatalf("URI MYSQL_SSL = %q; want false when URI TLS is enabled", spec.Env["MYSQL_SSL"])
-	}
-}
-
 func TestPrepareCombinesOptionsAndConnectionResolution(t *testing.T) {
 	for _, test := range []struct {
 		name, requested, database, uri, rawOptions, wantDatabase string
@@ -205,7 +169,6 @@ func TestPrepareRunnerMapsEnvironmentAndSnapshot(t *testing.T) {
 			name: "defaults", options: defaultOptions(),
 			wantEnv: map[string]string{
 				"MYSQL_HOST": "mysql.example.com", "MYSQL_PORT": "3306", "MYSQL_DATABASE": "sbtest", "MYSQL_USER": "sbuser",
-				"MYSQL_SSL": "false",
 				"BENCH_DURATION": "60", "BENCH_THREADS": "1", "BENCH_TABLES": "1", "BENCH_TABLE_SIZE": "10000", "BENCH_INITIALIZE": "false",
 			},
 		},
@@ -214,7 +177,6 @@ func TestPrepareRunnerMapsEnvironmentAndSnapshot(t *testing.T) {
 			uri: "mysql://sbuser:credential-sentinel@mysql.example.com/sbtest",
 			wantEnv: map[string]string{
 				"MYSQL_HOST": "mysql.example.com", "MYSQL_PORT": "3306", "MYSQL_DATABASE": "sbtest", "MYSQL_USER": "sbuser",
-				"MYSQL_SSL": "false",
 				"BENCH_DURATION": "30", "BENCH_THREADS": "4", "BENCH_TABLES": "2", "BENCH_TABLE_SIZE": "500", "BENCH_INITIALIZE": "true",
 			},
 		},

@@ -15,7 +15,6 @@ type resolvedConnection struct {
 	Host, Database, Username, Password string
 	Port                               int
 	URI                                string
-	TLS                                bool
 }
 
 func resolveConnection(requestedDatabase string, details driver.ConnectionDetails) (resolvedConnection, error) {
@@ -69,107 +68,10 @@ func resolveConnection(requestedDatabase string, details driver.ConnectionDetail
 	if database == "" {
 		return resolvedConnection{}, invalidOptions("could not determine the instance's default database; enter a database name")
 	}
-	tls, err := resolveTLSSetting(details.TLS, details.URI)
-	if err != nil {
-		return resolvedConnection{}, err
-	}
 	return resolvedConnection{
 		Host: details.Host, Port: port, Database: database,
-		Username: details.Username, Password: details.Password, URI: details.URI, TLS: tls,
+		Username: details.Username, Password: details.Password, URI: details.URI,
 	}, nil
-}
-
-// resolveTLSSetting accepts TLS metadata either as a structured provider field
-// or as the `tls` query parameter used by MySQL connection URIs. If both are
-// present they must agree; silently choosing one could downgrade the request.
-func resolveTLSSetting(structured, rawURI string) (bool, error) {
-	structuredValue, structuredPresent, err := parseTLSValue(structured)
-	if err != nil {
-		return false, err
-	}
-
-	var uriValue bool
-	uriPresent := false
-	if strings.TrimSpace(rawURI) != "" {
-		uri, err := url.Parse(strings.TrimSpace(rawURI))
-		if err != nil {
-			if rawURIHasTLSParameter(rawURI) {
-				return false, invalidCredentials("connection URI has malformed TLS settings")
-			}
-			return structuredValue, nil
-		}
-		query, err := url.ParseQuery(uri.RawQuery)
-		if err != nil {
-			if rawURIHasTLSParameter(rawURI) {
-				return false, invalidCredentials("connection URI has malformed TLS settings")
-			}
-			return structuredValue, nil
-		}
-		var tlsKey string
-		for key := range query {
-			if !strings.EqualFold(key, "tls") {
-				continue
-			}
-			if tlsKey != "" {
-				return false, invalidCredentials("connection URI repeats a TLS setting")
-			}
-			tlsKey = key
-		}
-		if tlsKey != "" {
-			values := query[tlsKey]
-			if len(values) != 1 {
-				return false, invalidCredentials("connection URI repeats a TLS setting")
-			}
-			if strings.TrimSpace(values[0]) == "" {
-				return false, invalidCredentials("connection URI TLS setting must be true or false")
-			}
-			uriValue, _, err = parseTLSValue(values[0])
-			if err != nil {
-				return false, err
-			}
-			uriPresent = true
-		}
-	}
-
-	if structuredPresent && uriPresent && structuredValue != uriValue {
-		return false, invalidCredentials("connection TLS settings conflict")
-	}
-	if structuredPresent {
-		return structuredValue, nil
-	}
-	return uriValue, nil
-}
-
-func rawURIHasTLSParameter(raw string) bool {
-	queryStart := strings.IndexByte(raw, '?')
-	if queryStart < 0 {
-		return false
-	}
-	query := raw[queryStart+1:]
-	if fragmentStart := strings.IndexByte(query, '#'); fragmentStart >= 0 {
-		query = query[:fragmentStart]
-	}
-	for _, pair := range strings.Split(query, "&") {
-		key, _, _ := strings.Cut(pair, "=")
-		decoded, err := url.QueryUnescape(key)
-		if err == nil && strings.EqualFold(decoded, "tls") {
-			return true
-		}
-	}
-	return false
-}
-
-func parseTLSValue(value string) (enabled, present bool, err error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "":
-		return false, false, nil
-	case "false":
-		return false, true, nil
-	case "true":
-		return true, true, nil
-	default:
-		return false, false, invalidCredentials("database TLS setting must be true or false")
-	}
 }
 
 func databaseFromURI(raw string) (string, error) {
