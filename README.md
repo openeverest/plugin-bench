@@ -146,9 +146,10 @@ a fresh dataset; existing table names cause preparation to fail. To reuse
 tables, turn preparation off and match **Tables** and **Rows per table** to the
 existing dataset. Tables remain after Job cleanup. Sysbench must be enabled with
 an accessible runner image; see [Driver configuration](#driver-configuration).
-The current Sysbench integration always connects without TLS, even when the
-provider reports TLS enabled. Targets that require encrypted connections are
-not supported until TLS support is added to the runner.
+Sysbench connects without TLS, even when the provider reports TLS enabled
+(the MariaDB provider enables TLS by default but does not require it). Targets
+that require encrypted connections are not supported until TLS support is
+added to the runner.
 
 The backend also accepts MariaDB targets identified by OpenEverest's `mariadb`
 provider with `driver: "mariadb"` (the provider reports database type `mysql`).
