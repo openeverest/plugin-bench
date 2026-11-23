@@ -89,10 +89,10 @@ describe('benchmark driver workflow', () => {
   });
 
   it.each([
-    { provider: 'percona-server-mysql', label: 'Sysbench', databaseRequired: true },
-    { provider: 'mariadb', label: 'Sysbench (MariaDB)', databaseRequired: true },
-    { provider: 'percona-server-mongodb', label: 'go-ycsb', databaseRequired: false },
-  ])('initializes $label when provider metadata arrives', async ({ provider, label, databaseRequired }) => {
+    { provider: 'percona-server-mysql', label: 'Sysbench', databaseRequired: true, database: '' },
+    { provider: 'mariadb', label: 'Sysbench (MariaDB)', databaseRequired: false, database: '' },
+    { provider: 'percona-server-mongodb', label: 'go-ycsb', databaseRequired: false, database: 'ycsb' },
+  ])('initializes $label when provider metadata arrives', async ({ provider, label, databaseRequired, database }) => {
     const fetch = vi.fn<PluginApi['fetch']>();
     const view = render(<BenchmarkTab cluster={{ clusterName: 'main' }} namespace="default" instanceName="mysql-1" pluginFetch={fetch} />);
     expect(screen.getByText('Waiting for database provider information.')).toBeTruthy();
@@ -101,7 +101,7 @@ describe('benchmark driver workflow', () => {
     expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe(label);
     expect((start() as HTMLButtonElement).disabled).toBe(databaseRequired);
     if (databaseRequired) fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'sbtest' } });
-    else expect((screen.getByLabelText('Database') as HTMLInputElement).value).toBe('ycsb');
+    else expect((screen.getByLabelText('Database') as HTMLInputElement).value).toBe(database);
     expect((start() as HTMLButtonElement).disabled).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
   });

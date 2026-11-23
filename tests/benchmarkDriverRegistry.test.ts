@@ -91,6 +91,12 @@ describe('benchmark driver registry', () => {
       target, database: 'benchdb', driver: 'mariadb',
       options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
     });
+    const withoutDatabase = createInitialBenchmarkFormValues('mariadb');
+    expect(validateBenchmarkForm(withoutDatabase, 'mariadb').database).toBeUndefined();
+    expect(toCreateBenchmarkRunRequest(withoutDatabase, target)).toEqual({
+      target, driver: 'mariadb',
+      options: { durationSeconds: 30, threads: 1, tables: 1, tableSize: 10000, initialize: true },
+    });
   });
 
   it('uses each recorded driver to adapt its own options', () => {

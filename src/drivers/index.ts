@@ -75,7 +75,6 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
   mariadb: {
     label: 'Sysbench (MariaDB)',
     providers: ['mariadb'],
-    databaseRequiredProviders: ['mariadb'],
     createDraft: () => ({ driver: 'mariadb', options: { ...initialSysbenchOptionsDraft } }),
     prepare: ({ options }) => {
       const prepared = prepareSysbenchOptions(options);

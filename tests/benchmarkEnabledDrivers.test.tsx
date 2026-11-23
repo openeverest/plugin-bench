@@ -28,7 +28,7 @@ describe('backend-enabled benchmark drivers', () => {
   });
 
   it.each([
-    ...['percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb'].flatMap(provider =>
+    ...['percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb', 'mariadb'].flatMap(provider =>
       [[], ['pgbench'], ['future']].map(ids => ({ provider, ids }))),
     { provider: 'mariadb', ids: ['sysbench'] },
   ])(
