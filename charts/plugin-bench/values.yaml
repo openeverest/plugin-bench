@@ -73,6 +73,16 @@ drivers:
       repository: ""
       tag: ""
       pullPolicy: ""
+  mariadb:
+    enabled: true
+    image:
+      # MariaDB reuses the Sysbench runner image. The repository is set here
+      # because the chart would otherwise default to plugin-bench-mariadb, which
+      # is not published; mirror overrides must update both sysbench and mariadb.
+      # An empty tag uses appVersion.
+      repository: ghcr.io/openeverest/plugin-bench-sysbench
+      tag: ""
+      pullPolicy: ""
   go-ycsb:
     enabled: true
     image:

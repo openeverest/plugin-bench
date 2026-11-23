@@ -1,7 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-runner_image=${1:?Usage: test-sysbench-runner.sh IMAGE}
+runner_image=${1:?Usage: test-sysbench-runner.sh IMAGE [mysql|mariadb]}
+engine=${2:-mysql}
+case "$engine" in
+  mysql)
+    database_image=mysql:8.4
+    database_client=mysql
+    env_prefix=MYSQL
+    ;;
+  mariadb)
+    database_image=mariadb:11.4
+    database_client=mariadb
+    env_prefix=MARIADB
+    ;;
+  *)
+    echo "Unsupported Sysbench test database: $engine" >&2
+    exit 2
+    ;;
+esac
 for tool in docker python3 timeout; do
   command -v "$tool" > /dev/null
 done
@@ -116,7 +133,7 @@ PY
 
 query() {
   timeout -k 5s 10s docker exec -e MYSQL_PWD="$database_password" "$database_id" \
-    mysql --protocol=TCP --host=127.0.0.1 --port=3306 \
+    "$database_client" --protocol=TCP --host=127.0.0.1 --port=3306 \
     --user=sbuser --database=sbtest --connect-timeout=3 \
     --batch --skip-column-names --execute="$1"
 }
@@ -183,12 +200,12 @@ expect_failure() {
   echo "Verified $name: expected error and no success metrics"
 }
 
-echo "Starting disposable MySQL 8.4 for runner image checks"
+echo "Starting disposable $database_image for runner image checks"
 network_id=$(timeout -k 5s 20s docker network create "$network_name")
 database_id=$(timeout -k 10s 180s docker run -d --name "$database_name" \
   --network "$network_id" --network-alias sysbench-db \
-  -e MYSQL_ROOT_PASSWORD="$root_password" -e MYSQL_DATABASE=sbtest \
-  -e MYSQL_USER=sbuser -e MYSQL_PASSWORD="$database_password" mysql:8.4)
+  -e "${env_prefix}_ROOT_PASSWORD=$root_password" -e "${env_prefix}_DATABASE=sbtest" \
+  -e "${env_prefix}_USER=sbuser" -e "${env_prefix}_PASSWORD=$database_password" "$database_image")
 
 readiness_log="$test_dir/readiness.log"
 database_log="$test_dir/database.log"
@@ -197,7 +214,7 @@ deadline=$((SECONDS + 120))
 until query 'SELECT 1' > "$readiness_log" 2>&1; do
   running=$(timeout -k 5s 10s docker inspect --format '{{.State.Running}}' "$database_id")
   if [[ "$running" != true ]] || (( SECONDS >= deadline )); then
-    echo "MySQL exited or did not accept an authenticated query before the readiness deadline" >&2
+    echo "$database_image exited or did not accept an authenticated query before the readiness deadline" >&2
     timeout -k 5s 10s docker logs "$database_id" > "$database_log" 2>&1 || true
     show_log "$database_log"
     show_log "$readiness_log"
@@ -206,16 +223,18 @@ until query 'SELECT 1' > "$readiness_log" 2>&1; do
   sleep 1
 done
 
-mysql_version=$(query 'SELECT VERSION()')
-echo "MySQL server version: $mysql_version"
+database_version=$(query 'SELECT VERSION()')
+echo "$engine server version: $database_version"
 timeout -k 5s 30s docker run --rm --name "$runner_name" --entrypoint sh \
   "$runner_image" -ec 'sysbench --version; dpkg-query -W sysbench libmariadb3'
 
-# Readiness authenticated sbuser with MySQL's own client. Clear the server's
-# authentication cache so the runner must also handle a full authentication.
-timeout -k 5s 10s docker exec -e MYSQL_PWD="$root_password" "$database_id" \
-  mysql --protocol=TCP --host=127.0.0.1 --user=root --database=sbtest \
-  --connect-timeout=3 --execute='FLUSH PRIVILEGES'
+if [[ "$engine" == mysql ]]; then
+  # Readiness authenticated sbuser with MySQL's own client. Clear the server's
+  # authentication cache so the runner must also handle a full authentication.
+  timeout -k 5s 10s docker exec -e MYSQL_PWD="$root_password" "$database_id" \
+    mysql --protocol=TCP --host=127.0.0.1 --user=root --database=sbtest \
+    --connect-timeout=3 --execute='FLUSH PRIVILEGES'
+fi
 
 expect_success initialized -e BENCH_INITIALIZE=true
 if [[ $(query 'SELECT COUNT(*) FROM sbtest1') != 1000 ]]; then
