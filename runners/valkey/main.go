@@ -56,6 +56,8 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 			env = append(env, entry)
 		}
 	}
+	redact := memtierLogRedactor(c)
+	logBudget := &memtierLogBudget{remaining: maxMemtierLogBytes}
 	for _, phase := range []struct {
 		name string
 		args []string
@@ -66,8 +68,15 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 		fmt.Fprintln(os.Stdout, "Valkey benchmark:", phase.name)
 		cmd := exec.CommandContext(ctx, executable, append(phase.args, "--unix-socket="+socketPath)...)
 		cmd.Env = env
-		// Only emit runner diagnostics. Memtier may print raw server replies.
+		stdout := &memtierLogWriter{destination: os.Stdout, redact: redact, budget: logBudget}
+		stderr := &memtierLogWriter{destination: os.Stderr, redact: redact, budget: logBudget}
+		cmd.Stdout, cmd.Stderr = stdout, stderr
 		err := cmd.Run()
+		stdout.finish()
+		stderr.finish()
+		if stdout.err != nil || stderr.err != nil {
+			fmt.Fprintln(os.Stderr, "runner warning: could not forward Memtier output")
+		}
 		if cause := context.Cause(ctx); cause != nil {
 			return fmt.Errorf("%s failed: %w", phase.name, cause)
 		}
@@ -79,6 +88,9 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 				return fmt.Errorf("seed validation failed: %w", err)
 			}
 		}
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return fmt.Errorf("measurement failed: %w", cause)
 	}
 	fmt.Fprintln(os.Stdout, "Valkey benchmark: measurement complete")
 	return nil
@@ -98,7 +110,16 @@ func runnerMain(ctx context.Context) error {
 		return err
 	}
 	defer cleanup()
-	return run(ctx, c, executable, files)
+	if err := run(ctx, c, executable, files); err != nil {
+		return err
+	}
+	if err := publishMetrics(files.resultPath, terminationLogPath); err != nil {
+		if errors.Is(err, errUnansweredRequests) {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "runner warning: structured metrics unavailable")
+	}
+	return nil
 }
 
 func main() {
