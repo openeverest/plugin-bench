@@ -78,6 +78,28 @@ func TestMariaDBDriverUsesSharedSysbenchPreparation(t *testing.T) {
 	}
 }
 
+func TestMariaDBDriverResolvesProviderURIWithRawPassword(t *testing.T) {
+	details := validConnectionDetails()
+	details.Database = ""
+	details.Password = "provider#pass%/word?@"
+	details.URI = "mysql://" + details.Username + ":" + details.Password + "@" + details.Host + ":" + details.Port + "/everest"
+	input := driver.PrepareInput{
+		Target:     driver.TargetInfo{DatabaseType: "mysql", Provider: "mariadb"},
+		Connection: details,
+		Options:    json.RawMessage(`{}`),
+	}
+	spec, err := NewMariaDB().Prepare(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Env["MYSQL_DATABASE"] != "everest" || string(spec.SecretData["MYSQL_PASSWORD"]) != details.Password {
+		t.Fatal("expected the URI database and the original structured password")
+	}
+	if _, err := New().Prepare(input); err == nil {
+		t.Fatal("expected MySQL to reject unescaped credentials in the fallback URI")
+	}
+}
+
 func TestPrepareCombinesOptionsAndConnectionResolution(t *testing.T) {
 	for _, test := range []struct {
 		name, requested, database, uri, rawOptions, wantDatabase string

@@ -30,7 +30,7 @@ func TestResolveConnectionDatabasePrecedence(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			details := validConnectionDetails()
 			details.Database, details.URI = test.database, test.uri
-			got, err := resolveConnection(test.requested, details)
+			got, err := resolveConnection(test.requested, details, false)
 			if err != nil || got.Database != test.want {
 				t.Fatalf("database = %q, error = %v; want %q", got.Database, err, test.want)
 			}
@@ -86,7 +86,7 @@ func TestResolveConnectionRejectsInvalidDetails(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			details := validConnectionDetails()
 			test.change(&details)
-			got, err := resolveConnection(test.requested, details)
+			got, err := resolveConnection(test.requested, details, false)
 			assertErrorKind(t, err, test.kind)
 			if got != (resolvedConnection{}) {
 				t.Fatal("invalid credentials produced a usable connection")
@@ -112,7 +112,7 @@ func TestResolveConnectionPreservesConnectionValues(t *testing.T) {
 			details := validConnectionDetails()
 			details.Host, details.Username = " mysql.example.com ", " sbuser "
 			details.Port, details.Password = test.port, test.password
-			got, err := resolveConnection("", details)
+			got, err := resolveConnection("", details, false)
 			if err != nil || got.Host != details.Host || got.Username != details.Username || got.Password != details.Password || got.Port != test.wantPort {
 				t.Fatalf("connection bytes changed or port was not normalized: %v", err)
 			}
@@ -137,7 +137,7 @@ func TestResolveConnectionMatchesRunnerEncoding(t *testing.T) {
 			t.Run(field.name+"/supported/"+strconv.Itoa(i), func(t *testing.T) {
 				details := validConnectionDetails()
 				field.set(&details, value)
-				if _, err := resolveConnection("", details); err != nil {
+				if _, err := resolveConnection("", details, false); err != nil {
 					t.Fatalf("runner-supported value rejected: %v", err)
 				}
 			})
@@ -150,7 +150,7 @@ func TestResolveConnectionMatchesRunnerEncoding(t *testing.T) {
 			t.Run(field.name+"/unsupported/"+strconv.Itoa(i), func(t *testing.T) {
 				details := validConnectionDetails()
 				field.set(&details, value)
-				got, err := resolveConnection("", details)
+				got, err := resolveConnection("", details, false)
 				assertErrorKind(t, err, driver.InvalidCredentials)
 				if got != (resolvedConnection{}) || strings.Contains(err.Error(), "credential-sentinel") || strings.Contains(err.Error(), value) {
 					t.Fatal("unsupported connection value was not rejected safely")
@@ -168,11 +168,11 @@ func TestResolveConnectionMatchesRunnerEncoding(t *testing.T) {
 				value := test.prefix + strings.Repeat("x", maximum-len(test.prefix))
 				details := validConnectionDetails()
 				field.set(&details, value)
-				if _, err := resolveConnection("", details); err != nil {
+				if _, err := resolveConnection("", details, false); err != nil {
 					t.Fatalf("maximum supported line rejected: %v", err)
 				}
 				field.set(&details, value+"x")
-				_, err := resolveConnection("", details)
+				_, err := resolveConnection("", details, false)
 				assertErrorKind(t, err, driver.InvalidCredentials)
 			})
 		}
