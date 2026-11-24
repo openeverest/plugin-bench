@@ -65,6 +65,7 @@ func TestMariaDBRunThroughAPI(t *testing.T) {
 		name         string
 		database     string
 		connectionDB string
+		password     string
 		options      string
 		wantDatabase string
 		wantOptions  sysbench.Options
@@ -87,10 +88,22 @@ func TestMariaDBRunThroughAPI(t *testing.T) {
 			wantDatabase: "benchdb",
 			wantOptions:  sysbench.Options{DurationSeconds: 60, Threads: 1, Tables: 1, TableSize: 10000},
 		},
+		{
+			name:         "URI database fallback with unescaped provider password",
+			password:     "mariadb#pass%/word?@",
+			options:      `{}`,
+			wantDatabase: "everest",
+			wantOptions:  sysbench.Options{DurationSeconds: 60, Threads: 1, Tables: 1, TableSize: 10000},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			credentials := mariadbCredentials()
 			credentials.Database = test.connectionDB
+			if test.password != "" {
+				credentials.Password = test.password
+				credentials.URI = "mysql://" + credentials.Username + ":" + credentials.Password +
+					"@" + credentials.Host + ":" + credentials.Port + "/everest"
+			}
 			calls := make(chan coordinator.RunInput, 1)
 			a := newMariaDBAPI(t, credentials, testRunnerFunc(func(_ context.Context, input coordinator.RunInput) (coordinator.Result, error) {
 				calls <- input

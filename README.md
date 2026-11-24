@@ -151,13 +151,13 @@ Sysbench connects without TLS, even when the provider reports TLS enabled
 that require encrypted connections are not supported until TLS support is
 added to the runner.
 
-The backend also accepts MariaDB targets identified by OpenEverest's `mariadb`
-provider with `driver: "mariadb"` (the provider reports database type `mysql`).
-It uses the same Sysbench workload and options as MySQL. The database is taken from the request,
-provider details, or connection URI in that order; a database name is required
-when none is available. It requires separate host, port, username, and password
-fields; URI-only credentials and custom CA certificates are not supported.
-Frontend selection is tracked separately.
+MariaDB instances from OpenEverest's `mariadb` provider use the **Sysbench
+(MariaDB)** driver (`driver: "mariadb"`; the provider reports database type
+`mysql`). It uses the same Sysbench workload, options, and runner image as
+MySQL. Database is optional: the request value is used first, then the provider
+details, then the connection URI (`everest` for the MariaDB provider). It
+requires separate host, port, username, and password fields; URI-only
+credentials and custom CA certificates are not supported.
 
 **go-ycsb** fixes Database to the read-only value `ycsb`. It starts with collection
 `usertable`, 10,000 records, 20,000 operations, one thread, and **Load benchmark data**

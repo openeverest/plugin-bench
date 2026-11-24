@@ -17,7 +17,7 @@ type resolvedConnection struct {
 	URI                                string
 }
 
-func resolveConnection(requestedDatabase string, details driver.ConnectionDetails) (resolvedConnection, error) {
+func resolveConnection(requestedDatabase string, details driver.ConnectionDetails, allowRawUserinfo bool) (resolvedConnection, error) {
 	database := strings.TrimSpace(requestedDatabase)
 	if strings.ContainsAny(requestedDatabase, "\x00\r\n") {
 		return resolvedConnection{}, invalidOptions("database must not contain NUL bytes or line breaks")
@@ -56,7 +56,17 @@ func resolveConnection(requestedDatabase string, details driver.ConnectionDetail
 		}
 		database = strings.TrimSpace(details.Database)
 		if database == "" && strings.TrimSpace(details.URI) != "" {
-			database, err = databaseFromURI(details.URI)
+			raw := details.URI
+			if allowRawUserinfo {
+				// The MariaDB provider inserts raw credentials into the URI.
+				// Remove them only when they match the structured connection details.
+				authority := details.Host + ":" + details.Port
+				prefix := "mysql://" + details.Username + ":" + details.Password + "@" + authority + "/"
+				if path, ok := strings.CutPrefix(raw, prefix); ok {
+					raw = "mysql://" + authority + "/" + path
+				}
+			}
+			database, err = databaseFromURI(raw)
 			if err != nil {
 				return resolvedConnection{}, err
 			}

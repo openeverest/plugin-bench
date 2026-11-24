@@ -50,7 +50,8 @@ func (d sysbenchDriver) Prepare(input driver.PrepareInput) (driver.RunnerSpec, e
 	if err != nil {
 		return driver.RunnerSpec{}, err
 	}
-	connection, err := resolveConnection(input.RequestedDatabase, input.Connection)
+	allowRawUserinfo := d.provider != "" && strings.EqualFold(strings.TrimSpace(input.Target.Provider), d.provider)
+	connection, err := resolveConnection(input.RequestedDatabase, input.Connection, allowRawUserinfo)
 	if err != nil {
 		return driver.RunnerSpec{}, err
 	}

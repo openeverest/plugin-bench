@@ -43,6 +43,7 @@ plugin:
         - percona-server-mysql
         - percona-xtradb-cluster
         - percona-server-mongodb
+        - mariadb
 
 everestAPIURL: ""
 

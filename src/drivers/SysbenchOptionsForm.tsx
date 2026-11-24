@@ -10,9 +10,9 @@ const NUMERIC_FIELDS: ReadonlyArray<{ field: SysbenchOptionField; label: string;
   { field: 'tableSize', label: 'Rows per table', hint: 'Rows in each Sysbench table.' },
 ];
 
-export function SysbenchOptionsForm({
+export function SysbenchOptionsForm<K extends 'sysbench' | 'mariadb'>({
   selection, errors, disabled, showErrors, onChange,
-}: DriverOptionsFormProps<'sysbench'>) {
+}: DriverOptionsFormProps<K>) {
   const [touched, setTouched] = useState<Partial<Record<SysbenchOptionField, boolean>>>({});
   const draft = selection.options;
   const fieldError = (field: SysbenchOptionField) => (showErrors || touched[field] ? errors[field] : undefined);
@@ -20,7 +20,10 @@ export function SysbenchOptionsForm({
   return (
     <Stack spacing={3}>
       <Typography variant="body2" color="text.secondary">
-        Runs the bundled oltp_read_write workload against MySQL.
+        Runs the bundled oltp_read_write workload against {selection.driver === 'mariadb' ? 'MariaDB' : 'MySQL'}.
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Sysbench connects without TLS. Instances that require encrypted connections are not supported yet.
       </Typography>
       <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 2 }}>
         {NUMERIC_FIELDS.map(({ field, label, hint }) => (
