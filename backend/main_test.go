@@ -64,9 +64,10 @@ func TestHandleStatusReportsOnlyEnabledDrivers(t *testing.T) {
 		{
 			name: "all drivers enabled",
 			payload: `{"go-ycsb":{"enabled":true,"image":"private.example/go-ycsb:test"},` +
+				`"hammerdb":{"enabled":true,"image":"private.example/hammerdb:test"},` +
 				`"pgbench":{"enabled":true,"image":"private.example/pgbench:test"},` +
 				`"sysbench":{"enabled":true,"image":"private.example/sysbench:test"}}`,
-			want: []string{"go-ycsb", "pgbench", "sysbench"},
+			want: []string{"go-ycsb", "hammerdb", "pgbench", "sysbench"},
 		},
 		{
 			name: "go-ycsb disabled",
@@ -78,6 +79,11 @@ func TestHandleStatusReportsOnlyEnabledDrivers(t *testing.T) {
 			name:    "go-ycsb only",
 			payload: `{"go-ycsb":{"enabled":true,"image":"private.example/go-ycsb:test"}}`,
 			want:    []string{"go-ycsb"},
+		},
+		{
+			name:    "hammerdb only",
+			payload: `{"hammerdb":{"enabled":true,"image":"private.example/hammerdb:test"}}`,
+			want:    []string{"hammerdb"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -126,6 +132,9 @@ func TestBenchmarkRegistryUsesExistingImageConfiguration(t *testing.T) {
 	}
 	if _, err := registry.Resolve("go-ycsb", driver.TargetInfo{DatabaseType: "mongodb"}); err == nil {
 		t.Fatal("legacy pgbench image configuration implicitly enabled go-ycsb")
+	}
+	if _, err := registry.Resolve("hammerdb", driver.TargetInfo{DatabaseType: "mysql"}); err == nil {
+		t.Fatal("legacy pgbench image configuration implicitly enabled HammerDB")
 	}
 	for _, test := range []struct{ image, policy string }{{"", "IfNotPresent"}, {"runner:test", "invalid"}} {
 		t.Setenv("RUNNER_IMAGE", test.image)
