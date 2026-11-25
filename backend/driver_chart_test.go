@@ -257,7 +257,6 @@ func TestChartGoYCSBConfiguration(t *testing.T) {
 			if test.image != "" {
 				wantIDs = []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench"}
 			}
-			}
 			if test.onlyGoYCSB {
 				wantIDs = []string{"go-ycsb"}
 			}
