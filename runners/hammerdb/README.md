@@ -3,7 +3,7 @@
 Standalone HammerDB **6.1.1** TPROC-C runner for PostgreSQL and MySQL. One image
 contains both database clients and a Go wrapper that prepares Tcl scripts,
 optionally builds the schema, runs the timed workload and collects metrics.
-The plugin API supports this runner; its UI options editor is a separate task.
+The plugin API and the benchmark tab support this runner.
 See the [request contract](../../docs/runner-result-contract.md#hammerdb-requests).
 
 ## Build and check

@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { PgbenchOptionsForm } from './PgbenchOptionsForm';
 import { SysbenchOptionsForm } from './SysbenchOptionsForm';
 import { GoYCSBOptionsForm } from './GoYCSBOptionsForm';
+import { HammerDBOptionsForm } from './HammerDBOptionsForm';
 import type { BenchmarkDriverId, DriverDraft, DriverOptionsErrors } from './index';
 
 export interface DriverOptionsFormProps<K extends BenchmarkDriverId = BenchmarkDriverId> {
@@ -19,6 +20,7 @@ const optionsForms: { [K in BenchmarkDriverId]: (props: DriverOptionsFormProps<K
   sysbench: SysbenchOptionsForm,
   mariadb: SysbenchOptionsForm,
   'go-ycsb': GoYCSBOptionsForm,
+  hammerdb: HammerDBOptionsForm,
 };
 
 export function DriverOptionsForm<K extends BenchmarkDriverId>(props: DriverOptionsFormProps<K>) {

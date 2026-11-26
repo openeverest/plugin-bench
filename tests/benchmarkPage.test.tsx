@@ -64,6 +64,25 @@ describe('benchmark sidebar page', () => {
     expect(screen.queryByRole('link', { name: 'mongodb' })).toBeNull();
   });
 
+  it('lists HammerDB alongside the default tool and on its own for SQL providers', async () => {
+    const pxc = { ...mysql, name: 'pxc', provider: 'percona-xtradb-cluster' };
+    const cnpg = { ...pg, name: 'cnpg', provider: 'provider-cloudnative-pg' };
+    const cells = (name: string) => within(screen.getByRole('link', { name }).closest('tr')!)
+      .getAllByRole('cell').map(cell => cell.textContent);
+    const view = render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql, maria, mongo], ['pgbench', 'sysbench', 'hammerdb'])}
+      basePath={basePath} />);
+    await screen.findByRole('table');
+    expect(cells('postgres')).toEqual(['default', 'provider-percona-postgresql', 'pgbench, HammerDB', 'Benchmark']);
+    expect(cells('mysql')).toEqual(['default', 'percona-server-mysql', 'Sysbench, HammerDB', 'Benchmark']);
+    view.unmount();
+    render(<BenchmarkPage pluginFetch={fetchFor([pg, cnpg, mysql, pxc, maria, mongo], ['hammerdb'])} basePath={basePath} />);
+    const table = await screen.findByRole('table');
+    expect(within(table).getAllByRole('row')).toHaveLength(5);
+    for (const name of ['postgres', 'cnpg', 'mysql', 'pxc']) expect(cells(name)[2]).toBe('HammerDB');
+    expect(screen.queryByRole('link', { name: 'mariadb' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'mongodb' })).toBeNull();
+  });
+
   it('filters MariaDB independently from MySQL when only Sysbench is enabled', async () => {
     render(<BenchmarkPage pluginFetch={fetchFor([mysql, maria], ['sysbench'])} basePath={basePath} />);
     const table = await screen.findByRole('table');

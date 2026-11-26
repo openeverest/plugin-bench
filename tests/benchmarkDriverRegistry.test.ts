@@ -7,19 +7,38 @@ import { createInitialBenchmarkFormValues, toCreateBenchmarkRunRequest, validate
 
 describe('benchmark driver registry', () => {
   it('registers all drivers and their provider metadata', () => {
-    expect(benchmarkDriverIds).toEqual(['pgbench', 'sysbench', 'mariadb', 'go-ycsb']);
+    expect(benchmarkDriverIds).toEqual(['pgbench', 'sysbench', 'mariadb', 'go-ycsb', 'hammerdb']);
     expect(benchmarkProviderNames).toEqual([
       'provider-cloudnative-pg', 'provider-percona-postgresql', 'percona-server-mysql', 'percona-xtradb-cluster', 'mariadb', 'percona-server-mongodb',
     ]);
-    expect(getBenchmarkDriversForProvider('provider-cloudnative-pg')).toEqual(['pgbench']);
-    expect(getBenchmarkDriversForProvider('provider-percona-postgresql')).toEqual(['pgbench']);
-    expect(getBenchmarkDriversForProvider('percona-server-mysql')).toEqual(['sysbench']);
-    expect(getBenchmarkDriversForProvider('percona-xtradb-cluster')).toEqual(['sysbench']);
+    expect(getBenchmarkDriversForProvider('provider-cloudnative-pg')).toEqual(['pgbench', 'hammerdb']);
+    expect(getBenchmarkDriversForProvider('provider-percona-postgresql')).toEqual(['pgbench', 'hammerdb']);
+    expect(getBenchmarkDriversForProvider('percona-server-mysql')).toEqual(['sysbench', 'hammerdb']);
+    expect(getBenchmarkDriversForProvider('percona-xtradb-cluster')).toEqual(['sysbench', 'hammerdb']);
     expect(getBenchmarkDriversForProvider('mariadb')).toEqual(['mariadb']);
     expect(getBenchmarkDriversForProvider('percona-server-mongodb')).toEqual(['go-ycsb']);
     for (const provider of [undefined, '', 'unknown', 'provider-mariadb', 'provider-percona-xtradb-cluster']) {
       expect(getBenchmarkDriversForProvider(provider)).toEqual([]);
     }
+  });
+
+  it('prepares HammerDB requests and requires a database only for MySQL providers', () => {
+    const values = createInitialBenchmarkFormValues('hammerdb');
+    const target = { k8sCluster: 'main', namespace: 'default', instance: 'db-1' };
+    const options = { warehouses: 1, virtualUsers: 1, rampupMinutes: 0, durationMinutes: 1, initialize: true };
+    for (const provider of ['provider-cloudnative-pg', 'provider-percona-postgresql']) {
+      expect(validateBenchmarkForm(values, provider).database).toBeUndefined();
+      expect(toCreateBenchmarkRunRequest(values, target, provider)).toEqual({ target, driver: 'hammerdb', options });
+    }
+    for (const provider of ['percona-server-mysql', 'percona-xtradb-cluster']) {
+      expect(validateBenchmarkForm(values, provider).database).toBe('Enter the name of an existing database.');
+      expect(toCreateBenchmarkRunRequest(values, target, provider)).toBeUndefined();
+      expect(toCreateBenchmarkRunRequest({ ...values, database: ' tpcc ' }, target, provider))
+        .toEqual({ target, database: 'tpcc', driver: 'hammerdb', options });
+    }
+    expect(validateBenchmarkForm({ ...values, database: 'a'.repeat(64) }, 'provider-cloudnative-pg').database)
+      .toBe('Database must not exceed 63 characters.');
+    expect(validateBenchmarkForm({ ...values, database: 'a'.repeat(64) }, 'percona-server-mysql').database).toBeUndefined();
   });
 
   it('creates independent go-ycsb drafts with the fixed database and builds only its options', () => {

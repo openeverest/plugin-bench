@@ -36,6 +36,7 @@ describe('benchmark run history', () => {
       summary('broken', { status: 'failed', driver: 'sysbench', error: 'benchmark execution failed', completedAt: '2026-11-01T10:00:20Z' }),
       summary('maria', { driver: 'mariadb', metrics: [{ name: 'tps', unit: 'tx/s', value: 25 }] }),
       summary('active', { status: 'running', completedAt: undefined, driver: 'future-tool' }),
+      summary('tpcc', { driver: 'hammerdb', metrics: [{ name: 'nopm', unit: 'orders/min', value: 4321 }] }),
     ] }));
     await renderHistory(fetch);
     const cells = (id: string) => within(rowFor(id)).getAllByRole('cell').map(cell => cell.textContent);
@@ -46,6 +47,7 @@ describe('benchmark run history', () => {
     expect(cells('broken')).toEqual(['Sysbench', 'Failed', '20 s', 'benchmark execution failed', 'View']);
     expect(cells('maria')).toEqual(['Sysbench (MariaDB)', 'Succeeded', '1 min 15 s', 'tps 25 tx/s', 'View']);
     expect(cells('active')).toEqual(['future-tool', 'Running', '—', '—', 'View']);
+    expect(cells('tpcc')).toEqual(['HammerDB', 'Succeeded', '1 min 15 s', `nopm ${(4321).toLocaleString()} orders/min`, 'View']);
   });
 
   it('explains when history is not persistent', async () => {
