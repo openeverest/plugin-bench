@@ -75,6 +75,8 @@ grant privileges within the benchmark database; the verified setup uses
 `ALL PRIVILEGES ON <database>.*` without global or account-management grants.
 
 `BENCH_INITIALIZE=true` prepares an empty database using one schema worker.
+For MySQL, the runner gives the `history` table a primary key
+(`mysql_history_pk`), which Group Replication and PXC strict mode require.
 With initialization off, the runner requires an existing TPROC-C schema with
 matching warehouse count and identifier range. It uses the supplied account for
 all phases and creates no database or account. Existing data and partial objects

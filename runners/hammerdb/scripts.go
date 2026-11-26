@@ -177,6 +177,9 @@ func configurationScript(c config, prepare bool) (string, error) {
 			setting("connection", key, "")
 		}
 		setting("tpcc", "mysql_storage_engine", "innodb")
+		// Group Replication and PXC strict mode reject tables without a
+		// primary key, and upstream creates history without one by default.
+		setting("tpcc", "mysql_history_pk", "true")
 	}
 	setting("tpcc", prefix+"_user", c.user)
 	password := c.password
