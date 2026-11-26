@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"slices"
 	"strconv"
@@ -9,9 +10,10 @@ import (
 )
 
 const (
-	maxMemtierLogLineBytes = 64 * 1024
-	maxMemtierLogBytes     = 768 * 1024
-	memtierLogLimitNotice  = "[Further Memtier output omitted]\n"
+	maxMemtierLogLineBytes  = 64 * 1024
+	maxMemtierLogBytes      = 768 * 1024
+	memtierLogLimitNotice   = "[Further Memtier output omitted]\n"
+	memtierErrorReplyMarker = " handle error response: "
 )
 
 // One budget covers both streams and phases, leaving room for runner diagnostics.
@@ -61,13 +63,15 @@ func memtierLogRedactor(c config) *strings.Replacer {
 // Each subprocess stream has its own writer. Buffer complete lines so a
 // credential split across writes is still redacted before reaching pod logs.
 type memtierLogWriter struct {
-	destination io.Writer
-	redact      *strings.Replacer
-	budget      *memtierLogBudget
-	line        []byte
-	discarding  bool
-	afterCR     bool
-	err         error
+	destination       io.Writer
+	redact            *strings.Replacer
+	budget            *memtierLogBudget
+	line              []byte
+	discarding        bool
+	afterCR           bool
+	err               error
+	watchErrorReplies bool
+	sawErrorReply     bool
 }
 
 func (w *memtierLogWriter) Write(data []byte) (int, error) {
@@ -86,7 +90,6 @@ func (w *memtierLogWriter) Write(data []byte) (int, error) {
 			continue
 		}
 		if len(w.line) == maxMemtierLogLineBytes {
-			w.line = w.line[:0]
 			w.discarding = true
 			continue
 		}
@@ -97,6 +100,10 @@ func (w *memtierLogWriter) Write(data []byte) (int, error) {
 }
 
 func (w *memtierLogWriter) flush() {
+	// Inspect the original line before redaction or the shared log limit.
+	if w.watchErrorReplies && !w.sawErrorReply && bytes.Contains(w.line, []byte(memtierErrorReplyMarker)) {
+		w.sawErrorReply = true
+	}
 	if w.err == nil {
 		line := "[Memtier output line omitted]"
 		if !w.discarding {

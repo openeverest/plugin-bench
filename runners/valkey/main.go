@@ -38,6 +38,15 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 	if err != nil {
 		return errors.New("could not create the private Memtier socket")
 	}
+	args := newWorkloadArgs(c, files.resultPath)
+	// Register cleanup first so the proxy shuts down before keys are removed.
+	defer func() {
+		cleanupCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), connectTimeout)
+		defer stop()
+		if err := removeBenchmarkKeys(cleanupCtx, endpoint, args.prefix, c.keyCount); err != nil {
+			fmt.Fprintf(os.Stderr, "runner warning: benchmark key cleanup incomplete: %v; remaining keys expire automatically\n", err)
+		}
+	}()
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
@@ -49,7 +58,6 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 		<-stopped
 	}()
 
-	args := newWorkloadArgs(c, files.resultPath)
 	env := make([]string, 0)
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "VALKEY_") {
@@ -69,7 +77,7 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 		cmd := exec.CommandContext(ctx, executable, append(phase.args, "--unix-socket="+socketPath)...)
 		cmd.Env = env
 		stdout := &memtierLogWriter{destination: os.Stdout, redact: redact, budget: logBudget}
-		stderr := &memtierLogWriter{destination: os.Stderr, redact: redact, budget: logBudget}
+		stderr := &memtierLogWriter{destination: os.Stderr, redact: redact, budget: logBudget, watchErrorReplies: true}
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		err := cmd.Run()
 		stdout.finish()
@@ -82,6 +90,9 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 		}
 		if err != nil {
 			return fmt.Errorf("Memtier %s failed: %w", phase.name, err)
+		}
+		if stderr.sawErrorReply {
+			return fmt.Errorf("Memtier %s failed: Valkey returned an error reply", phase.name)
 		}
 		if phase.name == "seeding" {
 			if err := verifySeed(ctx, endpoint, args.prefix, c.keyCount); err != nil {

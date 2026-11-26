@@ -59,3 +59,26 @@ func TestMemtierLogBudgetSpansStreamsAndPhases(t *testing.T) {
 		t.Fatalf("expected one notice and no further Memtier output, got stdout %q and stderr %q", &stdout, &stderr)
 	}
 }
+
+func TestMemtierLogWriterDetectsErrorReplyAfterLogLimit(t *testing.T) {
+	var logs strings.Builder
+	writer := memtierLogWriter{
+		destination:       &logs,
+		redact:            memtierLogRedactor(config{}),
+		budget:            &memtierLogBudget{remaining: 1},
+		watchErrorReplies: true,
+	}
+	_, _ = writer.Write([]byte("ordinary Memtier diagnostic\n"))
+	if writer.sawErrorReply {
+		t.Fatal("ordinary stderr output was treated as a Valkey error reply")
+	}
+	_, _ = writer.Write([]byte("server 1 handle error"))
+	_, _ = writer.Write([]byte(" response: -OOM command not allowed"))
+	writer.finish()
+	if !writer.sawErrorReply {
+		t.Fatal("Valkey error reply was missed after the log limit")
+	}
+	if got := logs.String(); got != memtierLogLimitNotice {
+		t.Fatalf("expected only the log limit notice, got %q", got)
+	}
+}

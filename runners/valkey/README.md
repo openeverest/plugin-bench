@@ -6,10 +6,17 @@ It seeds a fresh range of keys, verifies the seed, then measures a workload of
 90% GET and 10% SET. It writes operations per second and latency metrics to
 `/dev/termination-log`.
 
-Every run uses a unique key prefix. Seeded keys expire after about one hour,
-including keys left by interrupted runs. Each measured SET renews that key's
-TTL. Traffic passes through the runner's private Unix socket, so the results
-include the overhead of forwarding to Valkey.
+Every run uses a unique key prefix. On success or failure, the runner tries
+for up to 10 seconds to remove that run's keys with `UNLINK`. Allow the benchmark
+user to run `UNLINK` on `plugin-bench:*`. If cleanup cannot finish, remaining keys
+expire about an hour after their last write.
+
+Use a disposable target with enough memory for the benchmark values and Valkey's
+per-key overhead. Under an `allkeys-*` policy, benchmark writes can evict existing
+keys. Under `noeviction`, writes can fail when Valkey reaches its memory limit.
+
+Traffic passes through the runner's private Unix socket, so the results include
+the overhead of forwarding to Valkey.
 
 ## Build
 

@@ -237,7 +237,19 @@ if [[ $(<"$readiness_log") != PONG ]]; then
   exit 1
 fi
 
+expect_empty_database() {
+  local key_count
+  key_count=$(timeout -k 3s 8s docker exec -e REDISCLI_AUTH="$database_password" "$database_id" \
+    valkey-cli --raw --tls --cacert /certs/ca.crt -h valkey-test -p 6379 \
+    --user default --no-auth-warning DBSIZE)
+  if [[ "$key_count" != 0 ]]; then
+    echo "Expected no benchmark keys after $1" >&2
+    exit 1
+  fi
+}
+
 expect_success tls-authenticated
+expect_empty_database success
 expect_failure authentication 'Valkey authentication failed' -e VALKEY_PASSWORD="$wrong_password"
 expect_failure wrong-ca 'could not connect to Valkey or verify its TLS certificate' \
   -e "VALKEY_TLS_CA=$(cat "$cert_dir/wrong-ca.crt")"
@@ -275,7 +287,7 @@ while :; do
   sleep 0.25
 done
 timeout -k 2s 5s docker kill --signal=TERM "$runner_name" > /dev/null
-bounded_status=$(timeout -k 2s 10s docker wait "$runner_name")
+bounded_status=$(timeout -k 2s 15s docker wait "$runner_name")
 timeout -k 2s 5s docker logs "$runner_name" > "$bounded_log" 2>&1
 check_no_credentials "$bounded_log" "$metrics_file"
 if [[ "$bounded_status" != 1 || -s "$metrics_file" ]] ||
@@ -284,4 +296,5 @@ if [[ "$bounded_status" != 1 || -s "$metrics_file" ]] ||
   show_log "$bounded_log"
   exit 1
 fi
+expect_empty_database cancellation
 echo "Verified runner exited after SIGTERM during measurement"

@@ -16,7 +16,10 @@ import (
 	"time"
 )
 
-const connectTimeout = 10 * time.Second
+const (
+	connectTimeout = 10 * time.Second
+	keyBatchSize   = 256
+)
 
 type valkeyEndpoint struct {
 	address   string
@@ -109,9 +112,8 @@ func verifySeed(ctx context.Context, endpoint valkeyEndpoint, prefix string, key
 	defer conn.Close()
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
-	const batchSize = 256
-	for first := 1; first <= keyCount; first += batchSize {
-		last := min(first+batchSize-1, keyCount)
+	for first := 1; first <= keyCount; first += keyBatchSize {
+		last := min(first+keyBatchSize-1, keyCount)
 		args := make([]string, 1, last-first+2)
 		args[0] = "EXISTS"
 		for key := first; key <= last; key++ {
@@ -120,6 +122,36 @@ func verifySeed(ctx context.Context, endpoint valkeyEndpoint, prefix string, key
 		reply, err := valkeyCommand(conn, reader, args...)
 		if err != nil || reply != ":"+strconv.Itoa(last-first+1) {
 			return errors.New("Valkey did not confirm that all benchmark keys were seeded")
+		}
+	}
+	return nil
+}
+
+func removeBenchmarkKeys(ctx context.Context, endpoint valkeyEndpoint, prefix string, keyCount int) error {
+	conn, reader, err := endpoint.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+
+	args := make([]string, 1, keyBatchSize+1)
+	args[0] = "UNLINK"
+	for first := 1; first <= keyCount; first += keyBatchSize {
+		last := min(first+keyBatchSize-1, keyCount)
+		args = args[:1]
+		for key := first; key <= last; key++ {
+			args = append(args, prefix+strconv.Itoa(key))
+		}
+		reply, err := valkeyCommand(conn, reader, args...)
+		if err != nil {
+			return errors.New("could not complete Valkey UNLINK")
+		}
+		count, err := strconv.Atoi(strings.TrimPrefix(reply, ":"))
+		// Some keys may never have been seeded, or may already have expired.
+		if !strings.HasPrefix(reply, ":") || err != nil || count < 0 || count > len(args)-1 {
+			return errors.New("Valkey did not confirm UNLINK; check that the benchmark user can run it")
 		}
 	}
 	return nil
