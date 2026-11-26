@@ -12,7 +12,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -44,6 +43,18 @@ func newValkeyEndpoint(c config, caPath string) (valkeyEndpoint, error) {
 		}
 	}
 	return endpoint, nil
+}
+
+// Preflight authenticates and verifies TLS before Memtier can start.
+func (e valkeyEndpoint) preflight(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	conn, _, err := e.connect(ctx)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
 }
 
 func (e valkeyEndpoint) connect(ctx context.Context) (net.Conn, *bufio.Reader, error) {
@@ -155,40 +166,4 @@ func removeBenchmarkKeys(ctx context.Context, endpoint valkeyEndpoint, prefix st
 		}
 	}
 	return nil
-}
-
-// Memtier connects through a private Unix socket. Each forwarded connection
-// authenticates independently, with hostname and CA verification when TLS is enabled.
-func serveValkey(ctx context.Context, listener net.Listener, endpoint valkeyEndpoint, fail context.CancelCauseFunc) {
-	var clients sync.WaitGroup
-	defer clients.Wait()
-	for {
-		local, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() == nil {
-				fail(errors.New("could not accept a Memtier connection"))
-			}
-			return
-		}
-		clients.Go(func() {
-			defer local.Close()
-			upstream, reader, err := endpoint.connect(ctx)
-			if err != nil {
-				fail(err)
-				return
-			}
-			defer upstream.Close()
-			stop := context.AfterFunc(ctx, func() { upstream.Close(); local.Close() })
-			defer stop()
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				io.Copy(upstream, local)
-				upstream.Close()
-			}()
-			io.Copy(local, reader)
-			local.Close()
-			<-done
-		})
-	}
 }

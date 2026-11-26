@@ -25,7 +25,7 @@ test_files=()
 database_password="ci-valkey-password"
 wrong_password="ci-valkey-wrong-password"
 restricted_user="benchmark-user"
-restricted_password="ci-valkey-restricted-password"
+restricted_password="ci-valkey:restricted-password"
 
 cleanup() {
   local status=$?
@@ -268,6 +268,10 @@ expect_success tls-restricted-user \
 expect_empty_database restricted-user
 
 expect_failure authentication 'Valkey authentication failed' -e VALKEY_PASSWORD="$wrong_password"
+if grep -Fxq 'Valkey benchmark: seeding' "$log_file"; then
+  echo "Runner started seeding after invalid credentials" >&2
+  exit 1
+fi
 expect_failure wrong-ca 'could not connect to Valkey or verify its TLS certificate' \
   -e "VALKEY_TLS_CA=$(cat "$cert_dir/wrong-ca.crt")"
 # Confirm both names resolve to this server before checking the certificate name.

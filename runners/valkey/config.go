@@ -48,6 +48,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if c.username == "" || strings.ContainsFunc(c.username, unicode.IsControl) || !utf8.ValidString(c.username) {
 		return config{}, errors.New("VALKEY_USERNAME is required and must not contain control characters")
 	}
+	if strings.ContainsRune(c.username, ':') {
+		return config{}, errors.New("VALKEY_USERNAME must not contain a colon because Memtier uses it to separate credentials")
+	}
 	if c.password == "" || strings.ContainsFunc(c.password, unicode.IsControl) || !utf8.ValidString(c.password) {
 		return config{}, errors.New("VALKEY_PASSWORD is required and must not contain control characters")
 	}

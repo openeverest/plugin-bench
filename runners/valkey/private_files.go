@@ -7,7 +7,6 @@ import (
 )
 
 type privateFiles struct {
-	directory  string
 	caPath     string
 	resultPath string
 }
@@ -22,7 +21,6 @@ func createPrivateFiles(c config) (privateFiles, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	files := privateFiles{
-		directory:  dir,
 		resultPath: filepath.Join(dir, "memtier.json"),
 	}
 

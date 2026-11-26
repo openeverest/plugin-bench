@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,26 +19,24 @@ const runTimeout = 10 * time.Minute
 func run(ctx context.Context, c config, executable string, files privateFiles) error {
 	ctx, timeout := context.WithTimeout(ctx, runTimeout)
 	defer timeout()
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-
 	endpoint, err := newValkeyEndpoint(c, files.caPath)
 	if err != nil {
 		return err
 	}
-	probe, _, err := endpoint.connect(ctx)
-	if err != nil {
+	if err := endpoint.preflight(ctx); err != nil {
 		return err
 	}
-	probe.Close()
 
-	socketPath := filepath.Join(files.directory, "valkey.sock")
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return errors.New("could not create the private Memtier socket")
+	connectionArgs := []string{
+		"--server=" + c.host,
+		"--port=" + strconv.Itoa(c.port),
+		"--authenticate=" + c.username + ":" + c.password,
+	}
+	if c.tls {
+		connectionArgs = append(connectionArgs, "--tls", "--cacert="+files.caPath,
+			"--sni="+strings.TrimSuffix(c.host, "."), "--tls-protocols=TLSv1.2,TLSv1.3")
 	}
 	args := newWorkloadArgs(c, files.resultPath)
-	// Register cleanup first so the proxy shuts down before keys are removed.
 	defer func() {
 		cleanupCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), connectTimeout)
 		defer stop()
@@ -47,17 +44,6 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 			fmt.Fprintf(os.Stderr, "runner warning: benchmark key cleanup incomplete: %v; remaining keys expire automatically\n", err)
 		}
 	}()
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		serveValkey(ctx, listener, endpoint, cancel)
-	}()
-	defer func() {
-		cancel(nil)
-		listener.Close()
-		<-stopped
-	}()
-
 	env := make([]string, 0)
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "VALKEY_") {
@@ -74,7 +60,7 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 		{"measurement", args.measure},
 	} {
 		fmt.Fprintln(os.Stdout, "Valkey benchmark:", phase.name)
-		cmd := exec.CommandContext(ctx, executable, append(phase.args, "--unix-socket="+socketPath)...)
+		cmd := exec.CommandContext(ctx, executable, append(phase.args, connectionArgs...)...)
 		cmd.Env = env
 		stdout := &memtierLogWriter{destination: os.Stdout, redact: redact, budget: logBudget}
 		stderr := &memtierLogWriter{destination: os.Stderr, redact: redact, budget: logBudget, watchErrorReplies: true}

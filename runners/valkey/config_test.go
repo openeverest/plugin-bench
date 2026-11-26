@@ -75,6 +75,7 @@ func TestLoadConfigRejectsInvalidSettings(t *testing.T) {
 		{"invalid port", map[string]string{"VALKEY_PORT": "65536"}, "VALKEY_PORT must"},
 		{"missing username", map[string]string{"VALKEY_USERNAME": ""}, "VALKEY_USERNAME is required"},
 		{"username control character", map[string]string{"VALKEY_USERNAME": "test-user-sensitive\r"}, "VALKEY_USERNAME is required"},
+		{"username with colon", map[string]string{"VALKEY_USERNAME": "test:user"}, "VALKEY_USERNAME must not contain a colon"},
 		{"missing password", map[string]string{"VALKEY_PASSWORD": ""}, "VALKEY_PASSWORD is required"},
 		{"password control character", map[string]string{"VALKEY_PASSWORD": "test-password\n"}, "VALKEY_PASSWORD is required"},
 		{"invalid UTF-8", map[string]string{"VALKEY_PASSWORD": "test-password\xff"}, "VALKEY_PASSWORD is required"},

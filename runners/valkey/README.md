@@ -15,8 +15,11 @@ Use a disposable target with enough memory for the benchmark values and Valkey's
 per-key overhead. Under an `allkeys-*` policy, benchmark writes can evict existing
 keys. Under `noeviction`, writes can fail when Valkey reaches its memory limit.
 
-Traffic passes through the runner's private Unix socket, so the results include
-the overhead of forwarding to Valkey.
+Before seeding, the runner connects to Valkey and checks the credentials with
+`AUTH`. With TLS enabled, this preflight verifies the CA and hostname. Memtier
+then connects directly for seeding and measurement. Memtier 2.6.1 verifies the
+CA on its TLS connections. Hostname verification happens during preflight only.
+The credentials are visible in Memtier's process arguments while it runs.
 
 ## Build
 
@@ -37,10 +40,10 @@ wrapper runs as UID and GID `10001` and uses `/tmp` for its private files.
 | --- | --- | --- |
 | `VALKEY_HOST` | Required | Writable endpoint hostname or IP, without a port. |
 | `VALKEY_PORT` | Required | TCP port. |
-| `VALKEY_USERNAME` | Required | ACL username, such as `default`. |
+| `VALKEY_USERNAME` | Required | ACL username without a colon, such as `default`. |
 | `VALKEY_PASSWORD` | Required | ACL password. |
 | `VALKEY_TLS` | `true` | Set to `false` for a plaintext endpoint. |
-| `VALKEY_TLS_CA` | Required with TLS | PEM CA certificate contents. The runner checks the server certificate and hostname. |
+| `VALKEY_TLS_CA` | Required with TLS | PEM CA certificate contents used by preflight and Memtier. |
 | `BENCH_DURATION` | `30` | Measurement duration in seconds (1–300). |
 | `BENCH_THREADS` | `2` | Memtier worker threads. |
 | `BENCH_CLIENTS_PER_THREAD` | `10` | Connections per thread. Threads times clients cannot exceed 128. |
