@@ -27,13 +27,13 @@ type valkeyEndpoint struct {
 	password  string
 }
 
-func newValkeyEndpoint(c config, caPath string) (valkeyEndpoint, error) {
+func newValkeyEndpoint(c config, files privateFiles) (valkeyEndpoint, error) {
 	endpoint := valkeyEndpoint{
 		address: net.JoinHostPort(c.host, strconv.Itoa(c.port)),
 		user:    c.username, password: c.password,
 	}
 	if c.tls {
-		pem, err := os.ReadFile(caPath)
+		pem, err := os.ReadFile(files.caPath)
 		roots := x509.NewCertPool()
 		if err != nil || !roots.AppendCertsFromPEM(pem) {
 			return valkeyEndpoint{}, errors.New("could not load the Valkey CA")
@@ -41,20 +41,90 @@ func newValkeyEndpoint(c config, caPath string) (valkeyEndpoint, error) {
 		endpoint.tlsConfig = &tls.Config{
 			RootCAs: roots, ServerName: strings.TrimSuffix(c.host, "."), MinVersion: tls.VersionTLS12,
 		}
+		if files.certPath != "" {
+			certificate, err := tls.LoadX509KeyPair(files.certPath, files.keyPath)
+			if err != nil {
+				return valkeyEndpoint{}, errors.New("VALKEY_TLS_CERT and VALKEY_TLS_KEY must contain a valid PEM client certificate and matching private key")
+			}
+			endpoint.tlsConfig.Certificates = []tls.Certificate{certificate}
+		}
 	}
 	return endpoint, nil
 }
 
-// Preflight authenticates and verifies TLS before Memtier can start.
+// Preflight verifies TLS, authenticates, and checks the endpoint topology.
 func (e valkeyEndpoint) preflight(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
-	conn, _, err := e.connect(ctx)
+	conn, reader, err := e.connect(ctx)
 	if err != nil {
 		return err
 	}
-	conn.Close()
-	return nil
+	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return errors.New("could not set the Valkey preflight deadline")
+	}
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+	// ROLE leaves part of its response unread, so check cluster mode first.
+	if err := checkClusterMode(conn, reader); err != nil {
+		return err
+	}
+	return checkPrimary(conn, reader)
+}
+
+func checkClusterMode(conn net.Conn, reader *bufio.Reader) error {
+	header, err := valkeyCommand(conn, reader, "INFO", "cluster")
+	if strings.HasPrefix(header, "-NOPERM ") {
+		return errors.New("Valkey benchmark user must have permission to run INFO cluster")
+	}
+	length, lengthErr := strconv.Atoi(strings.TrimPrefix(header, "$"))
+	// INFO cluster is a short RESP bulk string. Bound the server-supplied length.
+	if err != nil || !strings.HasPrefix(header, "$") || lengthErr != nil || length < 1 || length > 4096 {
+		return errors.New("could not verify Valkey cluster mode")
+	}
+	reply := make([]byte, length+2)
+	if _, err := io.ReadFull(reader, reply); err != nil || string(reply[length:]) != "\r\n" {
+		return errors.New("could not verify Valkey cluster mode")
+	}
+	for _, line := range strings.Split(string(reply[:length]), "\r\n") {
+		switch line {
+		case "cluster_enabled:0":
+			return nil
+		case "cluster_enabled:1":
+			return errors.New("Valkey cluster mode is not supported. Use a non-cluster primary endpoint")
+		}
+	}
+	return errors.New("could not verify Valkey cluster mode")
+}
+
+func checkPrimary(conn net.Conn, reader *bufio.Reader) error {
+	header, err := valkeyCommand(conn, reader, "ROLE")
+	if strings.HasPrefix(header, "-NOPERM ") {
+		return errors.New("Valkey benchmark user must have permission to run ROLE")
+	}
+	count, countErr := strconv.Atoi(strings.TrimPrefix(header, "*"))
+	if err != nil || !strings.HasPrefix(header, "*") || countErr != nil || count < 1 {
+		return errors.New("could not verify Valkey endpoint role")
+	}
+	// Read the first bulk string only. Preflight closes this connection.
+	length, err := readRESPLine(reader)
+	if err != nil || (length != "$6" && length != "$5" && length != "$8") {
+		return errors.New("could not verify Valkey endpoint role")
+	}
+	role, err := readRESPLine(reader)
+	if err != nil || length != "$"+strconv.Itoa(len(role)) {
+		return errors.New("could not verify Valkey endpoint role")
+	}
+	switch role {
+	case "master":
+		return nil
+	case "slave":
+		return errors.New("Valkey endpoint is a replica. Use the writable primary endpoint")
+	default:
+		return errors.New("Valkey endpoint must be a writable primary")
+	}
 }
 
 func (e valkeyEndpoint) connect(ctx context.Context) (net.Conn, *bufio.Reader, error) {
@@ -86,7 +156,14 @@ func (e valkeyEndpoint) connect(ctx context.Context) (net.Conn, *bufio.Reader, e
 		conn.Close()
 		return nil, nil, ctx.Err()
 	}
-	if err != nil || reply != "+OK" {
+	if err != nil {
+		conn.Close()
+		if e.tlsConfig != nil && len(e.tlsConfig.Certificates) == 0 {
+			return nil, nil, errors.New("Valkey connection failed during authentication (does the server require a client certificate?)")
+		}
+		return nil, nil, errors.New("Valkey connection failed during authentication")
+	}
+	if reply != "+OK" {
 		conn.Close()
 		return nil, nil, errors.New("Valkey authentication failed")
 	}
@@ -97,7 +174,7 @@ func (e valkeyEndpoint) connect(ctx context.Context) (net.Conn, *bufio.Reader, e
 	return conn, reader, nil
 }
 
-// Read only bounded, single-line RESP replies. Server responses may contain
+// Return the first line of the RESP reply. Server responses may contain
 // credentials, so callers report errors without including the response.
 func valkeyCommand(conn net.Conn, reader *bufio.Reader, args ...string) (string, error) {
 	var request strings.Builder
@@ -108,6 +185,10 @@ func valkeyCommand(conn net.Conn, reader *bufio.Reader, args ...string) (string,
 	if _, err := io.WriteString(conn, request.String()); err != nil {
 		return "", err
 	}
+	return readRESPLine(reader)
+}
+
+func readRESPLine(reader *bufio.Reader) (string, error) {
 	reply, err := reader.ReadSlice('\n')
 	if err != nil {
 		return "", err

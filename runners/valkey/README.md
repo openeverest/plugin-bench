@@ -16,7 +16,11 @@ per-key overhead. Under an `allkeys-*` policy, benchmark writes can evict existi
 keys. Under `noeviction`, writes can fail when Valkey reaches its memory limit.
 
 Before seeding, the runner connects to Valkey and checks the credentials with
-`AUTH`. With TLS enabled, this preflight verifies the CA and hostname. Memtier
+`AUTH`, checks for cluster mode with `INFO cluster`, and confirms the endpoint
+is a primary with `ROLE`. Grant the benchmark user permission to run `INFO`
+and `ROLE`. For replication deployments, use the primary service so Memtier's
+connections reach the primary as well.
+With TLS enabled, this preflight verifies the CA and hostname. Memtier
 then connects directly for seeding and measurement. Memtier 2.6.1 verifies the
 CA on its TLS connections. Hostname verification happens during preflight only.
 The credentials are visible in Memtier's process arguments while it runs.
@@ -44,6 +48,8 @@ wrapper runs as UID and GID `10001` and uses `/tmp` for its private files.
 | `VALKEY_PASSWORD` | Required | ACL password. |
 | `VALKEY_TLS` | `true` | Set to `false` for a plaintext endpoint. |
 | `VALKEY_TLS_CA` | Required with TLS | PEM CA certificate contents used by preflight and Memtier. |
+| `VALKEY_TLS_CERT` | Required for mTLS | PEM client certificate contents. Requires TLS and `VALKEY_TLS_KEY`. |
+| `VALKEY_TLS_KEY` | Required for mTLS | PEM client private key contents matching `VALKEY_TLS_CERT`. |
 | `BENCH_DURATION` | `30` | Measurement duration in seconds (1–300). |
 | `BENCH_THREADS` | `2` | Memtier worker threads. |
 | `BENCH_CLIENTS_PER_THREAD` | `10` | Connections per thread. Threads times clients cannot exceed 128. |

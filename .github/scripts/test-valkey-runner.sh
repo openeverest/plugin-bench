@@ -201,6 +201,14 @@ printf '%s\n' 'basicConstraints=critical,CA:FALSE' \
 openssl x509 -req -days 1 -in "$cert_dir/server.csr" \
   -CA "$cert_dir/ca.crt" -CAkey "$cert_dir/ca.key" -CAcreateserial \
   -extfile "$test_dir/server.ext" -out "$cert_dir/server.crt" > /dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$cert_dir/client.key" -out "$cert_dir/client.csr" \
+  -subj "/CN=plugin-bench-runner" > /dev/null 2>&1
+printf '%s\n' 'basicConstraints=critical,CA:FALSE' \
+  'keyUsage=critical,digitalSignature' 'extendedKeyUsage=clientAuth' > "$test_dir/client.ext"
+openssl x509 -req -days 1 -in "$cert_dir/client.csr" \
+  -CA "$cert_dir/ca.crt" -CAkey "$cert_dir/ca.key" -CAserial "$cert_dir/ca.srl" \
+  -extfile "$test_dir/client.ext" -out "$cert_dir/client.crt" > /dev/null 2>&1
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -keyout "$cert_dir/wrong-ca.key" -out "$cert_dir/wrong-ca.crt" \
   -subj "/CN=plugin-bench-wrong-ca" > /dev/null 2>&1
@@ -258,7 +266,7 @@ expect_empty_database plaintext
 acl_result=$(timeout -k 3s 8s docker exec -e REDISCLI_AUTH="$database_password" "$database_id" \
   valkey-cli --raw --tls --cacert /certs/ca.crt -h valkey-test -p 6379 \
   --user default --no-auth-warning ACL SETUSER "$restricted_user" reset on \
-  ">$restricted_password" '~plugin-bench:*' +select +set +setex +get +exists +unlink)
+  ">$restricted_password" '~plugin-bench:*' +info +role +select +set +setex +get +exists +unlink)
 if [[ "$acl_result" != OK ]]; then
   echo "Could not configure the restricted Valkey test user" >&2
   exit 1
@@ -281,6 +289,32 @@ alias_ip=$(timeout 8s docker exec "$database_id" getent hosts valkey-alias)
 expect_failure wrong-hostname 'could not connect to Valkey or verify its TLS certificate' \
   -e VALKEY_HOST=valkey-alias
 expect_failure invalid-config 'BENCH_THREADS must be an integer' -e BENCH_THREADS=0
+
+# Require client certificates on the same disposable TLS endpoint.
+# The Valkey CLI used to toggle this setting must also present a client cert.
+mtls_cli() {
+  timeout -k 3s 8s docker exec --user 0 -e REDISCLI_AUTH="$database_password" "$database_id" \
+    valkey-cli --raw --tls --cacert /certs/ca.crt --cert /certs/client.crt \
+    --key /certs/client.key -h valkey-test -p 6379 --user default --no-auth-warning "$@"
+}
+
+if [[ $(mtls_cli CONFIG SET tls-auth-clients yes) != OK ]]; then
+  echo "Could not require client certificates on the disposable Valkey server" >&2
+  exit 1
+fi
+expect_success mtls-authenticated \
+  -e "VALKEY_TLS_CERT=$(cat "$cert_dir/client.crt")" \
+  -e "VALKEY_TLS_KEY=$(cat "$cert_dir/client.key")"
+expect_failure mtls-missing-client-certificate \
+  'Valkey connection failed during authentication \(does the server require a client certificate\?\)'
+if grep -Fxq 'Valkey benchmark: seeding' "$log_file"; then
+  echo "Runner started seeding without the required client certificate" >&2
+  exit 1
+fi
+if [[ $(mtls_cli DBSIZE) != 0 || $(mtls_cli CONFIG SET tls-auth-clients no) != OK ]]; then
+  echo "Expected clean benchmark keys and restored TLS settings after the mTLS cases" >&2
+  exit 1
+fi
 
 # Deliver SIGTERM during measurement and observe the runner's own exit status.
 bounded_log="$test_dir/bounded.log"
@@ -319,3 +353,38 @@ if [[ "$bounded_status" != 1 || -s "$metrics_file" ]] ||
 fi
 expect_empty_database cancellation
 echo "Verified runner exited after SIGTERM during measurement"
+timeout -k 2s 8s docker rm "$runner_name" > /dev/null
+
+# Switch the disposable server to a read-only replica.
+replica_result=$(timeout -k 3s 8s docker exec -e REDISCLI_AUTH="$database_password" "$database_id" \
+  valkey-cli --raw --tls --cacert /certs/ca.crt -h valkey-test -p 6379 \
+  --user default --no-auth-warning REPLICAOF 127.0.0.1 1)
+if [[ "$replica_result" != OK ]]; then
+  echo "Could not configure the disposable server as a replica" >&2
+  exit 1
+fi
+expect_failure read-only-replica 'Valkey endpoint is a replica'
+if grep -Fxq 'Valkey benchmark: seeding' "$log_file"; then
+  echo "Runner started seeding against a read-only replica" >&2
+  exit 1
+fi
+
+# One cluster-enabled node is enough to exercise the startup check.
+timeout -k 3s 8s docker exec -d "$database_id" valkey-server \
+  --port 6381 --cluster-enabled yes --cluster-config-file /tmp/benchmark-cluster.conf \
+  --save "" --requirepass "$database_password"
+deadline=$((SECONDS + 30))
+until [[ $(timeout -k 2s 5s docker exec -e REDISCLI_AUTH="$database_password" "$database_id" \
+  valkey-cli --raw -p 6381 --no-auth-warning PING 2>/dev/null) == PONG ]]; do
+  if (( SECONDS >= deadline )); then
+    echo "Valkey cluster node did not accept an authenticated PING" >&2
+    exit 1
+  fi
+  sleep 1
+done
+expect_failure cluster-mode 'Valkey cluster mode is not supported' \
+  -e VALKEY_PORT=6381 -e VALKEY_TLS=false -e VALKEY_TLS_CA=
+if grep -Fxq 'Valkey benchmark: seeding' "$log_file"; then
+  echo "Runner started seeding against a Valkey cluster node" >&2
+  exit 1
+fi

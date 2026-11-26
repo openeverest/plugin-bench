@@ -8,10 +8,12 @@ import (
 
 type privateFiles struct {
 	caPath     string
+	certPath   string
+	keyPath    string
 	resultPath string
 }
 
-// createPrivateFiles stores the provider CA and Memtier's raw JSON output in a
+// createPrivateFiles stores the TLS credentials and Memtier's raw JSON output in a
 // per-run directory. MkdirTemp creates the directory with mode 0700; files are
 // created with mode 0600. The caller must invoke cleanup after the run.
 func createPrivateFiles(c config) (privateFiles, func(), error) {
@@ -29,6 +31,18 @@ func createPrivateFiles(c config) (privateFiles, func(), error) {
 		if err := writePrivateFile(files.caPath, []byte(c.tlsCA)); err != nil {
 			cleanup()
 			return privateFiles{}, nil, errors.New("could not write the private Valkey CA file")
+		}
+	}
+	if c.tlsCert != "" {
+		files.certPath = filepath.Join(dir, "client.crt")
+		files.keyPath = filepath.Join(dir, "client.key")
+		if err := writePrivateFile(files.certPath, []byte(c.tlsCert)); err != nil {
+			cleanup()
+			return privateFiles{}, nil, errors.New("could not write the private Valkey client certificate file")
+		}
+		if err := writePrivateFile(files.keyPath, []byte(c.tlsKey)); err != nil {
+			cleanup()
+			return privateFiles{}, nil, errors.New("could not write the private Valkey client key file")
 		}
 	}
 	if err := writePrivateFile(files.resultPath, nil); err != nil {

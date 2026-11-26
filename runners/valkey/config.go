@@ -18,6 +18,7 @@ const (
 
 type config struct {
 	host, username, password, tlsCA string
+	tlsCert, tlsKey                 string
 	port                            int
 	tls                             bool
 	durationSeconds                 int
@@ -64,6 +65,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, errors.New("VALKEY_TLS must be true or false")
 	}
 	c.tlsCA = getenv("VALKEY_TLS_CA")
+	c.tlsCert = getenv("VALKEY_TLS_CERT")
+	c.tlsKey = getenv("VALKEY_TLS_KEY")
+	if c.tlsCert != "" || c.tlsKey != "" {
+		if !c.tls {
+			return config{}, errors.New("VALKEY_TLS_CERT and VALKEY_TLS_KEY require VALKEY_TLS=true")
+		}
+		if c.tlsCert == "" || c.tlsKey == "" {
+			return config{}, errors.New("VALKEY_TLS_CERT and VALKEY_TLS_KEY must be provided together")
+		}
+	}
 	if c.tls {
 		if c.tlsCA == "" || !x509.NewCertPool().AppendCertsFromPEM([]byte(c.tlsCA)) {
 			return config{}, errors.New("VALKEY_TLS_CA must contain a PEM-encoded CA certificate when VALKEY_TLS is true")

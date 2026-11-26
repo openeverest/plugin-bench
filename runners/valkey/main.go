@@ -19,7 +19,7 @@ const runTimeout = 10 * time.Minute
 func run(ctx context.Context, c config, executable string, files privateFiles) error {
 	ctx, timeout := context.WithTimeout(ctx, runTimeout)
 	defer timeout()
-	endpoint, err := newValkeyEndpoint(c, files.caPath)
+	endpoint, err := newValkeyEndpoint(c, files)
 	if err != nil {
 		return err
 	}
@@ -35,6 +35,9 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 	if c.tls {
 		connectionArgs = append(connectionArgs, "--tls", "--cacert="+files.caPath,
 			"--sni="+strings.TrimSuffix(c.host, "."), "--tls-protocols=TLSv1.2,TLSv1.3")
+		if files.certPath != "" {
+			connectionArgs = append(connectionArgs, "--cert="+files.certPath, "--key="+files.keyPath)
+		}
 	}
 	args := newWorkloadArgs(c, files.resultPath)
 	defer func() {
