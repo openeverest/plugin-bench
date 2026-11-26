@@ -24,6 +24,8 @@ database_id=""
 test_files=()
 database_password="ci-valkey-password"
 wrong_password="ci-valkey-wrong-password"
+restricted_user="benchmark-user"
+restricted_password="ci-valkey-restricted-password"
 
 cleanup() {
   local status=$?
@@ -53,7 +55,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 check_no_credentials() {
-  if grep -Fq -e "$database_password" -e "$wrong_password" "$@"; then
+  if grep -Fq -e "$database_password" -e "$wrong_password" -e "$restricted_password" "$@"; then
     echo "Runner output or metrics exposed a password" >&2
     exit 1
   fi
@@ -164,7 +166,7 @@ expect_success() {
     show_log "$log_file"
     exit 1
   fi
-  echo "Verified $name: authenticated TLS run and structured metrics"
+  echo "Verified $name: successful benchmark and structured metrics"
 }
 
 expect_failure() {
@@ -210,7 +212,7 @@ database_id=$(timeout -k 10s 120s docker run -d --name "$database_name" \
   --network "$network_id" --network-alias valkey-test --network-alias valkey-alias \
   --mount "type=bind,src=$cert_dir,dst=/certs,readonly" \
   valkey/valkey:9.0.7 valkey-server \
-  --port 0 --tls-port 6379 --tls-cert-file /certs/server.crt \
+  --port 6380 --tls-port 6379 --tls-cert-file /certs/server.crt \
   --tls-key-file /certs/server.key --tls-ca-cert-file /certs/ca.crt \
   --tls-auth-clients no --requirepass "$database_password")
 
@@ -250,6 +252,21 @@ expect_empty_database() {
 
 expect_success tls-authenticated
 expect_empty_database success
+expect_success plaintext-authenticated -e VALKEY_PORT=6380 -e VALKEY_TLS=false -e VALKEY_TLS_CA=
+expect_empty_database plaintext
+
+acl_result=$(timeout -k 3s 8s docker exec -e REDISCLI_AUTH="$database_password" "$database_id" \
+  valkey-cli --raw --tls --cacert /certs/ca.crt -h valkey-test -p 6379 \
+  --user default --no-auth-warning ACL SETUSER "$restricted_user" reset on \
+  ">$restricted_password" '~plugin-bench:*' +select +set +setex +get +exists +unlink)
+if [[ "$acl_result" != OK ]]; then
+  echo "Could not configure the restricted Valkey test user" >&2
+  exit 1
+fi
+expect_success tls-restricted-user \
+  -e "VALKEY_USERNAME=$restricted_user" -e "VALKEY_PASSWORD=$restricted_password"
+expect_empty_database restricted-user
+
 expect_failure authentication 'Valkey authentication failed' -e VALKEY_PASSWORD="$wrong_password"
 expect_failure wrong-ca 'could not connect to Valkey or verify its TLS certificate' \
   -e "VALKEY_TLS_CA=$(cat "$cert_dir/wrong-ca.crt")"
