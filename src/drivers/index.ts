@@ -1,3 +1,5 @@
+import { initialValkeyOptionsDraft, prepareValkeyOptions } from './valkey.js';
+import type { ValkeyOptions, ValkeyOptionsDraft } from './valkey';
 import {
   describePgbenchRunOptions, initialPgbenchOptionsDraft, preparePgbenchOptions, validatePgbenchDatabase,
 } from './pgbench.js';
@@ -14,6 +16,7 @@ import type { GoYCSBOptions, GoYCSBOptionsDraft } from './goycsb';
 // Register each driver's draft and validated options together so their types
 // stay associated throughout the form and the submitted request.
 type DriverTypes = {
+  valkey: { draft: ValkeyOptionsDraft; options: ValkeyOptions };
   pgbench: { draft: PgbenchOptionsDraft; options: PgbenchOptions };
   sysbench: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
   mariadb: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
@@ -99,6 +102,19 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
     },
     validateDatabase: validateGoYCSBDatabase,
     describeRunOptions: describeGoYCSBRunOptions,
+  },
+  valkey: {
+    label: 'Memtier (Valkey)',
+    providers: ['valkey'],
+    fixedDatabase: { name: '0', helperText: 'Memtier uses database 0 on a writable, non-sharded primary.' },
+    createDraft: () => ({ driver: 'valkey', options: { ...initialValkeyOptionsDraft } }),
+    prepare: ({ options }) => {
+      const prepared = prepareValkeyOptions(options);
+      if (prepared.ok === false) return prepared;
+      return { ok: true, request: { driver: 'valkey', options: prepared.options } };
+    },
+    validateDatabase: database => ['', '0'].includes(database.trim()) ? undefined : 'Valkey supports only database 0.',
+    describeRunOptions: options => ({ ...options }),
   },
 };
 

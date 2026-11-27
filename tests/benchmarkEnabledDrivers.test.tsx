@@ -19,6 +19,7 @@ describe('backend-enabled benchmark drivers', () => {
     { provider: 'percona-server-mysql', ids: ['sysbench', 'future'], label: 'Sysbench' },
     { provider: 'percona-xtradb-cluster', ids: ['pgbench', 'sysbench'], label: 'Sysbench' },
     { provider: 'provider-cloudnative-pg', ids: ['pgbench', 'sysbench'], label: 'pgbench' },
+    { provider: 'valkey', ids: ['valkey'], label: 'Memtier (Valkey)' },
     { provider: 'percona-server-mongodb', ids: ['pgbench', 'sysbench', 'go-ycsb', 'future'], label: 'go-ycsb' },
   ])('intersects enabled drivers with $provider support', async ({ provider, ids, label }) => {
     const fetch = vi.fn<PluginApi['fetch']>(async () => response({ drivers: ids }));
@@ -28,7 +29,7 @@ describe('backend-enabled benchmark drivers', () => {
   });
 
   it.each([
-    ...['percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb', 'mariadb'].flatMap(provider =>
+    ...['percona-server-mysql', 'percona-xtradb-cluster', 'percona-server-mongodb', 'mariadb', 'valkey'].flatMap(provider =>
       [[], ['pgbench'], ['future']].map(ids => ({ provider, ids }))),
     { provider: 'mariadb', ids: ['sysbench'] },
   ])(

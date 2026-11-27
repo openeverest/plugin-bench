@@ -97,6 +97,27 @@ describe('benchmark run history', () => {
 });
 
 describe('benchmark tab history refresh', () => {
+  it('opens a failed Valkey run with its recorded settings after the draft changes', async () => {
+    const saved = summary('past', { driver: 'valkey', database: '0', status: 'failed',
+      options: { keyCount: 321 }, error: 'Valkey authentication failed' });
+    const fetch: PluginApi['fetch'] = async path => {
+      if (path === '/api/status') return response({ drivers: ['valkey'], storage: 'postgresql' });
+      if (path.startsWith('/api/runs?')) return response({ runs: [saved] });
+      if (path === '/api/runs/past') return response(saved);
+      throw new Error(`unexpected request ${path}`);
+    };
+    await act(async () => {
+      render(<BenchmarkTab cluster={{ clusterName: 'main', spec: { providerRef: { name: 'valkey' } } }}
+        namespace="default" instanceName="cache" pluginFetch={fetch} />);
+    });
+    fireEvent.change(screen.getByLabelText('Key count'), { target: { value: '789' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'View run past' })); });
+    const card = within(screen.getByRole('region', { name: 'Benchmark run result' }));
+    expect(card.getByRole('alert').textContent).toContain('Valkey authentication failed');
+    expect(card.getByText('321')).toBeTruthy();
+    expect(card.queryByRole('table', { name: 'Benchmark metrics' })).toBeNull();
+  });
+
   it('reloads after starting a run and after it finishes, but not when opening a past run', async () => {
     vi.useFakeTimers();
     let newRunPolls = 0;

@@ -22,7 +22,7 @@ service:
 
 plugin:
   displayName: "Performance Benchmark"
-  description: "Run and inspect PostgreSQL, MySQL, and MongoDB benchmarks for OpenEverest database clusters."
+  description: "Run and inspect PostgreSQL, MySQL, MariaDB, MongoDB, and Valkey benchmarks for OpenEverest database clusters."
   vendor: "OpenEverest"
   enabled: true
   bundlePath: "/main.js"
@@ -44,6 +44,7 @@ plugin:
         - percona-xtradb-cluster
         - percona-server-mongodb
         - mariadb
+        - valkey
 
 everestAPIURL: ""
 

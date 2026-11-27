@@ -8,7 +8,7 @@ const mysql = { ...pg, name: 'mysql', provider: 'percona-server-mysql' };
 const maria = { ...pg, name: 'mariadb', provider: 'mariadb' };
 const mongo = { ...pg, name: 'mongodb', provider: 'percona-server-mongodb' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-function fetchFor(instances: unknown[] = [pg], drivers = ['pgbench', 'sysbench', 'mariadb', 'go-ycsb']) {
+function fetchFor(instances: unknown[] = [pg], drivers = ['pgbench', 'sysbench', 'mariadb', 'go-ycsb', 'valkey']) {
   return vi.fn(async (path: string) => response(path === '/api/status' ? { drivers } : { instances }));
 }
 afterEach(cleanup);
@@ -44,12 +44,13 @@ describe('benchmark sidebar page', () => {
   });
 
   it('shows each row with its provider and enabled benchmark tool', async () => {
-    render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql, maria, mongo])} basePath={basePath} />);
+    render(<BenchmarkPage pluginFetch={fetchFor([pg, mysql, maria, mongo, { ...pg, name: 'cache', provider: 'valkey' }])} basePath={basePath} />);
     const table = await screen.findByRole('table');
     const cells = (name: string) => within(screen.getByRole('link', { name }).closest('tr')!)
       .getAllByRole('cell').map(cell => cell.textContent);
     expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent))
       .toEqual(['Name', 'Namespace', 'Provider', 'Benchmark tool', 'Action']);
+    expect(cells('cache')).toEqual(['default', 'valkey', 'Memtier (Valkey)', 'Benchmark']);
     expect(cells('postgres')).toEqual(['default', 'provider-percona-postgresql', 'pgbench', 'Benchmark']);
     expect(cells('mysql')).toEqual(['default', 'percona-server-mysql', 'Sysbench', 'Benchmark']);
     expect(cells('mariadb')).toEqual(['default', 'mariadb', 'Sysbench (MariaDB)', 'Benchmark']);

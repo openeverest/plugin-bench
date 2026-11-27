@@ -21,7 +21,7 @@ const run = (id: string, status: BenchmarkRunStatus, extra: Partial<BenchmarkRun
 const fetchWrappers = new WeakMap<PluginApi['fetch'], PluginApi['fetch']>();
 const withEnabledDrivers = (fetch: PluginApi['fetch']): PluginApi['fetch'] => {
   if (!fetchWrappers.has(fetch)) fetchWrappers.set(fetch, (path, init) =>
-    path === '/api/status' ? Promise.resolve(response({ drivers: ['pgbench', 'sysbench', 'mariadb', 'go-ycsb'] }))
+    path === '/api/status' ? Promise.resolve(response({ drivers: ['pgbench', 'sysbench', 'mariadb', 'go-ycsb', 'valkey'] }))
       : path.startsWith('/api/runs?') ? Promise.resolve(response({ runs: [] })) : fetch(path, init));
   return fetchWrappers.get(fetch)!;
 };
@@ -35,6 +35,8 @@ const tab = (fetch: PluginApi['fetch'], instanceName = 'pg-1', provider = 'provi
     namespace="default" instanceName={instanceName} pluginFetch={withEnabledDrivers(fetch)} />
 );
 const workflowTargets = [
+  { driver: 'valkey', provider: 'valkey', instanceName: 'cache',
+    options: { duration: 30, threads: 2, clientsPerThread: 10, keyCount: 10000, valueSize: 256 } },
   { driver: 'pgbench', provider: 'provider-cloudnative-pg', instanceName: 'pg-1',
     options: { durationSeconds: 30, clients: 1, threads: 1, scale: 1, initialize: true } },
   { driver: 'sysbench', provider: 'percona-server-mysql', instanceName: 'mysql-1',
@@ -150,6 +152,16 @@ describe('benchmark driver workflow', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('blocks invalid Valkey concurrency before submitting', async () => {
+    const fetch = vi.fn<PluginApi['fetch']>();
+    await renderReady(tab(fetch, 'cache', 'valkey'));
+    fireEvent.change(screen.getByLabelText('Clients per thread'), { target: { value: '65' } });
+    fireEvent.blur(screen.getByLabelText('Clients per thread'));
+    expect(screen.getByText(/must not exceed 128/)).toBeTruthy();
+    fireEvent.submit(start().closest('form')!);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each(workflowTargets)('$driver retains independent polling, metrics, and logs for concurrent runs', async ({ driver, provider, instanceName, options }) => {
     const requests: Array<{ path: string; method: string; body?: unknown }> = [];
     const gets = new Map<string, number>();
@@ -164,7 +176,7 @@ describe('benchmark driver workflow', () => {
       const metadata = { driver, runnerImage: `registry/${driver}:v2`, options };
       return response(count === 1 ? run(id, 'running', metadata) : run(id, id === 'run-1' ? 'succeeded' : 'failed', {
         ...metadata,
-        metrics: [{ name: driver === 'go-ycsb' ? 'ops_per_second' : 'tps', unit: driver === 'go-ycsb' ? 'ops/s' : 'tx/s', value: id === 'run-1' ? 42 : 0 }],
+        metrics: [{ name: ['valkey', 'go-ycsb'].includes(driver) ? 'ops_per_second' : 'tps', unit: ['valkey', 'go-ycsb'].includes(driver) ? 'ops/s' : 'tx/s', value: id === 'run-1' ? 42 : 0 }],
         output: `${id} native output`,
       }));
     };
@@ -177,7 +189,7 @@ describe('benchmark driver workflow', () => {
     const expected = { target: { k8sCluster: 'main', namespace: 'default', instance: instanceName },
       ...(driver === 'sysbench' ? { database: 'sbtest' }
         : driver === 'mariadb' ? { database: 'benchdb' }
-          : driver === 'go-ycsb' ? { database: 'ycsb' } : {}), driver, options };
+          : driver === 'go-ycsb' ? { database: 'ycsb' } : driver === 'valkey' ? { database: '0' } : {}), driver, options };
     expect(requests.filter(request => request.method === 'POST').map(request => request.body)).toEqual([expected, expected]);
     expect([...gets.values()]).toEqual([1, 1]);
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
@@ -537,6 +549,7 @@ describe('Sysbench workflow', () => {
   it.each([
     { formProvider: 'percona-server-mysql', driver: 'pgbench', options: { scale: 1, initialize: false }, displayed: 'From existing tables' },
     { formProvider: 'provider-cloudnative-pg', driver: 'sysbench', options, displayed: '500' },
+    { formProvider: 'valkey', driver: 'valkey', options: { keyCount: 123 }, displayed: '123' },
     { formProvider: 'mariadb', driver: 'mariadb', options, displayed: '500' },
     { formProvider: 'percona-server-mysql', driver: 'future-driver', options: { workers: 7 }, displayed: '7' },
     { formProvider: 'provider-cloudnative-pg', driver: 'go-ycsb', options: { collection: 'saved_mongo', recordCount: 123, initialize: false }, displayed: 'saved_mongo' },

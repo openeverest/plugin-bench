@@ -122,6 +122,18 @@ describe('benchmark result metrics and logs', () => {
     expect(custom.queryByText('From existing tables')).toBeNull();
   });
 
+  it('shows Valkey throughput and latency metrics with their recorded units', () => {
+    const rates = ['ops_per_second', 'get_ops_per_second', 'set_ops_per_second', 'get_hits_per_second', 'get_misses_per_second'];
+    const latencies = ['latency_avg', 'latency_p95', 'latency_p99'];
+    const metrics = [...rates.map(name => ({ name, unit: 'ops/s', value: 12 })),
+      ...latencies.map(name => ({ name, unit: 'ms', value: 0.5 }))];
+    render(card({ ...completed, driver: 'valkey', database: '0', metrics }));
+    for (const { name, unit } of metrics) {
+      const row = screen.getByRole('rowheader', { name }).closest('tr')!;
+      expect(within(row).getByRole('cell', { name: unit })).toBeTruthy();
+    }
+  });
+
   it.each([false, true])('displays saved Sysbench table settings with preparation=%s', initialize => {
     const options = { durationSeconds: 5, threads: 2, tables: 3, tableSize: 500, initialize };
     render(card({ ...completed, driver: 'sysbench', runnerImage: 'registry/sysbench:v2', options }));
