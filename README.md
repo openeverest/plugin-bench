@@ -118,6 +118,24 @@ MySQL target. See the
 for an example and setup requirements.
 The UI does not yet offer a HammerDB options form.
 
+### Valkey through the API
+
+Send `POST /api/runs` with your OpenEverest bearer token and a writable,
+non-sharded Valkey primary as the target. The database defaults to `0`.
+
+```json
+{
+  "target": {"k8sCluster": "local", "namespace": "default", "instance": "valkey-bench"},
+  "driver": "valkey",
+  "database": "0",
+  "options": {"duration": 5, "threads": 1, "clientsPerThread": 2, "keyCount": 100, "valueSize": 256}
+}
+```
+
+For TLS, OpenEverest must supply `ca.crt` and, for mutual TLS, both `tls.crt`
+and `tls.key`. Poll `GET /api/runs/{id}` for metrics and logs. See the
+[Valkey runner reference](runners/valkey/README.md) for workload limits and ACLs.
+
 ### Using the benchmark tab
 
 Open **Performance Benchmark** in the sidebar to list accessible instances in
