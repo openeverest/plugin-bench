@@ -84,6 +84,7 @@ jobs:
       sysbench-tags: ${{ steps.sysbench-meta.outputs.tags }}
       ycsb-runner-tags: ${{ steps.ycsb-meta.outputs.tags }}
       hammerdb-runner-tags: ${{ steps.hammerdb-meta.outputs.tags }}
+      valkey-runner-tags: ${{ steps.valkey-meta.outputs.tags }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Download frontend bundle
@@ -100,6 +101,7 @@ jobs:
             runners/sysbench/go.mod
             runners/go-ycsb/go.sum
             runners/hammerdb/go.mod
+            runners/valkey/go.mod
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: "3.14.0"
@@ -118,6 +120,7 @@ jobs:
           (cd runners/sysbench && go vet ./... && go test -race ./...)
           (cd runners/go-ycsb && go vet ./... && go test -race ./...)
           (cd runners/hammerdb && export HAMMERDB_TEST_TCLSH=/usr/bin/tclsh && go vet ./... && go test -race ./...)
+          (cd runners/valkey && go vet ./... && go test -race ./...)
       - run: helm lint charts/plugin-bench/
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -164,6 +167,15 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ needs.prepare.outputs.image }}-hammerdb
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+      - name: Extract Valkey runner image metadata
+        id: valkey-meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ needs.prepare.outputs.image }}-valkey
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -222,6 +234,16 @@ jobs:
           labels: ${{ steps.hammerdb-meta.outputs.labels }}
           cache-from: type=gha,scope=hammerdb-runner
           cache-to: type=gha,scope=hammerdb-runner,mode=max
+      - name: Build Valkey runner archive
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: runners/valkey
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=image-artifacts/valkey-runner.tar
+          tags: ${{ needs.prepare.outputs.image }}-valkey:${{ needs.prepare.outputs.version }}
+          labels: ${{ steps.valkey-meta.outputs.labels }}
+          cache-from: type=gha,scope=valkey-runner
+          cache-to: type=gha,scope=valkey-runner,mode=max
       - name: Install image tools
         run: |
           sudo apt-get update
@@ -289,6 +311,20 @@ jobs:
       - name: Integration test HammerDB runner
         timeout-minutes: 30
         run: bash .github/scripts/test-hammerdb-runner.sh plugin-bench-hammerdb:release-test
+      - name: Load Valkey runner from release archive
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          valkey_archive="$RUNNER_TEMP/valkey-runner-test.tar"
+          skopeo --override-os linux --override-arch amd64 copy \
+            oci-archive:image-artifacts/valkey-runner.tar \
+            "docker-archive:${valkey_archive}:plugin-bench-valkey:release-test"
+          docker load --input "$valkey_archive"
+          rm "$valkey_archive"
+      - name: Integration test Valkey runner
+        timeout-minutes: 10
+        run: bash .github/scripts/test-valkey-runner.sh plugin-bench-valkey:release-test
       - name: Upload tested images
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -337,6 +373,7 @@ jobs:
           SYSBENCH_TAGS: ${{ needs.build-image.outputs.sysbench-tags }}
           GO_YCSB_TAGS: ${{ needs.build-image.outputs.ycsb-runner-tags }}
           HAMMERDB_TAGS: ${{ needs.build-image.outputs.hammerdb-runner-tags }}
+          VALKEY_TAGS: ${{ needs.build-image.outputs.valkey-runner-tags }}
         run: |
           set -euo pipefail
           auth="$RUNNER_TEMP/ghcr-auth.json"
@@ -355,12 +392,14 @@ jobs:
           publish image-artifacts/sysbench-runner.tar "$RUNNER_TEMP/sysbench.digest" "$SYSBENCH_TAGS"
           publish image-artifacts/go-ycsb-runner.tar "$RUNNER_TEMP/go-ycsb.digest" "$GO_YCSB_TAGS"
           publish image-artifacts/hammerdb-runner.tar "$RUNNER_TEMP/hammerdb.digest" "$HAMMERDB_TAGS"
+          publish image-artifacts/valkey-runner.tar "$RUNNER_TEMP/valkey.digest" "$VALKEY_TAGS"
           {
             echo "backend-digest=$(cat "$RUNNER_TEMP/backend.digest")"
             echo "runner-digest=$(cat "$RUNNER_TEMP/runner.digest")"
             echo "sysbench-digest=$(cat "$RUNNER_TEMP/sysbench.digest")"
             echo "ycsb-runner-digest=$(cat "$RUNNER_TEMP/go-ycsb.digest")"
             echo "hammerdb-runner-digest=$(cat "$RUNNER_TEMP/hammerdb.digest")"
+            echo "valkey-runner-digest=$(cat "$RUNNER_TEMP/valkey.digest")"
           } >> "$GITHUB_OUTPUT"
       - name: Publish Helm chart to GHCR
         env:
@@ -387,6 +426,8 @@ jobs:
             || not_public "${IMAGE}-go-ycsb"
           skopeo inspect --no-creds "docker://${IMAGE}-hammerdb:${VERSION}" > /dev/null \
             || not_public "${IMAGE}-hammerdb"
+          skopeo inspect --no-creds "docker://${IMAGE}-valkey:${VERSION}" > /dev/null \
+            || not_public "${IMAGE}-valkey"
           helm show chart "oci://${IMAGE%/*}/charts/plugin-bench" --version "$VERSION" \
             --registry-config "$RUNNER_TEMP/anonymous-helm.json" > /dev/null \
             || not_public "${IMAGE%/*}/charts/plugin-bench"
@@ -398,6 +439,7 @@ jobs:
           SYSBENCH_DIGEST: ${{ steps.publish.outputs.sysbench-digest }}
           YCSB_RUNNER_DIGEST: ${{ steps.publish.outputs.ycsb-runner-digest }}
           HAMMERDB_RUNNER_DIGEST: ${{ steps.publish.outputs.hammerdb-runner-digest }}
+          VALKEY_RUNNER_DIGEST: ${{ steps.publish.outputs.valkey-runner-digest }}
         run: |
           cat > release-artifacts/notes.md <<EOF
           ## Plugin Bench v${VERSION}
@@ -413,6 +455,8 @@ jobs:
             - Digest: \`${YCSB_RUNNER_DIGEST}\`
           - HammerDB runner: \`${IMAGE}-hammerdb:${VERSION}\`
             - Digest: \`${HAMMERDB_RUNNER_DIGEST}\`
+          - Valkey runner: \`${IMAGE}-valkey:${VERSION}\`
+            - Digest: \`${VALKEY_RUNNER_DIGEST}\`
 
           Platforms: \`linux/amd64\`, \`linux/arm64\`.
 
