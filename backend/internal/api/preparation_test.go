@@ -458,3 +458,49 @@ func TestPreparationRejectsDurationExceedingTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareValkeyUsesRunnerExecutionTimeout(t *testing.T) {
+	request := CreateRunRequest{
+		Driver:  "valkey",
+		Options: json.RawMessage(`{"duration":300,"keyCount":100000}`),
+	}
+	credentials := &everest.Credentials{
+		Type: "valkey", Provider: "valkey", Host: "cache", Port: "6379",
+		Username: "default", Password: "test-password", URI: "redis://cache:6379",
+	}
+	for _, test := range []struct {
+		name     string
+		override time.Duration
+		wantOK   bool
+	}{
+		{"allows maximum workload with longer override", 12 * time.Minute, true},
+		{"rejects measurement longer than override", 4 * time.Minute, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry, err := driver.NewRegistry(driver.Registration{
+				Driver: valkey.New(),
+				Runner: driver.RunnerConfig{
+					Image: "valkey-test", ImagePullPolicy: "Never", ExecutionTimeout: test.override,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			api := &API{registry: registry, executionTimeout: 5 * time.Minute}
+			prepared, err := api.prepareRun(request, credentials)
+			if !test.wantOK {
+				status, message := preparationError(err)
+				if status != http.StatusBadRequest || !strings.Contains(message, "exceeds execution timeout") {
+					t.Fatalf("expected timeout validation error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared.Input.Runner.ExecutionTimeout != test.override {
+				t.Fatalf("prepared timeout = %v, want %v", prepared.Input.Runner.ExecutionTimeout, test.override)
+			}
+		})
+	}
+}

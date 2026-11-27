@@ -22,6 +22,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/driver/hammerdb"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/pgbench"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/sysbench"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/valkey"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -150,6 +151,7 @@ func benchmarkRegistryFromEnv() (*driver.Registry, error) {
 		"pgbench":  pgbench.New,
 		"sysbench": sysbench.New,
 		"mariadb":  sysbench.NewMariaDB,
+		"valkey":   valkey.New,
 	})
 	if err != nil {
 		return nil, err

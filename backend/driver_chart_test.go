@@ -171,7 +171,7 @@ func TestChartSysbenchConfiguration(t *testing.T) {
 		{name: "pull policy only", settings: "drivers.sysbench.enabled=true,drivers.sysbench.image.pullPolicy=Always", image: defaultImage, policy: "Always"},
 		{name: "all image overrides", settings: "drivers.sysbench.enabled=true,drivers.sysbench.image.repository=local/sysbench,drivers.sysbench.image.tag=dev,drivers.sysbench.image.pullPolicy=Never", image: "local/sysbench:dev", policy: "Never"},
 		{name: "legacy overrides stay with pgbench", settings: "drivers.sysbench.enabled=true,runner.image.repository=example.com/legacy,runner.image.tag=old,runner.image.pullPolicy=Never", image: defaultImage, policy: "IfNotPresent", pgbenchImage: "example.com/legacy:old"},
-		{name: "sysbench only", settings: "drivers.sysbench.enabled=true,drivers.pgbench.enabled=false,drivers.go-ycsb.enabled=false,drivers.mariadb.enabled=false,drivers.hammerdb.enabled=false", image: defaultImage, policy: "IfNotPresent", pgbenchDisabled: true},
+		{name: "sysbench only", settings: "drivers.sysbench.enabled=true,drivers.pgbench.enabled=false,drivers.go-ycsb.enabled=false,drivers.mariadb.enabled=false,drivers.hammerdb.enabled=false,drivers.valkey.enabled=false", image: defaultImage, policy: "IfNotPresent", pgbenchDisabled: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var args []string
@@ -234,7 +234,7 @@ func TestChartGoYCSBConfiguration(t *testing.T) {
 		{name: "all image overrides", settings: "drivers.go-ycsb.image.repository=local/go-ycsb,drivers.go-ycsb.image.tag=dev,drivers.go-ycsb.image.pullPolicy=Never", image: "local/go-ycsb:dev", policy: "Never"},
 		{name: "disabled with unused image settings", settings: "drivers.go-ycsb.enabled=false,drivers.go-ycsb.image.repository=unused,drivers.go-ycsb.image.tag=unused"},
 		{name: "legacy overrides do not affect go-ycsb", settings: "drivers.go-ycsb.enabled=true,runner.image.repository=example.com/legacy,runner.image.tag=old,runner.image.pullPolicy=Always", image: defaultImage, policy: "IfNotPresent"},
-		{name: "go-ycsb only", settings: "drivers.go-ycsb.enabled=true,drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,drivers.mariadb.enabled=false,drivers.hammerdb.enabled=false", image: defaultImage, policy: "IfNotPresent", onlyGoYCSB: true},
+		{name: "go-ycsb only", settings: "drivers.go-ycsb.enabled=true,drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,drivers.mariadb.enabled=false,drivers.hammerdb.enabled=false,drivers.valkey.enabled=false", image: defaultImage, policy: "IfNotPresent", onlyGoYCSB: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var args []string
@@ -253,9 +253,9 @@ func TestChartGoYCSBConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantIDs := []string{"hammerdb", "mariadb", "pgbench", "sysbench"}
+			wantIDs := []string{"hammerdb", "mariadb", "pgbench", "sysbench", "valkey"}
 			if test.image != "" {
-				wantIDs = []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench"}
+				wantIDs = []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench", "valkey"}
 			}
 			if test.onlyGoYCSB {
 				wantIDs = []string{"go-ycsb"}
@@ -287,15 +287,15 @@ func TestChartHammerDBConfiguration(t *testing.T) {
 		wantIDs                                       []string
 	}{
 		{name: "enabled default", image: defaultImage, policy: "IfNotPresent", timeout: 30 * time.Minute,
-			wantTimeout: "30m", wantIDs: []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench"}},
+			wantTimeout: "30m", wantIDs: []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench", "valkey"}},
 		{name: "image overrides and timeout", stringSettings: "drivers.hammerdb.image.repository=example.com/custom,drivers.hammerdb.image.tag=dev,drivers.hammerdb.image.pullPolicy=Never,drivers.hammerdb.executionTimeout=45m",
 			image: "example.com/custom:dev", policy: "Never", timeout: 45 * time.Minute, wantTimeout: "45m",
-			wantIDs: []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench"}},
+			wantIDs: []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench", "valkey"}},
 		{name: "empty timeout inherits global", stringSettings: "drivers.hammerdb.executionTimeout=",
-			image: defaultImage, policy: "IfNotPresent", wantIDs: []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench"}},
+			image: defaultImage, policy: "IfNotPresent", wantIDs: []string{"go-ycsb", "hammerdb", "mariadb", "pgbench", "sysbench", "valkey"}},
 		{name: "disabled", settings: "drivers.hammerdb.enabled=false", stringSettings: "drivers.hammerdb.image.repository=unused,drivers.hammerdb.image.tag=unused",
-			wantIDs: []string{"go-ycsb", "mariadb", "pgbench", "sysbench"}},
-		{name: "HammerDB only", settings: "drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,drivers.go-ycsb.enabled=false,drivers.mariadb.enabled=false",
+			wantIDs: []string{"go-ycsb", "mariadb", "pgbench", "sysbench", "valkey"}},
+		{name: "HammerDB only", settings: "drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,drivers.go-ycsb.enabled=false,drivers.mariadb.enabled=false,drivers.valkey.enabled=false",
 			image: defaultImage, policy: "IfNotPresent", timeout: 30 * time.Minute, wantTimeout: "30m", wantIDs: []string{"hammerdb"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -350,7 +350,7 @@ func TestChartHammerDBConfiguration(t *testing.T) {
 
 func TestChartDriverDisablementAndMultipleEntries(t *testing.T) {
 	deployment := renderDriverDeployment(t, filepath.Join("..", "charts", "plugin-bench"),
-		"--set", "drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,drivers.go-ycsb.enabled=false,drivers.mariadb.enabled=false,drivers.hammerdb.enabled=false,runner.image.repository=legacy,runner.image.tag=old,drivers.future.enabled=true,drivers.future.image.tag=2.0.0")
+		"--set", "drivers.pgbench.enabled=false,drivers.sysbench.enabled=false,drivers.go-ycsb.enabled=false,drivers.mariadb.enabled=false,drivers.hammerdb.enabled=false,drivers.valkey.enabled=false,runner.image.repository=legacy,runner.image.tag=old,drivers.future.enabled=true,drivers.future.image.tag=2.0.0")
 	var payload string
 	for _, variable := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if variable.Name == "BENCHMARK_DRIVERS" {
@@ -361,12 +361,13 @@ func TestChartDriverDisablementAndMultipleEntries(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &entries); err != nil {
 		t.Fatal(err)
 	}
-	pgbench, sysbench, goycsb, hammerdb, mariadb, future := entries["pgbench"], entries["sysbench"], entries["go-ycsb"], entries["hammerdb"], entries["mariadb"], entries["future"]
-	if len(entries) != 6 || pgbench.Enabled == nil || *pgbench.Enabled || pgbench.Image != "" ||
+	pgbench, sysbench, goycsb, hammerdb, mariadb, valkey, future := entries["pgbench"], entries["sysbench"], entries["go-ycsb"], entries["hammerdb"], entries["mariadb"], entries["valkey"], entries["future"]
+	if len(entries) != 7 || pgbench.Enabled == nil || *pgbench.Enabled || pgbench.Image != "" ||
 		sysbench.Enabled == nil || *sysbench.Enabled || sysbench.Image != "" || sysbench.ImagePullPolicy != "" ||
 		goycsb.Enabled == nil || *goycsb.Enabled || goycsb.Image != "" || goycsb.ImagePullPolicy != "" ||
 		hammerdb.Enabled == nil || *hammerdb.Enabled || hammerdb.Image != "" || hammerdb.ImagePullPolicy != "" || hammerdb.ExecutionTimeout != "" ||
 		mariadb.Enabled == nil || *mariadb.Enabled || mariadb.Image != "" || mariadb.ImagePullPolicy != "" ||
+		valkey.Enabled == nil || *valkey.Enabled || valkey.Image != "" || valkey.ImagePullPolicy != "" || valkey.ExecutionTimeout != "" ||
 		future.Enabled == nil || !*future.Enabled || future.Image != "ghcr.io/openeverest/plugin-bench-future:2.0.0" || future.ImagePullPolicy != "IfNotPresent" {
 		t.Fatalf("wrong rendered driver entries: %s", payload)
 	}
@@ -489,6 +490,58 @@ func TestChartMariaDBConfiguration(t *testing.T) {
 				}
 			} else if err != nil || registration.Runner.Image != tc.image || registration.Runner.ImagePullPolicy != tc.policy {
 				t.Fatalf("MariaDB runner = %+v, error = %v", registration.Runner, err)
+			}
+		})
+	}
+}
+
+func TestChartValkeyConfiguration(t *testing.T) {
+	chart := filepath.Join("..", "charts", "plugin-bench")
+	defaultImage := "ghcr.io/openeverest/plugin-bench-valkey:" + chartAppVersion(t, chart)
+	for _, test := range []struct {
+		name, settings, image string
+		timeout               time.Duration
+	}{
+		{"default", "", defaultImage, 12 * time.Minute},
+		{"Tilt image and timeout override", "drivers.valkey.image.repository=localhost:5000/plugin-bench-valkey,drivers.valkey.image.tag=tilt-dev,drivers.valkey.executionTimeout=15m", "localhost:5000/plugin-bench-valkey:tilt-dev", 15 * time.Minute},
+		{"inherit shared timeout", "drivers.valkey.executionTimeout=", defaultImage, 0},
+		{"disabled", "drivers.valkey.enabled=false", "", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var args []string
+			if test.settings != "" {
+				args = []string{"--set", test.settings}
+			}
+			deployment := renderDriverDeployment(t, chart, args...)
+			env := make(map[string]string)
+			for _, variable := range deployment.Spec.Template.Spec.Containers[0].Env {
+				env[variable.Name] = variable.Value
+			}
+			t.Setenv("BENCHMARK_DRIVERS", env["BENCHMARK_DRIVERS"])
+			t.Setenv("BENCHMARK_EXECUTION_TIMEOUT", env["BENCHMARK_EXECUTION_TIMEOUT"])
+			config, err := coordinatorConfigFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry, err := benchmarkRegistryFromEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pgbench, err := registry.Resolve("pgbench", driver.TargetInfo{DatabaseType: "postgresql"})
+			if err != nil || pgbench.Runner.ExecutionTimeout != 0 || config.ExecutionTimeout != 5*time.Minute {
+				t.Fatalf("pgbench should inherit the 5-minute shared timeout, got pgbench=%v shared=%v err=%v", pgbench.Runner.ExecutionTimeout, config.ExecutionTimeout, err)
+			}
+			valkey, err := registry.Resolve("valkey", driver.TargetInfo{DatabaseType: "valkey", Provider: "valkey"})
+			if test.image == "" {
+				var problem *driver.Error
+				if !errors.As(err, &problem) || problem.Kind != driver.DriverSelection {
+					t.Fatalf("disabled Valkey resolution = %v; want driver selection error", err)
+				}
+				return
+			}
+			want := driver.RunnerConfig{Image: test.image, ImagePullPolicy: "IfNotPresent", ExecutionTimeout: test.timeout}
+			if err != nil || valkey.Runner != want {
+				t.Fatalf("Valkey runner = %+v, error = %v; want %+v", valkey.Runner, err, want)
 			}
 		})
 	}

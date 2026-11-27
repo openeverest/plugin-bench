@@ -431,6 +431,10 @@ for that driver; empty inherits the shared limit. HammerDB defaults to `30m`.
 Set `--set drivers.hammerdb.executionTimeout=45m` to allow 45 minutes, including
 pending time, startup, preparation, ramp-up and measurement.
 
+Valkey defaults to a 12-minute Job timeout to allow for startup and the runner’s
+10-minute internal limit, which covers seeding and measurement. Override the Job
+timeout with `--set drivers.valkey.executionTimeout=<duration>`.
+
 Helm serializes the resolved settings into one backend environment variable.
 For a chart with `appVersion: 0.2.0`:
 

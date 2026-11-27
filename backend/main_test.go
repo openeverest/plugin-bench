@@ -81,6 +81,16 @@ func TestHandleStatusReportsOnlyEnabledDrivers(t *testing.T) {
 			want:    []string{"go-ycsb"},
 		},
 		{
+			name:    "valkey only",
+			payload: `{"valkey":{"enabled":true,"image":"private.example/valkey:test"}}`,
+			want:    []string{"valkey"},
+		},
+		{
+			name:    "valkey explicitly disabled",
+			payload: `{"valkey":{"enabled":false},"pgbench":{"enabled":true,"image":"private.example/pgbench:test"}}`,
+			want:    []string{"pgbench"},
+		},
+		{
 			name:    "hammerdb only",
 			payload: `{"hammerdb":{"enabled":true,"image":"private.example/hammerdb:test"}}`,
 			want:    []string{"hammerdb"},

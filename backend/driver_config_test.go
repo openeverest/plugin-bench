@@ -136,6 +136,14 @@ func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 			want: map[string]driver.RunnerConfig{"go-ycsb": {Image: "example.com/go-ycsb:v3", ImagePullPolicy: "IfNotPresent"}},
 		},
 		{
+			name:    "valkey override alongside shared timeout",
+			payload: `{"valkey":{"enabled":true,"image":"example.com/valkey:v1","executionTimeout":"12m"},"pgbench":{"enabled":true,"image":"example.com/pgbench:v1"}}`,
+			want: map[string]driver.RunnerConfig{
+				"valkey":  {Image: "example.com/valkey:v1", ImagePullPolicy: "IfNotPresent", ExecutionTimeout: 12 * time.Minute},
+				"pgbench": {Image: "example.com/pgbench:v1", ImagePullPolicy: "IfNotPresent"},
+			},
+		},
+		{
 			name:    "hammerdb only",
 			payload: `{"hammerdb":{"enabled":true,"image":"example.com/hammerdb:v4","executionTimeout":"30m"}}`,
 			want:    map[string]driver.RunnerConfig{"hammerdb": {Image: "example.com/hammerdb:v4", ImagePullPolicy: "IfNotPresent", ExecutionTimeout: 30 * time.Minute}},
@@ -154,8 +162,12 @@ func TestDriverConfigurationSupportsCompiledDrivers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for id, databaseType := range map[string]string{"pgbench": "postgresql", "sysbench": "mysql", "go-ycsb": "mongodb", "mariadb": "mariadb"} {
-				registration, err := registry.Resolve(id, driver.TargetInfo{DatabaseType: databaseType, Provider: "unfamiliar-provider"})
+			for id, databaseType := range map[string]string{"pgbench": "postgresql", "sysbench": "mysql", "go-ycsb": "mongodb", "mariadb": "mariadb", "valkey": "valkey"} {
+				provider := "unfamiliar-provider"
+				if id == "valkey" {
+					provider = "valkey"
+				}
+				registration, err := registry.Resolve(id, driver.TargetInfo{DatabaseType: databaseType, Provider: provider})
 				want, enabled := test.want[id]
 				if !enabled {
 					var problem *driver.Error
