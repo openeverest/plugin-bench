@@ -256,6 +256,11 @@ live benchmark against a PXC (`percona-xtradb-cluster`) instance has been
 verified. The Sysbench runner has been verified against MySQL 8.4 on Linux/ARM64
 and exercised locally against MariaDB 11.4.13.
 
+The backend Pod and runner Jobs meet the `restricted` Pod Security Standard.
+Images use numeric non-root users and no Pod sets fixed UIDs, GIDs or
+`fsGroup`, so OpenShift's default `restricted-v2` SCC can assign IDs from the
+namespace range. Runner images write only to `/tmp`.
+
 ## Local development
 
 Create the development cluster and start the Tilt environment:

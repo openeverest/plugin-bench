@@ -30,7 +30,7 @@ RUN set -eu; \
 
 COPY --from=builder /out/sysbench-runner /usr/local/bin/sysbench-runner
 
-USER runner:runner
+USER 10001:10001
 WORKDIR /tmp
 
 # Credential files are created privately inside the writable temporary directory.

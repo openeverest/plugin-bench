@@ -65,7 +65,7 @@ RUN set -eu; \
 
 ENV PATH="/home/hammerdb:${PATH}"
 WORKDIR /home/hammerdb
-USER runner:runner
+USER 10001:10001
 
 # runStaged creates private scripts/state under /tmp and removes them on exit.
 RUN test "$(id -u)" -ne 0 && test -w /tmp && test -x ./hammerdbcli

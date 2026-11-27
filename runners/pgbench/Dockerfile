@@ -21,6 +21,9 @@ RUN apk add --no-cache postgresql16-contrib \
 
 COPY --from=builder --chown=postgres:postgres /out/pgbench-runner /usr/local/bin/pgbench-runner
 
-USER postgres
+# Numeric so runAsNonRoot can verify it. 70 is the image's postgres user.
+USER 70:70
+
+RUN test "$(id -un)" = postgres && test "$(id -u)" -eq 70 && test "$(id -g)" -eq 70
 
 ENTRYPOINT ["/usr/local/bin/pgbench-runner"]

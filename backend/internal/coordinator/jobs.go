@@ -495,6 +495,12 @@ func newBenchmarkJob(config Config, name, secretName string, input RunInput, res
 					RestartPolicy:                corev1.RestartPolicyNever,
 					ServiceAccountName:           config.RunnerServiceAccount,
 					AutomountServiceAccountToken: boolPtr(false),
+					// Meets the restricted Pod Security Standard without fixed
+					// IDs, so OpenShift can assign a UID from the namespace range.
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot:   boolPtr(true),
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+					},
 					Containers: []corev1.Container{{
 						Name:                     runnerContainerName,
 						Image:                    input.Runner.Image,
@@ -505,6 +511,10 @@ func newBenchmarkJob(config Config, name, secretName string, input RunInput, res
 						TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 						Resources:                resources,
 						Env:                      benchmarkEnvironment(secretName, input.Spec),
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: boolPtr(false),
+							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+						},
 					}},
 				},
 			},
