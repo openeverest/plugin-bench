@@ -63,15 +63,16 @@ func memtierLogRedactor(c config) *strings.Replacer {
 // Each subprocess stream has its own writer. Buffer complete lines so a
 // credential split across writes is still redacted before reaching pod logs.
 type memtierLogWriter struct {
-	destination       io.Writer
-	redact            *strings.Replacer
-	budget            *memtierLogBudget
-	line              []byte
-	discarding        bool
-	afterCR           bool
-	err               error
-	watchErrorReplies bool
-	sawErrorReply     bool
+	destination   io.Writer
+	redact        *strings.Replacer
+	budget        *memtierLogBudget
+	line          []byte
+	discarding    bool
+	afterCR       bool
+	err           error
+	watchFailures bool
+	failure       string
+	onFailure     func(string)
 }
 
 func (w *memtierLogWriter) Write(data []byte) (int, error) {
@@ -101,8 +102,11 @@ func (w *memtierLogWriter) Write(data []byte) (int, error) {
 
 func (w *memtierLogWriter) flush() {
 	// Inspect the original line before redaction or the shared log limit.
-	if w.watchErrorReplies && !w.sawErrorReply && bytes.Contains(w.line, []byte(memtierErrorReplyMarker)) {
-		w.sawErrorReply = true
+	if w.watchFailures && w.failure == "" {
+		w.failure = memtierFailure(w.line)
+		if w.failure != "" && w.onFailure != nil {
+			w.onFailure(w.failure)
+		}
 	}
 	if w.err == nil {
 		line := "[Memtier output line omitted]"
@@ -113,6 +117,31 @@ func (w *memtierLogWriter) flush() {
 	}
 	w.line = w.line[:0]
 	w.discarding = false
+}
+
+func memtierFailure(line []byte) string {
+	switch {
+	case bytes.HasPrefix(line, []byte("error: authentication failed [")):
+		return "authentication failed"
+	case bytes.Equal(line, []byte("database selection failed.")):
+		return "database selection failed"
+	}
+	_, reply, found := bytes.Cut(line, []byte(memtierErrorReplyMarker))
+	if !found {
+		return ""
+	}
+	code, _, _ := bytes.Cut(reply, []byte(" "))
+	// Return only known codes. Server replies can contain credentials.
+	switch string(code) {
+	case "-OOM":
+		return "Valkey returned an error reply (OOM)"
+	case "-READONLY":
+		return "Valkey returned an error reply (READONLY)"
+	case "-NOPERM":
+		return "Valkey returned an error reply (NOPERM)"
+	default:
+		return "Valkey returned an error reply"
+	}
 }
 
 // finish runs after exec has drained the stream.

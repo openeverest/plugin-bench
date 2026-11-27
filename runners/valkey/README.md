@@ -7,9 +7,8 @@ It seeds a fresh range of keys, verifies the seed, then measures a workload of
 `/dev/termination-log`.
 
 Every run uses a unique key prefix. On success or failure, the runner tries
-for up to 10 seconds to remove that run's keys with `UNLINK`. Allow the benchmark
-user to run `UNLINK` on `plugin-bench:*`. If cleanup cannot finish, remaining keys
-expire about an hour after their last write.
+for up to 10 seconds to remove that run's keys with `UNLINK`. If cleanup cannot
+finish, remaining keys expire about an hour after their last write.
 
 Use a disposable target with enough memory for the benchmark values and Valkey's
 per-key overhead. Under an `allkeys-*` policy, benchmark writes can evict existing
@@ -17,9 +16,19 @@ keys. Under `noeviction`, writes can fail when Valkey reaches its memory limit.
 
 Before seeding, the runner connects to Valkey and checks the credentials with
 `AUTH`, checks for cluster mode with `INFO cluster`, and confirms the endpoint
-is a primary with `ROLE`. Grant the benchmark user permission to run `INFO`
-and `ROLE`. For replication deployments, use the primary service so Memtier's
-connections reach the primary as well.
+is a primary with `ROLE`. For replication deployments, use the primary service
+so Memtier's connections reach the primary as well.
+
+The integration test uses this ACL rule for the benchmark user.
+
+```text
+~plugin-bench:* +info +role +select +set +setex +get +exists +unlink
+```
+
+The key pattern limits key access to the benchmark prefix. Memtier uses `SELECT`
+for database selection and the read/write commands for the workload. The runner
+uses `EXISTS` to verify seeded keys and `UNLINK` to clean them up.
+
 With TLS enabled, this preflight verifies the CA and hostname. Memtier
 then connects directly for seeding and measurement. Memtier 2.6.1 verifies the
 CA on its TLS connections. Hostname verification happens during preflight only.

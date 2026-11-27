@@ -63,25 +63,30 @@ func run(ctx context.Context, c config, executable string, files privateFiles) e
 		{"measurement", args.measure},
 	} {
 		fmt.Fprintln(os.Stdout, "Valkey benchmark:", phase.name)
-		cmd := exec.CommandContext(ctx, executable, append(phase.args, connectionArgs...)...)
+		phaseCtx, stopPhase := context.WithCancelCause(ctx)
+		cmd := exec.CommandContext(phaseCtx, executable, append(phase.args, connectionArgs...)...)
 		cmd.Env = env
 		stdout := &memtierLogWriter{destination: os.Stdout, redact: redact, budget: logBudget}
-		stderr := &memtierLogWriter{destination: os.Stderr, redact: redact, budget: logBudget, watchErrorReplies: true}
+		stderr := &memtierLogWriter{
+			destination: os.Stderr, redact: redact, budget: logBudget, watchFailures: true,
+			onFailure: func(reason string) {
+				stopPhase(errors.New(reason))
+			},
+		}
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		err := cmd.Run()
 		stdout.finish()
 		stderr.finish()
+		cause := context.Cause(phaseCtx)
+		stopPhase(nil)
 		if stdout.err != nil || stderr.err != nil {
 			fmt.Fprintln(os.Stderr, "runner warning: could not forward Memtier output")
 		}
-		if cause := context.Cause(ctx); cause != nil {
+		if cause != nil {
 			return fmt.Errorf("%s failed: %w", phase.name, cause)
 		}
 		if err != nil {
 			return fmt.Errorf("Memtier %s failed: %w", phase.name, err)
-		}
-		if stderr.sawErrorReply {
-			return fmt.Errorf("Memtier %s failed: Valkey returned an error reply", phase.name)
 		}
 		if phase.name == "seeding" {
 			if err := verifySeed(ctx, endpoint, args.prefix, c.keyCount); err != nil {
