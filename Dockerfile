@@ -16,5 +16,9 @@ RUN apk --no-cache add ca-certificates
 
 COPY --from=backend-builder /app/server /usr/local/bin/server
 
+# Numeric so runAsNonRoot can verify it; OpenShift may replace it with a
+# UID from the namespace range.
+USER 65532:65532
+
 EXPOSE 8080
 ENTRYPOINT ["server"]

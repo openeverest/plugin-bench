@@ -45,7 +45,7 @@ COPY --from=upstream-builder /src/LICENSE /src/YCSB-LICENSE /usr/share/licenses/
 COPY --from=wrapper-builder /out/go-ycsb-runner /usr/local/bin/go-ycsb-runner
 COPY workloads/workloada /etc/go-ycsb/workloads/workloada
 
-USER runner:runner
+USER 10001:10001
 WORKDIR /tmp
 
 # Private credential files need writable temporary storage. Check the packaged

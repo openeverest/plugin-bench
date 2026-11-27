@@ -1013,6 +1013,20 @@ func TestNewBenchmarkJobBuildsRunnerManifest(t *testing.T) {
 		t.Fatal("Job must contain exactly one runner container")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
+	wantPodSecurity := &corev1.PodSecurityContext{
+		RunAsNonRoot:   boolPtr(true),
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+	if !reflect.DeepEqual(job.Spec.Template.Spec.SecurityContext, wantPodSecurity) {
+		t.Fatalf("pod securityContext = %+v, want restricted settings without fixed IDs", job.Spec.Template.Spec.SecurityContext)
+	}
+	wantContainerSecurity := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: boolPtr(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+	if !reflect.DeepEqual(container.SecurityContext, wantContainerSecurity) {
+		t.Fatalf("container securityContext = %+v, want restricted settings without fixed IDs", container.SecurityContext)
+	}
 	if container.Image != options.Runner.Image {
 		t.Fatalf("runner image = %q", container.Image)
 	}
