@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -66,6 +67,13 @@ func (a *API) prepareRun(request CreateRunRequest, credentials *everest.Credenti
 	})
 	if err != nil {
 		return preparedRun{}, err
+	}
+	timeout := a.executionTimeout
+	if registration.Runner.ExecutionTimeout > 0 {
+		timeout = registration.Runner.ExecutionTimeout
+	}
+	if spec.MinimumDuration > timeout {
+		return preparedRun{}, &driver.Error{Kind: driver.InvalidOptions, Message: fmt.Sprintf("requested benchmark time %s exceeds execution timeout %s", spec.MinimumDuration, timeout)}
 	}
 	spec = spec.Clone()
 	input := coordinator.RunInput{Runner: registration.Runner, Spec: spec, Resources: request.Resources, NodeAffinity: request.NodeAffinity.DeepCopy()}

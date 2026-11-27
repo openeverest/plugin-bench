@@ -18,6 +18,9 @@ import (
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/hammerdb"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/pgbench"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/sysbench"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	batchv1 "k8s.io/api/batch/v1"
@@ -382,5 +385,38 @@ func testPreparedDriverExecution(t *testing.T, message string, wantMetrics []run
 	}
 	if !jobDeleted || !secretDeleted || len(a.runSlots) != 0 {
 		t.Fatal("execution did not clean up and release capacity")
+	}
+}
+
+func TestPreparationRejectsDurationExceedingTimeout(t *testing.T) {
+	for _, tool := range []struct {
+		driver                driver.Driver
+		databaseType, options string
+	}{
+		{pgbench.New(), "postgresql", `{"durationSeconds":301}`},
+		{sysbench.New(), "mysql", `{"durationSeconds":301}`},
+		{hammerdb.New(), "mysql", `{"rampupMinutes":3,"durationMinutes":3}`},
+	} {
+		for _, override := range []time.Duration{0, 10 * time.Minute} {
+			t.Run(tool.driver.ID()+"/"+override.String(), func(t *testing.T) {
+				registry, err := driver.NewRegistry(driver.Registration{Driver: tool.driver, Runner: driver.RunnerConfig{Image: "runner:test", ImagePullPolicy: "Never", ExecutionTimeout: override}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				a := &API{registry: registry, executionTimeout: 5 * time.Minute}
+				credentials := testCredentials()
+				credentials.Type = tool.databaseType
+				credentials.URI = ""
+				_, err = a.prepareRun(CreateRunRequest{Driver: tool.driver.ID(), Database: "bench", Options: json.RawMessage(tool.options)}, credentials)
+				if override == 0 {
+					status, message := preparationError(err)
+					if status != http.StatusBadRequest || !strings.Contains(message, "exceeds execution timeout") {
+						t.Fatalf("expected timeout validation error, got %v", err)
+					}
+				} else if err != nil {
+					t.Fatalf("driver override should allow duration: %v", err)
+				}
+			})
+		}
 	}
 }

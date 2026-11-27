@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/openeverest/plugin-bench/backend/internal/coordinator"
 	"github.com/openeverest/plugin-bench/backend/internal/driver"
@@ -32,6 +33,7 @@ type API struct {
 	runner              BenchmarkRunner
 	registry            *driver.Registry
 	resourceDefaults    coordinator.Resources
+	executionTimeout    time.Duration
 	store               RunStore
 	lifecycleCtx        context.Context
 	runSlots            chan struct{}
@@ -40,14 +42,19 @@ type API struct {
 	closing             bool
 }
 
-func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, registry *driver.Registry, lookupInstances InstanceLookup) *API {
+func NewAPI(getCredentials CredentialLookup, checkInstanceAccess InstanceAccessCheck, runner BenchmarkRunner, store RunStore, lifecycleCtx context.Context, resourceDefaults coordinator.Resources, registry *driver.Registry, lookupInstances InstanceLookup, executionTimeout ...time.Duration) *API {
 	if store == nil {
 		store = NewRunStore()
 	}
 	if lifecycleCtx == nil {
 		lifecycleCtx = context.Background()
 	}
+	timeout := 5 * time.Minute
+	if len(executionTimeout) > 0 {
+		timeout = executionTimeout[0]
+	}
 	return &API{
+		executionTimeout:    timeout,
 		getCredentials:      getCredentials,
 		checkInstanceAccess: checkInstanceAccess,
 		lookupInstances:     lookupInstances,
