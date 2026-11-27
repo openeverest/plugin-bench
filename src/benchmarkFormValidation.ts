@@ -44,7 +44,7 @@ export function validateBenchmarkForm(values: BenchmarkFormValues, provider?: st
 
 function validateSharedFields(values: BenchmarkFormValues, provider?: string): BenchmarkFormErrors {
   const errors: BenchmarkFormErrors = {};
-  const databaseError = benchmarkDrivers[values.driver].validateDatabase(values.database);
+  const databaseError = benchmarkDrivers[values.driver].validateDatabase(values.database, provider);
   if (databaseError) errors.database = databaseError;
   if (isBenchmarkDatabaseRequired(values.driver, provider) && values.database.trim() === '') {
     errors.database = 'Enter the name of an existing database.';

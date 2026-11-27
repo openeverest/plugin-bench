@@ -10,6 +10,11 @@ import {
   describeGoYCSBRunOptions, initialGoYCSBOptionsDraft, prepareGoYCSBOptions, validateGoYCSBDatabase,
 } from './goycsb.js';
 import type { GoYCSBOptions, GoYCSBOptionsDraft } from './goycsb';
+import {
+  describeHammerDBRunOptions, hammerdbMySQLProviders, hammerdbPostgresProviders, initialHammerDBOptionsDraft,
+  prepareHammerDBOptions, validateHammerDBDatabase,
+} from './hammerdb.js';
+import type { HammerDBOptions, HammerDBOptionsDraft } from './hammerdb';
 
 // Register each driver's draft and validated options together so their types
 // stay associated throughout the form and the submitted request.
@@ -18,6 +23,7 @@ type DriverTypes = {
   sysbench: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
   mariadb: { draft: SysbenchOptionsDraft; options: SysbenchOptions };
   'go-ycsb': { draft: GoYCSBOptionsDraft; options: GoYCSBOptions };
+  hammerdb: { draft: HammerDBOptionsDraft; options: HammerDBOptions };
 };
 
 export type BenchmarkDriverId = keyof DriverTypes;
@@ -41,7 +47,7 @@ type DriverDefinition<K extends BenchmarkDriverId> = {
   fixedDatabase?: { name: string; helperText: string };
   createDraft: () => DriverDraft<K>;
   prepare: (draft: DriverDraft<K>) => DriverPreparation<K>;
-  validateDatabase: (database: string) => string | undefined;
+  validateDatabase: (database: string, provider?: string) => string | undefined;
   /** Adapts a recorded options snapshot for display without changing the run record. */
   describeRunOptions: (options: Readonly<Record<string, unknown>>) => Record<string, unknown>;
 };
@@ -99,6 +105,20 @@ export const benchmarkDrivers: { [K in BenchmarkDriverId]: DriverDefinition<K> }
     },
     validateDatabase: validateGoYCSBDatabase,
     describeRunOptions: describeGoYCSBRunOptions,
+  },
+  // Listed after the default driver of each provider so it is never preselected.
+  hammerdb: {
+    label: 'HammerDB',
+    providers: [...hammerdbPostgresProviders, ...hammerdbMySQLProviders],
+    databaseRequiredProviders: hammerdbMySQLProviders,
+    createDraft: () => ({ driver: 'hammerdb', options: { ...initialHammerDBOptionsDraft } }),
+    prepare: ({ options }) => {
+      const prepared = prepareHammerDBOptions(options);
+      if (prepared.ok === false) return prepared;
+      return { ok: true, request: { driver: 'hammerdb', options: prepared.options } };
+    },
+    validateDatabase: validateHammerDBDatabase,
+    describeRunOptions: describeHammerDBRunOptions,
   },
 };
 

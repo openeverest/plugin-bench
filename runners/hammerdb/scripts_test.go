@@ -64,7 +64,8 @@ func TestConfigurationScriptSettings(t *testing.T) {
 						`"diset" "tpcc" "mysql_pass" `+tclLiteral(hammerdbPassword(tclListElement(c.password))),
 						`"diset" "connection" "mysql_socket" "/tmp/mysql.sock"`,
 						`"diset" "connection" "mysql_ssl" "true"`,
-						`"diset" "connection" "mysql_ssl_two_way" "false"`)
+						`"diset" "connection" "mysql_ssl_two_way" "false"`,
+						`"diset" "tpcc" "mysql_history_pk" "true"`)
 					for _, key := range []string{"ssl_linux_capath", "ssl_windows_capath", "ssl_ca", "ssl_cert", "ssl_key"} {
 						expected = append(expected, `"diset" "connection" "mysql_`+key+`" ""`)
 					}

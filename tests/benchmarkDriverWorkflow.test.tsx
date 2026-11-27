@@ -554,3 +554,139 @@ describe('Sysbench workflow', () => {
     expect(fetch.mock.calls[0][1]?.method).toBe('GET');
   });
 });
+
+describe('HammerDB workflow', () => {
+  const drivers = ['pgbench', 'sysbench', 'mariadb', 'go-ycsb', 'hammerdb'];
+  const hammerTab = (fetch: PluginApi['fetch'], instanceName: string, provider: string) => (
+    <BenchmarkTab cluster={{ clusterName: 'main', spec: { providerRef: { name: provider } } }}
+      namespace="default" instanceName={instanceName} pluginFetch={(path, init) =>
+        path === '/api/status' ? Promise.resolve(response({ drivers }))
+          : path.startsWith('/api/runs?') ? Promise.resolve(response({ runs: [] })) : fetch(path, init)} />
+  );
+  const change = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  const selectHammerDB = () => {
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Benchmark driver' }));
+    fireEvent.click(screen.getByRole('option', { name: 'HammerDB' }));
+  };
+  const options = { warehouses: 4, virtualUsers: 2, rampupMinutes: 1, durationMinutes: 3 };
+
+  it.each([
+    { provider: 'provider-cloudnative-pg', defaultLabel: 'pgbench' },
+    { provider: 'provider-percona-postgresql', defaultLabel: 'pgbench' },
+    { provider: 'percona-server-mysql', defaultLabel: 'Sysbench' },
+    { provider: 'percona-xtradb-cluster', defaultLabel: 'Sysbench' },
+  ])('offers HammerDB after $defaultLabel for $provider', async ({ provider, defaultLabel }) => {
+    const fetch = vi.fn<PluginApi['fetch']>();
+    await renderReady(hammerTab(fetch, 'db-1', provider));
+    const picker = screen.getByRole('combobox', { name: 'Benchmark driver' });
+    expect(picker.textContent).toBe(defaultLabel);
+    fireEvent.mouseDown(picker);
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([defaultLabel, 'HammerDB']);
+    fireEvent.click(screen.getByRole('option', { name: 'HammerDB' }));
+    expect(picker.textContent).toBe('HammerDB');
+    expect((screen.getByRole('checkbox', { name: 'Build TPROC-C schema' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Warehouses') as HTMLInputElement).value).toBe('1');
+    expect((screen.getByLabelText('Ramp-up (minutes)') as HTMLInputElement).value).toBe('0');
+    expect((start() as HTMLButtonElement).disabled).toBe(provider.startsWith('percona-'));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['mariadb', 'percona-server-mongodb'])('does not offer HammerDB for %s', async provider => {
+    await renderReady(hammerTab(vi.fn<PluginApi['fetch']>(), 'db-1', provider));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Benchmark driver' }));
+    expect(screen.queryByRole('option', { name: 'HammerDB' })).toBeNull();
+  });
+
+  it('blocks invalid options until they are fixed', async () => {
+    const fetch = vi.fn<PluginApi['fetch']>();
+    await renderReady(hammerTab(fetch, 'pg-1', 'provider-cloudnative-pg'));
+    selectHammerDB();
+    change('Warehouses', '2');
+    change('Virtual users', '3');
+    fireEvent.blur(screen.getByLabelText('Virtual users'));
+    expect(screen.getByText('Virtual users cannot exceed warehouses.')).toBeTruthy();
+    expect((start() as HTMLButtonElement).disabled).toBe(true);
+    change('Database', 'bad name');
+    fireEvent.blur(screen.getByLabelText('Database'));
+    expect(screen.getByText('Database may contain only letters, digits, underscores, hyphens, and dots.')).toBeTruthy();
+    change('Database', 'tpcc');
+    change('Virtual users', '2');
+    expect((start() as HTMLButtonElement).disabled).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { provider: 'provider-cloudnative-pg', instance: 'pg-1', initialize: true },
+    { provider: 'percona-server-mysql', instance: 'mysql-1', initialize: false },
+  ])('submits $provider options (initialize=$initialize) and shows recorded results', async ({ provider, instance, initialize }) => {
+    const requests: Array<{ path: string; init?: RequestInit }> = [];
+    let gets = 0;
+    const recorded = { ...options, initialize };
+    const fetch: PluginApi['fetch'] = async (path, init) => {
+      requests.push({ path, init });
+      if (init?.method === 'POST') return response({ id: 'tpcc-run', status: 'running' }, 202);
+      return response(run('tpcc-run', ++gets === 1 ? 'running' : 'succeeded', {
+        driver: 'hammerdb', database: 'tpcc', runnerImage: 'registry/hammerdb:v2', options: recorded,
+        metrics: [{ name: 'nopm', unit: 'orders/min', value: 12345 }, { name: 'tpm', unit: 'tx/min', value: 28000 },
+          { name: 'latency_new_order_avg', unit: 'ms', value: 4.5 }],
+        output: 'TEST RESULT : System achieved 12345 NOPM from 28000 PostgreSQL TPM',
+      }));
+    };
+    await renderReady(hammerTab(fetch, instance, provider));
+    selectHammerDB();
+    change('Database', ' tpcc ');
+    change('Warehouses', '4');
+    change('Virtual users', '2');
+    change('Ramp-up (minutes)', '1');
+    change('Duration (minutes)', '3');
+    if (!initialize) fireEvent.click(screen.getByRole('checkbox', { name: 'Build TPROC-C schema' }));
+    expect(screen.getByText(initialize ? /Builds the schema in an existing, empty database/ : /Reuses an existing TPROC-C schema/))
+      .toBeTruthy();
+    await act(async () => { fireEvent.click(start()); });
+    expect(requests.map(request => [request.path, request.init?.method])).toEqual([
+      ['/api/runs', 'POST'], ['/api/runs/tpcc-run', 'GET'],
+    ]);
+    expect(JSON.parse(String(requests[0].init?.body))).toEqual({
+      target: { k8sCluster: 'main', namespace: 'default', instance }, database: 'tpcc', driver: 'hammerdb', options: recorded,
+    });
+    change('Warehouses', '9');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    const card = within(screen.getByRole('region', { name: 'Benchmark run result' }));
+    expect(card.getByRole('status').textContent).toContain('Succeeded');
+    expect(card.getByText('registry/hammerdb:v2')).toBeTruthy();
+    const effective = within(card.getByRole('region', { name: 'Effective benchmark options' }));
+    expect(effective.getByText('warehouses').nextSibling?.textContent).toBe('4');
+    expect(effective.getByText('initialize').nextSibling?.textContent).toBe(String(initialize));
+    expect(effective.queryByText('9')).toBeNull();
+    const metrics = within(card.getByRole('table', { name: 'Benchmark metrics' }));
+    expect(metrics.getByRole('rowheader', { name: 'nopm' })).toBeTruthy();
+    expect(metrics.getByRole('cell', { name: 'orders/min' })).toBeTruthy();
+    expect(metrics.getByRole('cell', { name: (12345).toLocaleString() })).toBeTruthy();
+    expect(metrics.getByRole('rowheader', { name: 'tpm' })).toBeTruthy();
+    expect(metrics.getByRole('rowheader', { name: 'latency_new_order_avg' })).toBeTruthy();
+    fireEvent.click(card.getByRole('button', { name: 'Raw logs' }));
+    expect(card.getByLabelText('Benchmark output').textContent).toContain('12345 NOPM');
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(requests).toHaveLength(3);
+  });
+
+  it.each([
+    { status: 400, message: 'virtualUsers must not exceed warehouses' },
+    { status: 400, message: 'HammerDB PostgreSQL passwords cannot contain whitespace, backslashes, $, [, or ;, or begin with "' },
+    { status: 422, message: 'HammerDB requires a PostgreSQL or MySQL target' },
+  ])('retains the draft without polling after $status: $message', async ({ status, message }) => {
+    const fetch = vi.fn<PluginApi['fetch']>(async () => response({ error: message }, status));
+    await renderReady(hammerTab(fetch, 'pg-1', 'provider-cloudnative-pg'));
+    selectHammerDB();
+    change('Warehouses', '4');
+    change('Virtual users', '2');
+    await act(async () => { fireEvent.click(start()); });
+    expect(screen.getByRole('alert').textContent).toContain(message);
+    expect(screen.getByRole('combobox', { name: 'Benchmark driver' }).textContent).toBe('HammerDB');
+    expect((screen.getByLabelText('Warehouses') as HTMLInputElement).value).toBe('4');
+    expect((screen.getByLabelText('Virtual users') as HTMLInputElement).value).toBe('2');
+    expect(screen.queryByRole('region', { name: 'Benchmark run result' })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

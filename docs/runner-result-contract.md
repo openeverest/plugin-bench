@@ -142,7 +142,7 @@ PostgreSQL `allow` and certificate-verification settings are unsupported.
 Helm defaults `drivers.hammerdb.executionTimeout` to `30m`; empty inherits
 `runner.executionTimeout`. Pending time, startup, preparation, ramp-up and
 measurement all count against it. Runs retain effective options, image, logs
-and metrics. A HammerDB UI options editor is a separate task.
+and metrics.
 
 ### Admission and stored settings
 

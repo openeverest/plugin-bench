@@ -3,7 +3,7 @@
 Standalone HammerDB **6.1.1** TPROC-C runner for PostgreSQL and MySQL. One image
 contains both database clients and a Go wrapper that prepares Tcl scripts,
 optionally builds the schema, runs the timed workload and collects metrics.
-The plugin API supports this runner; its UI options editor is a separate task.
+The plugin API and the benchmark tab support this runner.
 See the [request contract](../../docs/runner-result-contract.md#hammerdb-requests).
 
 ## Build and check
@@ -75,6 +75,8 @@ grant privileges within the benchmark database; the verified setup uses
 `ALL PRIVILEGES ON <database>.*` without global or account-management grants.
 
 `BENCH_INITIALIZE=true` prepares an empty database using one schema worker.
+For MySQL, the runner gives the `history` table a primary key
+(`mysql_history_pk`), which Group Replication and PXC strict mode require.
 With initialization off, the runner requires an existing TPROC-C schema with
 matching warehouse count and identifier range. It uses the supplied account for
 all phases and creates no database or account. Existing data and partial objects

@@ -1,9 +1,8 @@
 # OpenEverest Plugin Bench
 
-OpenEverest Plugin Bench runs PostgreSQL (pgbench), MySQL (Sysbench), and MongoDB (go-ycsb)
-benchmarks as temporary Kubernetes Jobs from the database cluster tab or backend API.
-HammerDB TPROC-C is also available through the API for PostgreSQL and MySQL.
-All four drivers are enabled by default in the Helm chart.
+OpenEverest Plugin Bench runs PostgreSQL (pgbench), MySQL (Sysbench), MongoDB (go-ycsb),
+and PostgreSQL/MySQL HammerDB TPROC-C benchmarks as temporary Kubernetes Jobs from the
+database cluster tab or backend API. All drivers are enabled by default in the Helm chart.
 
 > **MVP complete:** The PostgreSQL pgbench workflow supports configuring,
 > launching, and inspecting benchmark runs.
@@ -116,7 +115,6 @@ Send `driver: "hammerdb"` with TPROC-C options for an authorized PostgreSQL or
 MySQL target. See the
 [HammerDB request contract](docs/runner-result-contract.md#hammerdb-requests)
 for an example and setup requirements.
-The UI does not yet offer a HammerDB options form.
 
 ### Using the benchmark tab
 
@@ -127,12 +125,13 @@ use **Retry** if discovery fails. Discovery uses your OpenEverest permissions
 and reads instance metadata without requesting database credentials.
 
 Open a supported instance's **Performance Benchmark** tab. Its provider determines
-which driver is offered:
+which drivers are offered; the first one is preselected:
 
-| Instance provider | Driver |
+| Instance provider | Drivers |
 | --- | --- |
-| `provider-cloudnative-pg`, `provider-percona-postgresql` | pgbench |
-| `percona-server-mysql`, `percona-xtradb-cluster` | Sysbench |
+| `provider-cloudnative-pg`, `provider-percona-postgresql` | pgbench, HammerDB |
+| `percona-server-mysql`, `percona-xtradb-cluster` | Sysbench, HammerDB |
+| `mariadb` | Sysbench (MariaDB) |
 | `percona-server-mongodb` | go-ycsb |
 
 The tab checks `/api/status` and only offers drivers enabled on the backend.
@@ -167,6 +166,19 @@ MySQL. Database is optional: the request value is used first, then the provider
 details, then the connection URI (`everest` for the MariaDB provider). It
 requires separate host, port, username, and password fields; URI-only
 credentials and custom CA certificates are not supported.
+
+**HammerDB** runs TPROC-C and starts with one warehouse, one virtual user,
+no ramp-up, a one-minute measurement, and **Build TPROC-C schema** checked.
+Ramp-up and duration are whole minutes; virtual users cannot exceed warehouses.
+Building the schema requires an existing, empty database; to reuse a dataset,
+turn the build off and keep **Warehouses** matched to it. Database names may
+contain only letters, digits, underscores, hyphens, and dots. For the MySQL
+providers a database name is required. Results report `nopm` (orders/min),
+`tpm` (tx/min), and average latencies per transaction type; TPM is not
+comparable with pgbench or Sysbench TPS. Schema build, ramp-up, and measurement
+count against `drivers.hammerdb.executionTimeout` (default `30m`). See the
+[runner reference](runners/hammerdb/README.md#database-setup-and-execution) for
+account permissions and PostgreSQL password restrictions.
 
 **go-ycsb** fixes Database to the read-only value `ycsb`. It starts with collection
 `usertable`, 10,000 records, 20,000 operations, one thread, and **Load benchmark data**
@@ -538,7 +550,8 @@ For a live check after starting Tilt, use a disposable supported database:
 For Sysbench, prepare a small fresh dataset, then repeat with preparation off
 and matching table settings. Preparing the same tables again should fail clearly.
 For go-ycsb, load a fresh collection, then repeat with loading off and the same
-collection and record count.
+collection and record count. For HammerDB, build the schema in an empty
+database, then repeat with the build off and the same warehouse count.
 
 ## Releasing
 
@@ -553,8 +566,7 @@ release workflow. It publishes:
 - a GitHub release with the chart archive and release notes
 
 The workflow tests all four runners from their built AMD64 archives before publishing.
-HammerDB supports backend API runs; its options editor is a separate UI task.
-See its [runner reference](runners/hammerdb/README.md) for direct usage.
+See the HammerDB [runner reference](runners/hammerdb/README.md) for direct usage.
 Release notes include each image reference and digest.
 
 GHCR creates new packages as private, so the first release fails at the
@@ -584,8 +596,8 @@ spec.md                      MVP requirements
 
 ## Current limitations
 
-The UI supports the providers listed above; MySQL requires an enabled Sysbench
-driver and a usable image. MongoDB is limited to the `ycsb` database and Workload A;
+The UI supports the providers listed above; each driver must be enabled with a
+usable image. HammerDB is not offered for MariaDB. MongoDB is limited to the `ycsb` database and Workload A;
 additional workloads remain future work.
 With the default in-memory storage, run records, including output and metrics,
 are lost on restart, and completed records become unavailable one hour after
