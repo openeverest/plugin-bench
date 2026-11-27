@@ -73,6 +73,7 @@ describe('benchmark plugin registration', () => {
     expect(tab?.providers).toContain('percona-server-mysql');
     expect(tab?.providers).toContain('mariadb');
     expect(tab?.providers).toContain('percona-server-mongodb');
+    expect(tab?.providers).toContain('valkey');
   });
 
   it('forwards MySQL instance context, CSP nonce, and the bound authenticated fetch to the tab', async () => {

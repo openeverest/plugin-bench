@@ -7,9 +7,9 @@ import { createInitialBenchmarkFormValues, toCreateBenchmarkRunRequest, validate
 
 describe('benchmark driver registry', () => {
   it('registers all drivers and their provider metadata', () => {
-    expect(benchmarkDriverIds).toEqual(['pgbench', 'sysbench', 'mariadb', 'go-ycsb']);
+    expect(benchmarkDriverIds).toEqual(['pgbench', 'sysbench', 'mariadb', 'go-ycsb', 'valkey']);
     expect(benchmarkProviderNames).toEqual([
-      'provider-cloudnative-pg', 'provider-percona-postgresql', 'percona-server-mysql', 'percona-xtradb-cluster', 'mariadb', 'percona-server-mongodb',
+      'provider-cloudnative-pg', 'provider-percona-postgresql', 'percona-server-mysql', 'percona-xtradb-cluster', 'mariadb', 'percona-server-mongodb', 'valkey',
     ]);
     expect(getBenchmarkDriversForProvider('provider-cloudnative-pg')).toEqual(['pgbench']);
     expect(getBenchmarkDriversForProvider('provider-percona-postgresql')).toEqual(['pgbench']);

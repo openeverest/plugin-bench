@@ -1,3 +1,4 @@
+import { ValkeyOptionsForm } from './ValkeyOptionsForm';
 import type { ReactElement } from 'react';
 import { PgbenchOptionsForm } from './PgbenchOptionsForm';
 import { SysbenchOptionsForm } from './SysbenchOptionsForm';
@@ -15,6 +16,7 @@ export interface DriverOptionsFormProps<K extends BenchmarkDriverId = BenchmarkD
 // The shared form renders through this lookup. Adding a driver requires its
 // options component here and its data definition in index.ts.
 const optionsForms: { [K in BenchmarkDriverId]: (props: DriverOptionsFormProps<K>) => ReactElement } = {
+  valkey: ValkeyOptionsForm,
   pgbench: PgbenchOptionsForm,
   sysbench: SysbenchOptionsForm,
   mariadb: SysbenchOptionsForm,
