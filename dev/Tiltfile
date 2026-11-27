@@ -229,6 +229,24 @@ docker_build(
     ],
 )
 
+valkey_runner_image = 'plugin-bench-valkey:tilt-dev'
+docker_build(
+    valkey_runner_image,
+    context='{0}/runners/valkey'.format(bench_dir),
+    dockerfile='{0}/runners/valkey/Dockerfile'.format(bench_dir),
+    only=[
+        'Dockerfile',
+        'go.mod',
+        'config.go',
+        'connection.go',
+        'main.go',
+        'metrics.go',
+        'output.go',
+        'private_files.go',
+        'workload.go',
+    ],
+)
+
 # ===========================
 # Plugin: Helm chart
 # ===========================
@@ -328,7 +346,14 @@ helm_resource(
     chart_dir,
     namespace=plugin_namespace,
     flags=plugin_flags,
-    image_deps=[plugin_bench_image, pgbench_runner_image, sysbench_runner_image, goycsb_runner_image, hammerdb_runner_image],
+    image_deps=[
+        plugin_bench_image,
+        pgbench_runner_image,
+        sysbench_runner_image,
+        goycsb_runner_image,
+        hammerdb_runner_image,
+        valkey_runner_image,
+    ],
     image_keys=[
         ('image.repository', 'image.tag'),
         ('drivers.pgbench.image.repository', 'drivers.pgbench.image.tag'),
@@ -338,6 +363,7 @@ helm_resource(
         ],
         ('drivers.go-ycsb.image.repository', 'drivers.go-ycsb.image.tag'),
         ('drivers.hammerdb.image.repository', 'drivers.hammerdb.image.tag'),
+        ('drivers.valkey.image.repository', 'drivers.valkey.image.tag'),
     ],
     resource_deps=plugin_resource_deps,
     labels=['plugin-bench'],

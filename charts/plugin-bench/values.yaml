@@ -103,6 +103,17 @@ drivers:
     # Empty inherits runner.executionTimeout. Preparation and measurement
     # both count against this per-runner limit.
     executionTimeout: 30m
+  valkey:
+    enabled: true
+    image:
+      # Empty fields default to ghcr.io/openeverest/plugin-bench-valkey,
+      # appVersion, and IfNotPresent.
+      repository: ""
+      tag: ""
+      pullPolicy: ""
+    # Allows time for Job startup and cleanup around the runner's 10-minute
+    # limit for seeding and measurement. Empty inherits runner.executionTimeout.
+    executionTimeout: 12m
 
 # Where benchmark run history is stored.
 storage:

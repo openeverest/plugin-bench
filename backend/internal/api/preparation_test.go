@@ -21,6 +21,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/driver/hammerdb"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/pgbench"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/sysbench"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/valkey"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	batchv1 "k8s.io/api/batch/v1"
@@ -29,7 +30,44 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/util/cert"
 )
+
+func TestPrepareValkeyMutualTLS(t *testing.T) {
+	registry, err := driver.NewRegistry(driver.Registration{Driver: valkey.New(),
+		Runner: driver.RunnerConfig{Image: "valkey-test", ImagePullPolicy: "Never"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &API{registry: registry, executionTimeout: time.Minute}
+	clientCert, clientKey, err := cert.GenerateSelfSignedCertKey("client", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, _, err := cert.GenerateSelfSignedCertKey("server", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssl := "true"
+	credentials := &everest.Credentials{Type: "valkey", Provider: "valkey", Host: "cache", Port: "6379",
+		Username: "default", Password: "test-password", URI: "rediss://cache:6379", SSL: &ssl,
+		CACertificate: string(ca), ClientCertificate: string(clientCert), ClientKey: string(clientKey)}
+	request := CreateRunRequest{Driver: "valkey", Options: json.RawMessage(`{}`)}
+	prepared, err := a.prepareRun(request, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := prepared.Input.Spec
+	for name, want := range map[string][]byte{"VALKEY_TLS_CA": ca, "VALKEY_TLS_CERT": clientCert, "VALKEY_TLS_KEY": clientKey} {
+		if !bytes.Equal(spec.SecretData[name], want) || spec.SecretEnv[name] != name {
+			t.Errorf("incorrect secret mapping for %s", name)
+		}
+	}
+	ssl = "false"
+	if _, err := a.prepareRun(request, credentials); err == nil {
+		t.Fatal("accepted conflicting provider ssl flag and URI")
+	}
+}
 
 func TestCanonicalRunStoresEffectiveOptionsAndOwnedSnapshots(t *testing.T) {
 	const wantOptions = `{"durationSeconds":60,"clients":1,"threads":1,"scale":1,"initialize":false}`
@@ -418,5 +456,51 @@ func TestPreparationRejectsDurationExceedingTimeout(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPrepareValkeyUsesRunnerExecutionTimeout(t *testing.T) {
+	request := CreateRunRequest{
+		Driver:  "valkey",
+		Options: json.RawMessage(`{"duration":300,"keyCount":100000}`),
+	}
+	credentials := &everest.Credentials{
+		Type: "valkey", Provider: "valkey", Host: "cache", Port: "6379",
+		Username: "default", Password: "test-password", URI: "redis://cache:6379",
+	}
+	for _, test := range []struct {
+		name     string
+		override time.Duration
+		wantOK   bool
+	}{
+		{"allows maximum workload with longer override", 12 * time.Minute, true},
+		{"rejects measurement longer than override", 4 * time.Minute, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry, err := driver.NewRegistry(driver.Registration{
+				Driver: valkey.New(),
+				Runner: driver.RunnerConfig{
+					Image: "valkey-test", ImagePullPolicy: "Never", ExecutionTimeout: test.override,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			api := &API{registry: registry, executionTimeout: 5 * time.Minute}
+			prepared, err := api.prepareRun(request, credentials)
+			if !test.wantOK {
+				status, message := preparationError(err)
+				if status != http.StatusBadRequest || !strings.Contains(message, "exceeds execution timeout") {
+					t.Fatalf("expected timeout validation error, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared.Input.Runner.ExecutionTimeout != test.override {
+				t.Fatalf("prepared timeout = %v, want %v", prepared.Input.Runner.ExecutionTimeout, test.override)
+			}
+		})
 	}
 }

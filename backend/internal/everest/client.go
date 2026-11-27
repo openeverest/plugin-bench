@@ -102,18 +102,22 @@ func normalizeRequestError(err error) error {
 }
 
 type Credentials struct {
-	URI      string `json:"uri"`
-	Host     string `json:"host"`
-	Port     string `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Provider string `json:"provider"`
-	Type     string `json:"type"`
+	// SSL is the optional string flag published by the Valkey provider.
+	SSL      *string `json:"-"`
+	URI      string  `json:"uri"`
+	Host     string  `json:"host"`
+	Port     string  `json:"port"`
+	Username string  `json:"username"`
+	Password string  `json:"password"`
+	Provider string  `json:"provider"`
+	Type     string  `json:"type"`
 	// Database is a provider-specific key; not every provider publishes it.
 	Database string `json:"database"`
 	// CACertificate is a provider-specific PEM CA for instances whose
 	// certificates are not publicly trusted.
-	CACertificate string `json:"ca.crt"`
+	CACertificate     string `json:"ca.crt"`
+	ClientCertificate string `json:"tls.crt"`
+	ClientKey         string `json:"tls.key"`
 }
 
 func everestAPIURL() string {
@@ -190,6 +194,16 @@ func GetCredentials(ctx context.Context, jwt, k8sCluster, namespace, instance st
 	}
 	if creds == nil {
 		return nil, &InvalidResponseError{Err: errors.New("connection details must be a JSON object")}
+	}
+	// Other providers own their ssl field and may use a different JSON type.
+	if strings.EqualFold(strings.TrimSpace(creds.Type), "valkey") {
+		var transport struct {
+			SSL *string `json:"ssl"`
+		}
+		if err := json.Unmarshal(body, &transport); err != nil {
+			return nil, &InvalidResponseError{Err: errors.New("invalid Valkey ssl field")}
+		}
+		creds.SSL = transport.SSL
 	}
 	return creds, nil
 }

@@ -118,6 +118,24 @@ MySQL target. See the
 for an example and setup requirements.
 The UI does not yet offer a HammerDB options form.
 
+### Valkey through the API
+
+Send `POST /api/runs` with your OpenEverest bearer token and a writable,
+non-sharded Valkey primary as the target. The database defaults to `0`.
+
+```json
+{
+  "target": {"k8sCluster": "local", "namespace": "default", "instance": "valkey-bench"},
+  "driver": "valkey",
+  "database": "0",
+  "options": {"duration": 5, "threads": 1, "clientsPerThread": 2, "keyCount": 100, "valueSize": 256}
+}
+```
+
+For TLS, OpenEverest must supply `ca.crt` and, for mutual TLS, both `tls.crt`
+and `tls.key`. Poll `GET /api/runs/{id}` for metrics and logs. See the
+[Valkey runner reference](runners/valkey/README.md) for workload limits and ACLs.
+
 ### Using the benchmark tab
 
 Open **Performance Benchmark** in the sidebar to list accessible instances in
@@ -430,6 +448,10 @@ An optional `drivers.<id>.executionTimeout` overrides `runner.executionTimeout`
 for that driver; empty inherits the shared limit. HammerDB defaults to `30m`.
 Set `--set drivers.hammerdb.executionTimeout=45m` to allow 45 minutes, including
 pending time, startup, preparation, ramp-up and measurement.
+
+Valkey defaults to a 12-minute Job timeout to allow for startup and the runner’s
+10-minute internal limit, which covers seeding and measurement. Override the Job
+timeout with `--set drivers.valkey.executionTimeout=<duration>`.
 
 Helm serializes the resolved settings into one backend environment variable.
 For a chart with `appVersion: 0.2.0`:
