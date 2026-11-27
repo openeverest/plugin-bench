@@ -28,6 +28,7 @@ type TargetInfo struct {
 
 // ConnectionDetails contains upstream credentials. Do not log or persist it.
 type ConnectionDetails struct {
+	SSL      *string
 	Host     string
 	Port     string
 	Username string
@@ -35,7 +36,9 @@ type ConnectionDetails struct {
 	URI      string
 	Database string
 	// CACertificate is a PEM CA that verifies the instance's TLS certificate.
-	CACertificate string
+	CACertificate     string
+	ClientCertificate string
+	ClientKey         string
 }
 
 // PrepareInput carries options in their public JSON form. The selected driver

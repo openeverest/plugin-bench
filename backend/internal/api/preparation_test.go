@@ -21,6 +21,7 @@ import (
 	"github.com/openeverest/plugin-bench/backend/internal/driver/hammerdb"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/pgbench"
 	"github.com/openeverest/plugin-bench/backend/internal/driver/sysbench"
+	"github.com/openeverest/plugin-bench/backend/internal/driver/valkey"
 	"github.com/openeverest/plugin-bench/backend/internal/everest"
 	"github.com/openeverest/plugin-bench/backend/internal/runnerresult"
 	batchv1 "k8s.io/api/batch/v1"
@@ -29,7 +30,44 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/util/cert"
 )
+
+func TestPrepareValkeyMutualTLS(t *testing.T) {
+	registry, err := driver.NewRegistry(driver.Registration{Driver: valkey.New(),
+		Runner: driver.RunnerConfig{Image: "valkey-test", ImagePullPolicy: "Never"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &API{registry: registry, executionTimeout: time.Minute}
+	clientCert, clientKey, err := cert.GenerateSelfSignedCertKey("client", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, _, err := cert.GenerateSelfSignedCertKey("server", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssl := "true"
+	credentials := &everest.Credentials{Type: "valkey", Provider: "valkey", Host: "cache", Port: "6379",
+		Username: "default", Password: "test-password", URI: "rediss://cache:6379", SSL: &ssl,
+		CACertificate: string(ca), ClientCertificate: string(clientCert), ClientKey: string(clientKey)}
+	request := CreateRunRequest{Driver: "valkey", Options: json.RawMessage(`{}`)}
+	prepared, err := a.prepareRun(request, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := prepared.Input.Spec
+	for name, want := range map[string][]byte{"VALKEY_TLS_CA": ca, "VALKEY_TLS_CERT": clientCert, "VALKEY_TLS_KEY": clientKey} {
+		if !bytes.Equal(spec.SecretData[name], want) || spec.SecretEnv[name] != name {
+			t.Errorf("incorrect secret mapping for %s", name)
+		}
+	}
+	ssl = "false"
+	if _, err := a.prepareRun(request, credentials); err == nil {
+		t.Fatal("accepted conflicting provider ssl flag and URI")
+	}
+}
 
 func TestCanonicalRunStoresEffectiveOptionsAndOwnedSnapshots(t *testing.T) {
 	const wantOptions = `{"durationSeconds":60,"clients":1,"threads":1,"scale":1,"initialize":false}`

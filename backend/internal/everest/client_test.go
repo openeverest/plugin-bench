@@ -351,3 +351,25 @@ func TestGetCredentialsReadsProviderCACertificate(t *testing.T) {
 		t.Fatal("GetCredentials() must read the provider CA published as ca.crt")
 	}
 }
+
+func TestGetCredentialsReadsValkeyProviderConnection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"type":"valkey","provider":"valkey","host":"cache-primary.default.svc","port":"6379",
+			"username":"default","password":"example","uri":"rediss://default:example@cache-primary.default.svc:6379",
+			"ssl":"true","ca.crt":"example-ca","tls.crt":"example-cert","tls.key":"example-key"
+		}`))
+	}))
+	defer server.Close()
+	t.Setenv("EVEREST_API_URL", server.URL)
+
+	got, err := GetCredentials(context.Background(), "test-token", "cluster-a", "default", "cache")
+	if err != nil || got == nil || got.Type != "valkey" || got.Provider != "valkey" ||
+		got.Host != "cache-primary.default.svc" || got.Port != "6379" ||
+		got.Username != "default" || got.Password != "example" ||
+		got.SSL == nil || *got.SSL != "true" || got.URI != "rediss://default:example@cache-primary.default.svc:6379" ||
+		got.CACertificate != "example-ca" || got.ClientCertificate != "example-cert" || got.ClientKey != "example-key" {
+		t.Fatal("GetCredentials() did not preserve the Valkey provider connection fields")
+	}
+}
